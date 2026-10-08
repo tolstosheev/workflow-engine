@@ -23,11 +23,12 @@ Neutral) / Alternatives considered / References. Раздел **Negative** об�
 | ADR | Тема | Статус |
 |---|---|---|
 | [0001](0001-stek-tehnologii.md) | Выбор стека технологий | Accepted |
-| [0002](0002-zhurnal-sobytiy-vmesto-dolgoy-tranzakcii.md) | Журнал событий вместо долгой транзакции БД | Proposed |
-| [0003](0003-lease-vmesto-raspredelennyh-blokirovok.md) | Lease вместо распределённых блокировок | Proposed |
-| [0004](0004-saga-vmesto-dvukhfaznoy-commit.md) | Saga с компенсациями вместо 2PC | Proposed |
-| [0005](0005-at-least-once-i-idempotentnost.md) | At-least-once доставка и идемпотентность | Proposed |
-| [0006](0006-format-opredeleniya-workflow.md) | Формат определения workflow | Proposed |
+| [0002](0002-zhurnal-sobytiy-vmesto-dolgoy-tranzakcii.md) | Журнал событий вместо долгой транзакции БД | Accepted |
+| [0003](0003-lease-vmesto-raspredelennyh-blokirovok.md) | Lease вместо распределённых блокировок | Accepted |
+| [0004](0004-saga-vmesto-dvukhfaznoy-commit.md) | Saga с компенсациями вместо 2PC | Accepted |
+| [0005](0005-at-least-once-i-idempotentnost.md) | At-least-once доставка и идемпотентность | Accepted |
+| [0006](0006-format-opredeleniya-workflow.md) | Формат определения workflow | Accepted |
 
-ADR со статусом `Proposed` затрагивает решения Фаз 1–2: они фиксируются в том
-же коммите, где появляется код, который их реализует.
+Все шесть решений приняты и реализуются: 0001 — в Фазе 0, 0002…0006 — в Фазе 1
+(схема данных и валидация дефинишена). Реализация ADR-0002…0005 в объёме ядра
+продолжается в Фазе 2.

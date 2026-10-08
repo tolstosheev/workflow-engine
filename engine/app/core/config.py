@@ -19,10 +19,14 @@ class Settings(BaseSettings):
     debug: bool = True
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    cors_origins: list[str] = ["http://localhost:5173"]
+
+    # Строка, а не список: pydantic-settings разбирает сложные поля как JSON
+    # до вызова валидаторов, поэтому CORS_ORIGINS="http://a,http://b" из
+    # docker-compose упал бы на разборе, не дойдя до field_validator.
+    cors_origins: str = "http://localhost:5173"
 
     database_url: str = "postgresql+asyncpg://workflow:workflow@localhost:5433/workflow_engine"
-    sync_database_url: str = "postgresql+asyncpg://workflow:workflow@localhost:5433/workflow_engine"
+    sync_database_url: str = "postgresql+psycopg://workflow:workflow@localhost:5433/workflow_engine"
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_echo: bool = False
@@ -37,13 +41,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def _split_origins(cls, value: object) -> object:
-        # В compose CORS_ORIGINS приходит строкой через запятую, а не списком.
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Origins для CORS: строка через запятую разбирается в список."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @field_validator("heartbeat_interval_seconds")
     @classmethod

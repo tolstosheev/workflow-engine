@@ -26,31 +26,37 @@ def test_defaults_are_local_development() -> None:
 
     assert settings.app_env == "development"
     assert settings.debug is True
-    assert settings.cors_origins == ["http://localhost:5173"]
+    assert settings.cors_origin_list == ["http://localhost:5173"]
 
 
 def test_cors_origins_accept_comma_separated_string() -> None:
-    # В docker-compose origins приходят строкой, а не списком: без разбора
+    # В docker-compose origins приходят строкой через запятую: без разбора
     # CORS перестаёт работать в контейнерах.
     settings = Settings(_env_file=None, cors_origins="http://a.test, http://b.test")
 
-    assert settings.cors_origins == ["http://a.test", "http://b.test"]
+    assert settings.cors_origin_list == ["http://a.test", "http://b.test"]
 
 
 def test_cors_origins_drops_empty_items() -> None:
     settings = Settings(_env_file=None, cors_origins="http://a.test,,")
 
-    assert settings.cors_origins == ["http://a.test"]
+    assert settings.cors_origin_list == ["http://a.test"]
 
 
-def test_cors_origins_keeps_list_untouched() -> None:
-    settings = Settings(_env_file=None, cors_origins=["http://a.test"])
+def test_cors_origins_empty_string_yields_no_origins() -> None:
+    settings = Settings(_env_file=None, cors_origins="")
 
-    assert settings.cors_origins == ["http://a.test"]
+    assert settings.cors_origin_list == []
+
+
+def test_cors_origins_are_read_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORS_ORIGINS", "http://front.test,http://admin.test")
+
+    assert Settings(_env_file=None).cors_origin_list == ["http://front.test", "http://admin.test"]
 
 
 def test_heartbeat_must_be_shorter_than_lease_ttl() -> None:
-    # Heartbeat не чаще TTL означает протухание lease на живом воркере
+    # Heartbeat не чаще TTL означает простухание lease на живом воркере
     # и двойное исполнение шага двумя воркерами.
     with pytest.raises(ValidationError, match="HEARTBEAT_INTERVAL_SECONDS"):
         Settings(_env_file=None, lease_ttl_seconds=10, heartbeat_interval_seconds=10)
