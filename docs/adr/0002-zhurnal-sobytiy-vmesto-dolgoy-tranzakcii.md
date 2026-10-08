@@ -106,6 +106,6 @@ replay ускоряется чтением ближайшего снимка в�
 ## References
 
 - `AGENTS.md` §3.1, §3.2 — инварианты журнала и транзакционных границ
-- `docs/ENGINE.md` §1–3 — журнал, replay, последовательность исполнения шага
+- `docs/ENGINE.md` §1–§6 — журнал, replay, последовательность исполнения шага
 - `docs/DATA-MODEL.md` §2.3 — ограничения таблицы `workflow_events`
 - `docs/diagrams/execution-sequence.mmd`

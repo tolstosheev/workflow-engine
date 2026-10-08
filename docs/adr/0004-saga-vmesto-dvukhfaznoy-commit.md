@@ -117,6 +117,6 @@ prepared-транзакции часами, что для многих СУБД 
 ## References
 
 - `AGENTS.md` §3.5 — инварианты Saga
-- `docs/ENGINE.md` §6 — порядок, правила и причины сбоя компенсаций
+- `docs/ENGINE.md` §8 — порядок, правила и причины сбоя компенсаций
 - `docs/diagrams/compensation-sequence.mmd`
 - `docs/DATA-MODEL.md` §2.7 — `compensation_log`
