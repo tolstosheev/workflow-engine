@@ -1,0 +1,20 @@
+# Локальная конфигурация не должна попадать в образ: внутри compose адреса
+# другие (db:5432 вместо localhost:5434), и подхват .env ломал бы миграции.
+.env
+.env.*
+!.env.example
+
+# Виртуальное окружение и кэши — образу они не нужны, а копирование .venv
+# ломает интерпретатор: он собран под другую архитектуру.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+tests/
+scripts/

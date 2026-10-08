@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 const NAV_ITEMS = [
   { to: '/', label: 'Инстансы' },
   { to: '/definitions', label: 'Определения' },
+  { to: '/chaos', label: 'Инъекция отказов' },
 ]
 
 const navLinkClass = ({ isActive }: { isActive: boolean }): string =>

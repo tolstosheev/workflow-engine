@@ -32,17 +32,55 @@ docker compose up -d --build
 |---|---|
 | `db` | `localhost:5434` |
 | `api` | http://localhost:8000 |
+| `worker`, `worker-2` | — |
 | `frontend` | http://localhost:5173 |
-| Swagger UI | http://localhost:8000/docs |
+
+Порт БД выбран 5434, а не стандартный 5432: соседние проекты на одной машине
+занимают 5432 и 5433. Он задаётся переменной `POSTGRES_PORT`.
 
 Миграции выполняет сервис `migrate`; `api` и оба воркера стартуют только
-после его успешного завершения.
+после его успешного завершения. Контейнер миграций получает
+`SYNC_DATABASE_URL` явно: внутри compose адрес другой (`db:5432`), а
+`engine/.env` в образ не попадает — он предназначен только для локального
+запуска.
 
 ```bash
 docker compose ps             # состояние сервисов
 docker compose logs -f worker # логи воркера
 docker compose down           # остановить
 docker compose down -v        # остановить вместе с данными
+```
+
+### Проверка живой системы
+
+```bash
+# 1. Здоровье
+curl http://localhost:8000/health
+
+# 2. Метрики: состояния инстансов читаются из БД при каждом сборе
+curl http://localhost:8000/metrics | grep workflow_instances
+
+# 3. Полный цикл: определение → инстанс → исполнение
+curl -X POST http://localhost:8000/api/definitions \
+  -H "Content-Type: application/json" -d @definition.json
+curl -X POST http://localhost:8000/api/instances \
+  -H "Content-Type: application/json" -d @instance.json
+curl http://localhost:8000/api/instances/{id}
+curl http://localhost:8000/api/instances/{id}/events
+
+# 4. Сбой с компенсацией
+curl -X POST http://localhost:8000/api/chaos/fail-step \
+  -H "Content-Type: application/json" \
+  -d '{"instance_id":"{id}","step":"charge_payment","mode":"always"}'
+curl http://localhost:8000/api/instances/{id}     # COMPENSATED
+
+# 5. Восстановление после зависшего воркера
+curl -X POST http://localhost:8000/api/chaos/stop-lease \
+  -H "Content-Type: application/json" -d '{"instance_id":"{id}","duration_seconds":40}'
+curl http://localhost:8000/api/instances/{id}     # lease_owner сменился
+
+# 6. Снять инъекции
+curl -X DELETE http://localhost:8000/api/chaos
 ```
 
 ---
@@ -77,6 +115,10 @@ npm run dev
 
 Vite проксирует `/api` на бэкенд, поэтому из браузера всё доступно с одного
 origin — CORS в разработке не мешает.
+
+Страницы: инстансы с живым статусом, карточка процесса с таймлайном шагов и
+журналом событий, редактор определений с проверкой и запуском, панель
+инъекции отказов.
 
 ---
 
