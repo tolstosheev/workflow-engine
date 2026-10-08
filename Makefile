@@ -32,10 +32,10 @@ check-backend:  ## ruff + ruff format + mypy
 check-frontend:  ## eslint + tsc
 	cd frontend && npm run lint && npm run typecheck
 
-test:  ## Unit + integration + chaos с порогом покрытия 90%
-	cd engine && pytest -q -m "not integration and not chaos" --cov-fail-under=90
+test:  ## Unit + integration с порогом покрытия 90% (нужна БД)
+	cd engine && pytest -q -m "not chaos" --cov-fail-under=90
 
-test-fast:  ## Тесты без порога покрытия (быстрый цикл разработки)
+test-fast:  ## Только unit-тесты, без БД и без порога покрытия
 	cd engine && pytest -q -m "not integration and not chaos" --no-cov
 
 test-integration:  ## Интеграционные тесты (нужна БД)

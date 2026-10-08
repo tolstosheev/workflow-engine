@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 
@@ -23,3 +23,21 @@ def reset_settings_cache() -> Iterator[None]:
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture
+async def db_engine() -> AsyncIterator[None]:
+    """Поднимает движок на время одного async-теста.
+
+    pytest-asyncio закрывает event loop после каждого теста, а пул соединений
+    asyncpg привязан к своему loop. Движок уровня модуля пережил бы первый тест
+    и начал отдавать «Event loop is closed» на всех остальных, поэтому он
+    создаётся и закрывается вместе с тестом.
+    """
+    from app.core.db import dispose_engine, get_engine
+
+    get_engine()
+    try:
+        yield
+    finally:
+        await dispose_engine()

@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.db import dispose_engine, get_session_factory
 from app.core.errors import AppError
 from app.core.logging import configure_logging
+from app.routers.definitions import router as definitions_router
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ def create_app() -> FastAPI:
 
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=settings.cors_origin_list,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -62,6 +63,8 @@ def create_app() -> FastAPI:
     @application.get("/health", tags=["service"])
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    application.include_router(definitions_router)
 
     return application
 
