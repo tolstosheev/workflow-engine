@@ -45,14 +45,17 @@ async def db_engine() -> AsyncIterator[None]:
 
 @pytest.fixture(autouse=True)
 async def clean_database(request: pytest.FixtureRequest, db_engine: None) -> AsyncIterator[None]:
-    """Очищает таблицы перед каждым интеграционным тестом.
+    """Очищает таблицы перед каждым интеграционным и chaos-тестом.
 
     Откат в фикстуре `db_session` не спасает: часть тестов коммитит намеренно
     (HTTP-слой, конкуренция воркеров), и их данные оставались бы в базе, ломая
     выборки следующих тестов. `alembic_version` не трогается — иначе миграции
     пришлось бы применять заново.
     """
-    if request.node.get_closest_marker("integration") is None:
+    needs_db = any(
+        request.node.get_closest_marker(name) is not None for name in ("integration", "chaos")
+    )
+    if not needs_db:
         yield
         return
 
