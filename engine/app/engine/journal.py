@@ -151,7 +151,11 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
 
         case EventType.STEP_FAILED:
             state.failed_step = payload.get("step")
-            state.status = InstanceStatus.RUNNING
+            # terminal=True означает, что попытки исчерпаны: дальше нужен откат.
+            # Без отметки шаг просто повторится, и статус остаётся RUNNING.
+            state.status = (
+                InstanceStatus.COMPENSATING if payload.get("terminal") else InstanceStatus.RUNNING
+            )
 
         case EventType.STEP_RETRY_SCHEDULED:
             state.status = InstanceStatus.RUNNING
