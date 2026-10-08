@@ -1,0 +1,102 @@
+erDiagram
+    workflow_definitions ||--o{ workflow_instances : "порождает"
+    workflow_instances ||--o{ workflow_events : "журнал (append-only)"
+    workflow_instances ||--o{ step_runs : "выполнения шагов"
+    workflow_instances ||--o{ timers : "ожидания"
+    workflow_instances ||--o{ processed_operations : "идемпотентность"
+    workflow_instances ||--o{ compensation_log : "попытки компенсаций"
+    step_runs ||--o| compensation_log : "компенсируется"
+
+    workflow_definitions {
+        uuid id PK
+        string name UK
+        int version
+        jsonb definition "JSON дефинишена"
+        bool is_active
+        timestamptz created_at
+    }
+
+    workflow_instances {
+        uuid id PK
+        uuid definition_id FK
+        string status "PENDING..COMPENSATED"
+        jsonb input
+        jsonb variables "состояние из replay"
+        string current_step
+        string lease_owner
+        timestamptz lease_expires_at
+        timestamptz heartbeat_at
+        timestamptz created_at
+    }
+
+    workflow_events {
+        uuid id PK
+        uuid instance_id FK
+        int seq "строго монотонен"
+        string type
+        jsonb payload
+        timestamptz created_at
+    }
+
+    step_runs {
+        uuid id PK
+        uuid instance_id FK
+        string step_name
+        int attempt
+        string status "PENDING..COMPENSATED"
+        jsonb input
+        jsonb output
+        text error
+        bool compensated
+        timestamptz started_at
+        timestamptz finished_at
+    }
+
+    timers {
+        uuid id PK
+        uuid instance_id FK
+        string step_name
+        timestamptz due_at
+        bool fired
+        jsonb payload
+    }
+
+    processed_operations {
+        uuid id PK
+        uuid instance_id FK
+        string op_key "уникальный ключ операции"
+        string step_name
+        timestamptz created_at
+    }
+
+    compensation_log {
+        uuid id PK
+        uuid instance_id FK
+        uuid step_run_id FK
+        string compensation_step
+        int attempt
+        string status "RUNNING..FAILED"
+        text error
+        timestamptz started_at
+        timestamptz finished_at
+    }
+
+    demo_inventory {
+        uuid id PK
+        string sku UK
+        int available
+        int reserved
+    }
+
+    demo_payments {
+        uuid id PK
+        uuid instance_id FK
+        numeric amount
+        string status "HELD..REFUNDED"
+    }
+
+    demo_shipments {
+        uuid id PK
+        uuid instance_id FK
+        string status "CREATED..CANCELLED"
+    }

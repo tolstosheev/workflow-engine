@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+    participant W1 as Воркер 1 (жив)
+    participant W2 as Воркер 2
+    participant DB as PostgreSQL
+    participant S as Внешний сервис
+
+    W1->>DB: UPDATE ... SET lease_owner='w1', lease_expires_at=now()+30s
+    DB-->>W1: захват
+    W1->>W1: начало шага reserve_inventory
+    W1->>S: внешний вызов (долгий)
+
+    Note over W1: 💥 Воркер 1 убит (SIGKILL, OOM, падение узла)
+
+    Note over W2: lease истёк — heartbeat не обновлялся дольше TTL
+
+    W2->>DB: SELECT ... WHERE status IN (RUNNING, COMPENSATING)<br/>AND lease_expires_at < now() FOR UPDATE SKIP LOCKED
+    DB-->>W2: брошенный инстанс
+    W2->>DB: UPDATE ... SET lease_owner='w2', lease_expires_at=now()+30s
+    DB-->>W2: захват
+
+    W2->>DB: SELECT * FROM workflow_events ORDER BY seq
+    DB-->>W2: журнал
+    W2->>W2: replay() → последний чекпоинт
+
+    Note over W2,DB: Шаг не был завершён — event STEP_COMPLETED отсутствует
+    W2->>DB: SELECT * FROM processed_operations WHERE instance_id=$1 AND op_key=$2
+    DB-->>W2: запись есть либо нет
+
+    alt эффект шага уже применён (op_key найден)
+        W2->>W2: шаг считается выполненным, пишем STEP_COMPLETED без повторного вызова
+    else эффект не применён
+        W2->>S: повторный внешний вызов
+        S-->>W2: результат
+    end
+
+    W2->>DB: BEGIN; INSERT INTO workflow_events (STEP_COMPLETED); COMMIT
+    Note over W2: Восстановление завершено: дублей нет, потерянных шагов нет
