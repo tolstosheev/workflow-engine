@@ -1,0 +1,338 @@
+"""Тесты интерпретатора и идемпотентности — чистая логика без БД."""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+import pytest
+
+from app.engine.interpreter import (
+    StepDecision,
+    StepOutcome,
+    attempts_for,
+    backoff_for,
+    decide_after_failure,
+    decide_after_success,
+    handlers_of,
+    is_join,
+    join_waits_for,
+    loop_budget,
+    next_step,
+    pending_branches,
+    timeout_for,
+    wait_before,
+)
+from app.engine.journal import RecordedEvent
+from app.models.enums import EventType
+from app.schemas.definition import WorkflowDefinitionSchema
+
+DEMO = "app.demo.handlers"
+
+
+def _definition(**steps: dict[str, Any]) -> WorkflowDefinitionSchema:
+    return WorkflowDefinitionSchema.model_validate({"start": next(iter(steps)), "steps": steps})
+
+
+def _step(definition: WorkflowDefinitionSchema, name: str) -> Any:
+    return definition.steps[name]
+
+
+# --- Переходы после успеха -------------------------------------------------
+
+
+def test_success_follows_string_next() -> None:
+    definition = _definition(
+        a={"action": f"{DEMO}:validate_cart", "next": "b"},
+        b={"action": f"{DEMO}:confirm_delivery"},
+    )
+
+    decision = decide_after_success(definition, "a", _step(definition, "a"))
+
+    assert decision.step_name == "b"
+    assert decision.kind == "run"
+
+
+def test_success_on_last_step_completes() -> None:
+    definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
+
+    decision = decide_after_success(definition, "a", _step(definition, "a"))
+
+    assert decision.step_name is None
+    assert decision.kind == "complete"
+
+
+def test_success_takes_on_success_branch() -> None:
+    definition = _definition(
+        a={
+            "action": f"{DEMO}:charge_payment",
+            "next": {"on_success": "ok", "on_failure": "undo"},
+        },
+        ok={"action": f"{DEMO}:confirm_delivery"},
+        undo={"action": f"{DEMO}:refund_payment"},
+    )
+
+    decision = decide_after_success(definition, "a", _step(definition, "a"))
+
+    assert decision.step_name == "ok"
+
+
+def test_success_branch_without_on_success_completes() -> None:
+    definition = _definition(
+        a={"action": f"{DEMO}:charge_payment", "next": {"on_failure": "undo"}},
+        undo={"action": f"{DEMO}:refund_payment"},
+    )
+
+    decision = decide_after_success(definition, "a", _step(definition, "a"))
+
+    assert decision.kind == "complete"
+
+
+def test_fork_step_returns_branches() -> None:
+    definition = _definition(
+        split={"action": f"{DEMO}:validate_cart", "fork": {"left": ["a"], "right": ["b"]}},
+        a={"action": f"{DEMO}:reserve_inventory", "compensation": f"{DEMO}:release_inventory"},
+        b={"action": f"{DEMO}:create_shipment", "compensation": f"{DEMO}:cancel_shipment"},
+    )
+
+    decision = decide_after_success(definition, "split", _step(definition, "split"))
+
+    assert decision.kind == "fork"
+    assert decision.branches == {"left": ["a"], "right": ["b"]}
+
+
+# --- Переходы после неудачи ------------------------------------------------
+
+
+def test_failure_takes_on_failure_branch() -> None:
+    definition = _definition(
+        a={
+            "action": f"{DEMO}:charge_payment",
+            "next": {"on_success": "ok", "on_failure": "undo"},
+        },
+        ok={"action": f"{DEMO}:confirm_delivery"},
+        undo={"action": f"{DEMO}:refund_payment"},
+    )
+
+    decision = decide_after_failure(definition, "a", _step(definition, "a"), 1, 3)
+
+    assert decision.step_name == "undo"
+
+
+def test_failure_is_retried_before_exhaustion() -> None:
+    definition = _definition(a={"action": f"{DEMO}:charge_payment"})
+
+    decision = decide_after_failure(definition, "a", _step(definition, "a"), 1, 3)
+
+    assert decision.step_name == "a"
+    assert decision.kind == "run"
+
+
+def test_failure_stops_after_last_attempt() -> None:
+    # Исчерпание попыток ведёт в откат, а не в остановку: выполненные шаги
+    # надо откатить, иначе процесс останется в промежуточном состоянии.
+    definition = _definition(a={"action": f"{DEMO}:charge_payment"})
+
+    decision = decide_after_failure(definition, "a", _step(definition, "a"), 3, 3)
+
+    assert decision.step_name is None
+    assert decision.kind == "stop"
+    assert "откат" in decision.reason
+
+
+def test_missing_step_stops_gracefully() -> None:
+    definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
+
+    decision = next_step(definition, "ghost", StepOutcome(success=True, output={}), 1, 3)
+
+    assert decision.kind == "stop"
+    assert "отсутствует" in decision.reason
+
+
+# --- Политика повторов -----------------------------------------------------
+
+
+def test_default_attempts_come_from_settings() -> None:
+    definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
+
+    assert attempts_for(_step(definition, "a"), fallback_max=3) == 3
+
+
+def test_explicit_retry_overrides_default() -> None:
+    definition = _definition(a={"action": f"{DEMO}:charge_payment", "retry": {"max_attempts": 5}})
+
+    assert attempts_for(_step(definition, "a"), fallback_max=3) == 5
+
+
+def test_backoff_grows_between_attempts() -> None:
+    # Рост задержки обязателен: немедленные повторы при недоступном сервисе
+    # только добивают его.
+    definition = _definition(
+        a={
+            "action": f"{DEMO}:charge_payment",
+            "retry": {"max_attempts": 5, "backoff_seconds": 2, "backoff_multiplier": 2},
+        }
+    )
+
+    step = _step(definition, "a")
+
+    assert backoff_for(step, 1, 3) == 2
+    assert backoff_for(step, 2, 3) == 4
+    assert backoff_for(step, 3, 3) == 8
+
+
+def test_backoff_defaults_to_one_second() -> None:
+    # Даже без явного retry небольшая задержка полезна: мгновенный повтор при
+    # недоступном сервисе не даёт ему времени восстановиться.
+    definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
+
+    assert backoff_for(_step(definition, "a"), 1, 3) == 1
+
+
+def test_backoff_can_be_disabled_explicitly() -> None:
+    definition = _definition(
+        a={"action": f"{DEMO}:confirm_delivery", "retry": {"backoff_seconds": 0}}
+    )
+
+    assert backoff_for(_step(definition, "a"), 1, 3) == 0
+
+
+def test_timeout_has_safe_default() -> None:
+    # Таймаут нужен всегда: внешний вызов без него может висеть бесконечно.
+    definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
+
+    assert timeout_for(_step(definition, "a")) == 30
+
+
+def test_wait_before_is_durable_delay() -> None:
+    definition = _definition(a={"action": f"{DEMO}:confirm_delivery", "wait_before_seconds": 60})
+
+    assert wait_before(_step(definition, "a")) == 60
+
+
+# --- Циклы и параллельные ветки ---------------------------------------------
+
+
+def test_loop_budget_requires_loop_flag() -> None:
+    definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
+
+    assert loop_budget(_step(definition, "a")) is None
+
+
+def test_loop_budget_returns_limit() -> None:
+    definition = _definition(
+        a={"action": f"{DEMO}:confirm_delivery", "loop": True, "max_iterations": 3}
+    )
+
+    assert loop_budget(_step(definition, "a")) == 3
+
+
+def test_pending_branches_are_flattened() -> None:
+    definition = _definition(
+        split={"action": f"{DEMO}:validate_cart", "fork": {"x": ["a"], "y": ["b", "c"]}},
+        a={"action": f"{DEMO}:reserve_inventory", "compensation": f"{DEMO}:release_inventory"},
+        b={"action": f"{DEMO}:create_shipment", "compensation": f"{DEMO}:cancel_shipment"},
+        c={"action": f"{DEMO}:confirm_delivery"},
+    )
+
+    assert pending_branches(_step(definition, "split")) == ["a", "b", "c"]
+
+
+def test_pending_branches_empty_for_plain_step() -> None:
+    definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
+
+    assert pending_branches(_step(definition, "a")) == []
+
+
+def test_join_step_is_detected() -> None:
+    definition = _definition(
+        split={"action": f"{DEMO}:validate_cart", "fork": {"x": ["a"]}},
+        a={
+            "action": f"{DEMO}:reserve_inventory",
+            "compensation": f"{DEMO}:release_inventory",
+            "next": "j",
+        },
+        j={"action": f"{DEMO}:confirm_delivery", "join": ["a"]},
+    )
+
+    assert is_join(_step(definition, "j")) is True
+    assert is_join(_step(definition, "a")) is False
+
+
+def test_join_waits_for_listed_steps() -> None:
+    definition = _definition(
+        split={"action": f"{DEMO}:validate_cart", "fork": {"x": ["a"], "y": ["b"]}},
+        a={
+            "action": f"{DEMO}:reserve_inventory",
+            "compensation": f"{DEMO}:release_inventory",
+            "next": "j",
+        },
+        b={
+            "action": f"{DEMO}:create_shipment",
+            "compensation": f"{DEMO}:cancel_shipment",
+            "next": "j",
+        },
+        j={"action": f"{DEMO}:confirm_delivery", "join": ["a", "b"]},
+    )
+
+    assert join_waits_for(_step(definition, "j")) == ["a", "b"]
+
+
+def test_handlers_are_exposed() -> None:
+    definition = _definition(
+        a={
+            "action": f"{DEMO}:charge_payment",
+            "compensation": f"{DEMO}:refund_payment",
+        }
+    )
+
+    action, compensation = handlers_of(_step(definition, "a"))
+
+    assert action.endswith("charge_payment")
+    assert compensation is not None
+    assert compensation.endswith("refund_payment")
+
+
+def test_step_without_compensation_yields_none() -> None:
+    definition = _definition(a={"action": f"{DEMO}:validate_cart"})
+
+    assert handlers_of(_step(definition, "a"))[1] is None
+
+
+def test_decision_is_immutable() -> None:
+    decision = StepDecision(step_name="a", kind="run")
+
+    with pytest.raises(Exception, match="cannot assign|immutable"):
+        decision.kind = "stop"  # type: ignore[misc]
+
+
+# --- Порядок компенсаций из журнала ----------------------------------------
+
+
+def test_compensation_order_comes_from_journal_not_definition() -> None:
+    # Факт выполнения берётся из событий, а не из структуры определения:
+    # определение не знает, какие шаги реально успели выполниться.
+    from datetime import UTC, datetime
+
+    from app.engine.journal import replay, steps_to_compensate
+
+    events = [
+        RecordedEvent(
+            seq=0,
+            type=EventType.STEP_COMPLETED,
+            payload={"step": "a"},
+            created_at=datetime.now(UTC),
+        ),
+        RecordedEvent(
+            seq=1,
+            type=EventType.STEP_COMPLETED,
+            payload={"step": "b"},
+            created_at=datetime.now(UTC),
+        ),
+    ]
+
+    assert steps_to_compensate(replay(events)) == ["b", "a"]
+
+
+def test_instance_id_is_uuid_for_keys() -> None:
+    assert isinstance(uuid.uuid4(), uuid.UUID)

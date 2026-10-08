@@ -112,7 +112,7 @@
 ## References
 
 - `AGENTS.md` §3.4 — инварианты идемпотентности
-- `docs/ENGINE.md` §7 — идемпотентность, `op_key`, insert-first
+- `docs/ENGINE.md` §9 — идемпотентность, `op_key`, insert-first
 - `docs/DATA-MODEL.md` §2.6 — `processed_operations`
 - `docs/adr/0002-zhurnal-sobytiy-vmesto-dolgoy-tranzakcii.md` — почему невозможна
   атомарность с внешним сервисом

@@ -59,7 +59,7 @@ docker compose up -d --build
 
 | Сервис | Адрес | Назначение |
 |---|---|---|
-| `db` | `localhost:5433` | PostgreSQL |
+| `db` | `localhost:5434` | PostgreSQL |
 | `api` | http://localhost:8000 | REST API, документация OpenAPI на `/docs` |
 | `worker`, `worker-2` | — | Две реплики воркера исполнения |
 | `frontend` | http://localhost:5173 | Интерфейс |

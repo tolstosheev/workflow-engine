@@ -14,7 +14,7 @@ docker compose up -d --build
 
 | Сервис | Порт | Назначение |
 |---|---|---|
-| `db` | 5433 | PostgreSQL 16 |
+| `db` | 5434 | PostgreSQL 16 |
 | `migrate` | — | Одноразовый: `alembic upgrade head` |
 | `api` | 8000 | REST, SSE, метрики |
 | `worker` | — | Воркер |

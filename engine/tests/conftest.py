@@ -41,3 +41,35 @@ async def db_engine() -> AsyncIterator[None]:
         yield
     finally:
         await dispose_engine()
+
+
+@pytest.fixture(autouse=True)
+async def clean_database(request: pytest.FixtureRequest, db_engine: None) -> AsyncIterator[None]:
+    """Очищает таблицы перед каждым интеграционным и chaos-тестом.
+
+    Откат в фикстуре `db_session` не спасает: часть тестов коммитит намеренно
+    (HTTP-слой, конкуренция воркеров), и их данные оставались бы в базе, ломая
+    выборки следующих тестов. `alembic_version` не трогается — иначе миграции
+    пришлось бы применять заново.
+    """
+    needs_db = any(
+        request.node.get_closest_marker(name) is not None for name in ("integration", "chaos")
+    )
+    if not needs_db:
+        yield
+        return
+
+    from sqlalchemy import text
+
+    from app.core.db import get_session_factory
+
+    async with get_session_factory()() as session:
+        await session.execute(
+            text(
+                "TRUNCATE TABLE compensation_log, step_runs, timers, processed_operations, "
+                "workflow_events, demo_payments, demo_shipments, demo_inventory, "
+                "workflow_instances, workflow_definitions RESTART IDENTITY CASCADE"
+            )
+        )
+        await session.commit()
+    yield
