@@ -30,7 +30,7 @@ docker compose up -d --build
 
 | Сервис | Адрес |
 |---|---|
-| `db` | `localhost:5433` |
+| `db` | `localhost:5434` |
 | `api` | http://localhost:8000 |
 | `frontend` | http://localhost:5173 |
 | Swagger UI | http://localhost:8000/docs |
