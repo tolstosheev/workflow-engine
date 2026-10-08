@@ -86,8 +86,8 @@ origin — CORS в разработке не мешает.
 make check              # всё: ruff, mypy, eslint, tsc
 make check-backend      # ruff check, ruff format --check, mypy
 make check-frontend     # eslint, tsc
-make test               # тесты с порогом покрытия 90%
-make test-fast          # тесты без проверки покрытия
+make test               # unit + integration с порогом покрытия 90% (нужна БД)
+make test-fast          # только unit, без БД и без порога
 make coverage           # HTML-отчёт: engine/htmlcov/index.html
 ```
 
@@ -122,8 +122,8 @@ engine/tests/
 
 | Маркер | Что проверяет | Нужна БД |
 |---|---|---|
-| без маркера | Unit: конфигурация, ошибки, replay, планировщик переходов | нет |
-| `integration` | Транзакции, журнал, lease на PostgreSQL | да |
+| без маркера | Unit: конфигурация, ошибки, replay, валидация дефинишена | нет |
+| `integration` | Транзакции, журнал, lease, сервисы и HTTP-слой на PostgreSQL | да |
 | `chaos` | Падение воркера, таймаут шага, недоступность сервиса | да |
 
 ```bash
@@ -137,6 +137,10 @@ make test-full           # всё вместе с порогом покрыти�
 Порог — **90% branch-покрытия** (`--cov-branch --cov-fail-under=90`).
 Line-only не считается: `if` без `else` даёт 100% по строкам при
 непроверенной ветке.
+
+Маркер `integration` входит в порог: сервисный слой и HTTP-слой невозможно
+проверить без настоящей БД, и его исключение сделало бы порог недостижимым.
+`chaos` не входит — эти тесты поднимают дополнительные процессы и медленны.
 
 Исключены из измерения: `app/main.py` (точка входа), `alembic/` (миграции),
 `app/models/base.py` (метаданные без логики).
