@@ -1,0 +1,32 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-surface: oklch(0.18 0.01 260);
+  --color-surface-raised: oklch(0.22 0.012 260);
+  --color-surface-border: oklch(0.3 0.014 260);
+  --color-accent: oklch(0.7 0.15 200);
+  --color-success: oklch(0.72 0.16 150);
+  --color-warning: oklch(0.78 0.15 80);
+  --color-danger: oklch(0.65 0.19 25);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface);
+  color: oklch(0.95 0 0);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    'Segoe UI',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre {
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
+}
