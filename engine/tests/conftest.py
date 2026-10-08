@@ -67,7 +67,7 @@ async def clean_database(request: pytest.FixtureRequest, db_engine: None) -> Asy
         await session.execute(
             text(
                 "TRUNCATE TABLE compensation_log, step_runs, timers, processed_operations, "
-                "workflow_events, demo_payments, demo_shipments, demo_inventory, "
+                "workflow_events, chaos_rules, demo_payments, demo_shipments, demo_inventory, "
                 "workflow_instances, workflow_definitions RESTART IDENTITY CASCADE"
             )
         )

@@ -31,6 +31,7 @@ from app.core.errors import LeaseLostError
 from app.engine import idempotency, interpreter, lease, scheduler
 from app.engine.journal import RecordedEvent, append_event, read_events, replay
 from app.handlers.registry import resolve_handler
+from app.models import chaos
 from app.models.enums import EventType, InstanceStatus, StepRunStatus
 from app.models.workflow import StepRun, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
@@ -212,6 +213,30 @@ async def execute_step(
     return outcome
 
 
+async def _apply_chaos(
+    db_session: AsyncSession,
+    instance_id: uuid.UUID,
+    step_name: str,
+    timeout_seconds: float,
+) -> None:
+    """Применяет правило инъекции отказа, если оно зарегистрировано.
+
+    Проверка идёт после идемпотентности: уже применённый шаг повторно ломать
+    бессмысленно, а пропущенный чекпоинт важнее демонстрации отказа.
+    """
+    rule = await chaos.find_rule(db_session, instance_id, step_name)
+    if rule is None:
+        return
+
+    if rule.mode == "timeout":
+        # Имитация зависшего сервиса: вызов не возвращается, и срабатывает
+        # таймаут шага. Так проверяется, что lease продлевается во время
+        # долгой работы.
+        await asyncio.sleep(timeout_seconds + 1)
+
+    raise StepFailed(rule.error, retryable=True)
+
+
 async def _invoke(
     db_session: AsyncSession,
     definition: WorkflowDefinitionSchema,
@@ -230,6 +255,8 @@ async def _invoke(
         # Повтор после падения: эффект уже применён, второй вызов был бы дублем.
         logger.info("step.skipped_already_applied", extra={"step": step_name, "attempt": attempt})
         return interpreter.StepOutcome(success=True, output=dict(variables))
+
+    await _apply_chaos(db_session, instance_id, step_name, timeout_seconds)
 
     handler: Callable[..., Any] = resolve_handler(step.action)
     context = await build_context(

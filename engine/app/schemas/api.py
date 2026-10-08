@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import InstanceStatus
+from app.models.enums import EventType, InstanceStatus, StepRunStatus
 from app.schemas.definition import WorkflowDefinitionSchema
 
 
@@ -92,3 +92,131 @@ class InstanceListOut(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class InstanceCreate(BaseModel):
+    """Тело запроса запуска инстанса."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    definition_id: uuid.UUID
+    input: dict[str, Any] = Field(default_factory=dict)
+
+
+class InstanceCreated(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    definition: DefinitionRef
+    status: InstanceStatus
+    input: dict[str, Any]
+    created_at: datetime
+
+
+class EventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    seq: int
+    type: EventType
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class EventListOut(BaseModel):
+    items: list[EventOut]
+    total: int
+
+
+class StepRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    step_name: str
+    attempt: int
+    status: StepRunStatus
+    output: dict[str, Any] | None
+    error: str | None
+    compensated: bool
+    started_at: datetime
+    finished_at: datetime | None
+
+
+class StepListOut(BaseModel):
+    items: list[StepRunOut]
+
+
+class TimelineEntry(BaseModel):
+    kind: Literal["step", "event"]
+    step_name: str | None = None
+    attempt: int | None = None
+    status: str | None = None
+    error: str | None = None
+    compensated: bool | None = None
+    seq: int | None = None
+    type: str | None = None
+    payload: dict[str, Any] | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class TimelineOut(BaseModel):
+    items: list[TimelineEntry]
+
+
+class InstanceStateOut(BaseModel):
+    """Состояние, восстановленное из журнала."""
+
+    status: InstanceStatus
+    current_step: str | None
+    variables: dict[str, Any]
+    completed_steps: list[str]
+    pending_compensations: list[str]
+    is_terminal: bool
+
+
+class ForceCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ActionResult(BaseModel):
+    status: InstanceStatus
+    message: str
+
+
+# --- Инъекция отказов ------------------------------------------------------
+
+
+class ChaosStepRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instance_id: uuid.UUID | None = None
+    step: str | None = None
+    mode: Literal["once", "always", "timeout"] = "always"
+    error: str = "сбой шага (инъекция)"
+
+
+class ChaosServiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    service: Literal["inventory", "payment", "shipment"]
+
+
+class ChaosLeaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instance_id: uuid.UUID
+    duration_seconds: int = Field(default=40, ge=1, le=600)
+
+
+class ChaosLeaseStop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instance_id: uuid.UUID
+
+
+class ChaosResult(BaseModel):
+    active: list[str]
+    message: str

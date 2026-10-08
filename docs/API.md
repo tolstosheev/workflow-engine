@@ -44,8 +44,23 @@ curl http://localhost:8000/health
 
 ### `GET /metrics`
 
-Метрики Prometheus в текстовом формате. Порт отдельный не выделяется:
+Метрики Prometheus в формате OpenMetrics. Порт отдельный не выделяется:
 эндпоинт закрыт на уровне сети в эксплуатации, в разработке доступен свободно.
+
+| Метрика | Тип | Что показывает |
+|---|---|---|
+| `workflow_instances{status}` | gauge | Инстансы по состояниям |
+| `workflow_instances_created_total` | counter | Создано инстансов |
+| `workflow_steps{step,result}` | gauge | Исполнения шагов: `success`/`failure` |
+| `workflow_step_duration_seconds` | histogram | Длительность шагов |
+| `workflow_compensations{step,result}` | gauge | Попытки компенсаций |
+| `workflow_lease_acquired_total` | counter | Успешные захваты аренды |
+| `workflow_lease_lost_total` | counter | Потерянные аренды |
+
+Метрики состояния читаются из БД при каждом сборе, а не ведутся в памяти:
+после перезапуска воркера счётчики обнулились бы, тогда как реальная картина
+по инстансам сохранилась. Статусы с нулевым значением публикуются явно — иначе
+статус просто исчезает с графика, и падение выглядит как «инстансы пропали».
 
 ---
 
@@ -241,6 +256,24 @@ curl -X POST http://localhost:8000/api/instances \
 Агрегированное представление для интерфейса: шаги, события и компенсации в
 одном потоке, упорядоченном по времени.
 
+### `GET /api/instances/{id}/state`
+
+Состояние, восстановленное из журнала: то, что увидит воркер после подхвата.
+
+```json
+{
+  "status": "RUNNING",
+  "current_step": "charge_payment",
+  "variables": {"items_count": 2, "reserved_units": 2},
+  "completed_steps": ["validate_cart", "reserve_inventory"],
+  "pending_compensations": [],
+  "is_terminal": false
+}
+```
+
+`pending_compensations` — шаги к откату в обратном порядке, вычисленный из
+журнала, а не из структуры определения.
+
 ### `POST /api/instances/{id}/cancel`
 
 Запрос отмены. Инстанс переходит в `CANCELLING`, затем в `COMPENSATING`.
@@ -255,7 +288,8 @@ curl -X POST http://localhost:8000/api/instances/b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4
 
 Форсированное завершение без компенсаций. Требует `{"reason": "..."}`: приёмка
 в обход компенсаций оставляет побочные эффекты, и это должно быть отражено
-в данных.
+в данных. Принудительное завершение снимает и неотменённые таймеры — иначе
+таймер разбудил бы уже завершённый инстанс.
 
 ```bash
 curl -X POST http://localhost:8000/api/instances/{id}/complete \
@@ -268,8 +302,10 @@ curl -X POST http://localhost:8000/api/instances/{id}/complete \
 Повтор компенсации после `COMPENSATION_FAILED`.
 
 ```json
-{ "status": "COMPENSATING", "message": "компенсация release_inventory поставлена на повтор" }
+{ "status": "COMPENSATING", "message": "откат поставлен на повтор" }
 ```
+
+`409`, если откат не требовался: инстанс не в состоянии `COMPENSATION_FAILED`.
 
 ---
 
@@ -298,8 +334,25 @@ data: {"instance_id":"b2c3d4e5-...","seq":7,"type":"STEP_COMPLETED","payload":{"
 | `compensation` | Изменилось состояние компенсации |
 | `heartbeat` | Служебное, раз в `SSE_HEARTBEAT_SECONDS` |
 
+Фактический поток отдаёт события журнала, а не отдельные типы:
+
+```
+event: STEP_COMPLETED
+data: {"instance_id":"b2c3d4e5-...","type":"STEP_COMPLETED","payload":{"step":"reserve_inventory","output":{...}},"created_at":"2026-10-08T12:00:03Z"}
+```
+
+Публикуются `INSTANCE_CREATED`, `INSTANCE_COMPLETED`, `INSTANCE_COMPENSATED`,
+`INSTANCE_CANCELLED`, `STEP_COMPLETED`, `STEP_FAILED`, `COMPENSATION_STARTED`,
+`COMPENSATION_COMPLETED`, `COMPENSATION_FAILED`. `LEASE_EXPIRED` не
+публикуется: на экране он ничего не меняет и только увеличивает поток.
+
+Курсор — время последнего прочитанного события (`seq` уникален только внутри
+инстанса и для глобального потока не годится). Пропущенные события клиент
+догружает через `GET /instances/{id}/events` с известным `from_seq`.
+
 Heartbeat нужен, чтобы прокси и балансировщики не закрывали соединение по
-таймауту простоя.
+таймауту простоя. Заголовки ответа: `Cache-Control: no-cache` и
+`X-Accel-Buffering: no` — без второго прокси соберёт все события в пачку.
 
 Фронтенд получает поток через `EventSource`. Прокси настроен только на путь
 `/api`: `EventSource` не позволяет задавать заголовки, поэтому CORS
@@ -310,6 +363,14 @@ Heartbeat нужен, чтобы прокси и балансировщики н
 ## 6. Инъекция отказов
 
 Эндпоинты для демонстрации отказоустойчивости. Не для эксплуатации.
+
+Правила хранятся в таблице `chaos_rules`, а не в памяти API: воркер работает
+в отдельном процессе и должен увидеть инъекцию, зарегистрированную через HTTP.
+Проверка правила выполняется непосредственно перед вызовом обработчика и
+**после** проверки идемпотентности: ломать уже применённый шаг бессмысленно.
+
+Поля `instance_id` и `step` необязательны. Пустое поле означает «любой»:
+правило без инстанса действует на все инстансы, без шага — на все шаги.
 
 ### `POST /api/chaos/fail-step`
 
@@ -328,11 +389,15 @@ curl -X POST http://localhost:8000/api/chaos/fail-step \
 
 Режим `timeout` имитирует зависший сервис: обработчик не возвращает результат,
 пока не истечёт таймаут шага. Это проверяет, что lease продлевается во время
-долгого шага и не протухает.
+долгой работы.
+
+Режим `once` помечается израсходованным при первом применении — иначе «сломать
+один раз» ломало бы все последующие шаги.
 
 ### `POST /api/chaos/fail-service`
 
-Отключает обработчики предметной области: `{"service": "payment"}`.
+Отключает шаг предметной области: `{"service": "payment"}` →
+правило на шаг `charge_payment`.
 
 ### `POST /api/chaos/stop-lease`
 
@@ -344,12 +409,16 @@ curl -X POST http://localhost:8000/api/chaos/stop-lease \
   -d '{"instance_id": "b2c3d4e5-...", "duration_seconds": 40}'
 ```
 
-Через `LEASE_TTL_SECONDS` другой воркер перехватит инстанс — это и есть
-демонстрация восстановления.
+Сдвигает `heartbeat_at` в прошлое: heartbeat истекает вместе с lease, и инстанс
+освобождается по TTL.
 
-### `DELETE /api/chaos`
+### `POST /api/chaos/resume-lease`
 
-Снимает все активные флаги.
+Возвращает `heartbeat_at` в настоящее.
+
+### `GET /api/chaos` · `DELETE /api/chaos`
+
+Список активных инъекций и снятие всех разом.
 
 ---
 

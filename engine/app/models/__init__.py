@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from app.models.base import Base, TimestampMixin
+from app.models.chaos import ChaosRule
 from app.models.enums import (
     ACTIVE_STATUSES,
     TERMINAL_STATUSES,
@@ -32,6 +33,7 @@ __all__ = [
     "ACTIVE_STATUSES",
     "TERMINAL_STATUSES",
     "Base",
+    "ChaosRule",
     "CompensationLog",
     "CompensationStatus",
     "DemoInventoryItem",
