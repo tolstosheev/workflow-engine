@@ -24,7 +24,9 @@ services:
       context: ./engine
     command: ["alembic", "upgrade", "head"]
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://workflow:workflow@db:5432/workflow_engine}
+      # Alembic работает через синхронный драйвер: asyncpg в синхронном
+      # контексте падает с MissingGreenlet на первом соединении.
+      SYNC_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-workflow}@db:5432/${POSTGRES_DB:-workflow_engine}
     depends_on:
       db:
         condition: service_healthy
