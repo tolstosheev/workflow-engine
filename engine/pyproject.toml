@@ -1,0 +1,87 @@
+[project]
+name = "workflow-engine"
+version = "0.1.0"
+description = "Распределённый движок выполнения workflow с поддержкой долгих транзакций и компенсаций"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "prometheus-client>=0.21",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-prometheus-client>=0.0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+# --cov-report=term-missing: сразу видно, какая строка осталась непокрытой,
+# иначе «90% achieved» ничего не говорит о том, где именно дыра.
+addopts = "-q --disable-warnings --cov=app --cov-branch --cov-report=term-missing:skip-covered"
+markers = [
+    "integration: тесты с реальной БД",
+    "chaos: тесты отказоустойчивости (падение воркера, таймауты)",
+]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    # Точка входа: создаётся при импорте, проверяется e2e, а не юнит-тестами.
+    "app/main.py",
+    # Миграции исполняются alembic'ом, а не импортируются в тестах.
+    "alembic/*",
+    # Метаданные и конвенция имён: логики нет, только декларации.
+    "app/models/base.py",
+]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["pydantic.mypy"]
+check_untyped_defs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
