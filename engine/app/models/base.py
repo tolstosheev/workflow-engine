@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, MetaData, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -29,12 +29,20 @@ UUID_PK_DEFAULT = text("gen_random_uuid()")
 
 
 class TimestampMixin:
+    # Значение по умолчанию задаётся и на Python, и на сервере: Python-side
+    # нужен, чтобы ORM знал время сразу после INSERT и не пытался читать
+    # его лениво из синхронного кода; server_default — для сырых вставок в
+    # journal.py, у которых нет Python-объекта.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
         server_default=func.now(),
-        onupdate=func.now(),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
