@@ -204,7 +204,7 @@ lease. Никаких `pg_advisory_lock`: удержание блокировк�
 ```mermaid
 flowchart LR
     subgraph host["Один узел (docker compose)"]
-        DB[("db<br/>PostgreSQL 16<br/>:5433")]
+        DB[("db<br/>PostgreSQL 16<br/>:5434")]
         MIG["migrate<br/>одноразовый"]
         API["api<br/>:8000"]
         W1["worker"]

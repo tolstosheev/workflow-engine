@@ -1,7 +1,14 @@
-"""Воркер-процесс: подбирает готовые инстансы и исполняет их шаги.
+"""Р В РІР‚в„ўР В РЎвЂўР РЋР вЂљР В РЎвЂќР В Р’ВµР РЋР вЂљ: Р РЋРІР‚В Р В РЎвЂР В РЎвЂќР В Р’В» Р В РЎвЂ”Р В РЎвЂўР В РўвЂР В Р’В±Р В РЎвЂўР РЋР вЂљР В Р’В° Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“Р В РЎвЂўР В Р вЂ  Р В РЎвЂ Р В РЎвЂР РЋРІР‚В¦ Р В РЎвЂР РЋР С“Р В РЎвЂ”Р В РЎвЂўР В Р’В»Р В Р вЂ¦Р В Р’ВµР В Р вЂ¦Р В РЎвЂР РЋР РЏ.
 
-Ядро наполняется в Фазе 2; на текущем этапе — каркас цикла опроса с lease,
-чтобы состав контейнера в `docker-compose.yml` был определён уже сейчас.
+Р В РІР‚в„ўР В РЎвЂўР РЋР вЂљР В РЎвЂќР В Р’ВµР РЋР вЂљ Р В Р вЂ¦Р В РЎвЂР РЋРІР‚РЋР В Р’ВµР В РЎвЂ“Р В РЎвЂў Р В Р вЂ¦Р В Р’Вµ Р В РЎвЂ”Р В РЎвЂўР В РЎВР В Р вЂ¦Р В РЎвЂР РЋРІР‚С™ Р В РЎВР В Р’ВµР В Р’В¶Р В РўвЂР РЋРЎвЂњ Р РЋРІвЂљВ¬Р В Р’В°Р В РЎвЂ“Р В Р’В°Р В РЎВР В РЎвЂ. Р В РІР‚в„ўР РЋР С“Р РЋРІР‚В Р РЋР С“Р В РЎвЂўР РЋР С“Р РЋРІР‚С™Р В РЎвЂўР РЋР РЏР В Р вЂ¦Р В РЎвЂР В Р’Вµ Р Р†Р вЂљРІР‚Сњ Р В Р вЂ  Р В Р’В¶Р РЋРЎвЂњР РЋР вЂљР В Р вЂ¦Р В Р’В°Р В Р’В»Р В Р’Вµ, Р В РЎвЂ”Р В РЎвЂўР РЋР РЉР РЋРІР‚С™Р В РЎвЂўР В РЎВР РЋРЎвЂњ
+Р В РЎвЂ”Р В Р’ВµР РЋР вЂљР В Р’ВµР В Р’В·Р В Р’В°Р В РЎвЂ”Р РЋРЎвЂњР РЋР С“Р В РЎвЂќ Р В Р вЂ Р В РЎвЂўР РЋР вЂљР В РЎвЂќР В Р’ВµР РЋР вЂљР В Р’В° Р В Р вЂ  Р В Р’В»Р РЋР вЂ№Р В Р’В±Р В РЎвЂўР В РІвЂћвЂ“ Р В РЎВР В РЎвЂўР В РЎВР В Р’ВµР В Р вЂ¦Р РЋРІР‚С™ Р В Р вЂ¦Р В Р’Вµ Р В РЎвЂ”Р РЋР вЂљР В РЎвЂР В Р вЂ Р В РЎвЂўР В РўвЂР В РЎвЂР РЋРІР‚С™ Р В Р вЂ¦Р В РЎвЂ Р В РЎвЂќ Р В РЎвЂ”Р В РЎвЂўР РЋРІР‚С™Р В Р’ВµР РЋР вЂљР В Р’Вµ, Р В Р вЂ¦Р В РЎвЂ Р В РЎвЂќ Р В РўвЂР РЋРЎвЂњР В Р’В±Р В Р’В»Р В РЎвЂР РЋР вЂљР В РЎвЂўР В Р вЂ Р В Р’В°Р В Р вЂ¦Р В РЎвЂР РЋР вЂ№
+Р РЋР вЂљР В Р’В°Р В Р’В±Р В РЎвЂўР РЋРІР‚С™Р РЋРІР‚в„–: Р В РЎвЂ”Р В РЎвЂўР В РўвЂР РЋРІР‚В¦Р В Р вЂ Р В Р’В°Р РЋРІР‚РЋР В Р’ВµР В Р вЂ¦Р В Р вЂ¦Р РЋРІР‚в„–Р В РІвЂћвЂ“ Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“ Р В Р вЂ Р В РЎвЂўР РЋР С“Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р В Р’В°Р В Р вЂ Р В Р’В»Р В РЎвЂР В Р вЂ Р В Р’В°Р В Р’ВµР РЋРІР‚С™Р РЋР С“Р РЋР РЏ replay'Р В РЎвЂўР В РЎВ.
+
+Р В Р’В¦Р В РЎвЂР В РЎвЂќР В Р’В» Р РЋР С“Р В РЎвЂўР РЋР С“Р РЋРІР‚С™Р В РЎвЂўР В РЎвЂР РЋРІР‚С™ Р В РЎвЂР В Р’В· Р РЋРІР‚С™Р РЋР вЂљР РЋРІР‚ВР РЋРІР‚В¦ Р РЋРІвЂљВ¬Р В Р’В°Р В РЎвЂ“Р В РЎвЂўР В Р вЂ :
+
+1. Р В РЎвЂ”Р В РЎвЂўР В РўвЂР В Р’В±Р В РЎвЂўР РЋР вЂљ Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“Р В Р’В° (`claim_next`) Р Р†Р вЂљРІР‚Сњ Р В РЎвЂўР В Р вЂ¦ Р В Р’В¶Р В Р’Вµ Р В Р’В·Р В Р’В°Р РЋРІР‚В¦Р В Р вЂ Р В Р’В°Р РЋРІР‚С™ Р В Р’В°Р РЋР вЂљР В Р’ВµР В Р вЂ¦Р В РўвЂР РЋРІР‚в„–;
+2. Р В Р вЂ Р В РЎвЂўР РЋР С“Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р В РЎвЂўР В Р вЂ Р В Р’В»Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’Вµ Р РЋР С“Р В РЎвЂўР РЋР С“Р РЋРІР‚С™Р В РЎвЂўР РЋР РЏР В Р вЂ¦Р В РЎвЂР РЋР РЏ Р В РЎвЂ”Р В РЎвЂў Р В Р’В¶Р РЋРЎвЂњР РЋР вЂљР В Р вЂ¦Р В Р’В°Р В Р’В»Р РЋРЎвЂњ Р В РЎвЂ Р В РЎвЂР РЋР С“Р В РЎвЂ”Р В РЎвЂўР В Р’В»Р В Р вЂ¦Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’Вµ Р В РЎвЂўР В РўвЂР В Р вЂ¦Р В РЎвЂўР В РЎвЂ“Р В РЎвЂў Р РЋРІвЂљВ¬Р В Р’В°Р В РЎвЂ“Р В Р’В°;
+3. Р В РЎвЂўР РЋР С“Р В Р вЂ Р В РЎвЂўР В Р’В±Р В РЎвЂўР В Р’В¶Р В РўвЂР В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’Вµ Р В Р’В°Р РЋР вЂљР В Р’ВµР В Р вЂ¦Р В РўвЂР РЋРІР‚в„–, Р В Р’ВµР РЋР С“Р В Р’В»Р В РЎвЂ Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“ Р В Р вЂ¦Р В Р’Вµ Р РЋРІР‚С™Р РЋР вЂљР В Р’ВµР В Р’В±Р РЋРЎвЂњР В Р’ВµР РЋРІР‚С™ Р В Р вЂ¦Р В Р’ВµР В РЎВР В Р’ВµР В РўвЂР В Р’В»Р В Р’ВµР В Р вЂ¦Р В Р вЂ¦Р В РЎвЂўР В РЎвЂ“Р В РЎвЂў Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР В РўвЂР В РЎвЂўР В Р’В»Р В Р’В¶Р В Р’ВµР В Р вЂ¦Р В РЎвЂР РЋР РЏ.
 """
 
 from __future__ import annotations
@@ -13,31 +20,279 @@ import os
 import signal
 import socket
 import uuid
+from dataclasses import dataclass
+
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.db import dispose_engine, session_scope
 from app.core.logging import configure_logging
+from app.engine import executor, lease, saga, scheduler
+from app.engine.journal import append_event, read_events, replay
+from app.models.enums import TERMINAL_STATUSES, EventType, InstanceStatus
+from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
+from app.schemas.definition import WorkflowDefinitionSchema
 
 logger = logging.getLogger(__name__)
+
+STATUS_EVENTS = {
+    InstanceStatus.PENDING: EventType.INSTANCE_STARTED,
+    InstanceStatus.RUNNING: EventType.INSTANCE_STARTED,
+    InstanceStatus.WAITING: EventType.INSTANCE_STARTED,
+    InstanceStatus.COMPENSATING: EventType.INSTANCE_STARTED,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CycleResult:
+    """Р В Р’ВР РЋРІР‚С™Р В РЎвЂўР В РЎвЂ“ Р В РЎвЂўР В РўвЂР В Р вЂ¦Р В РЎвЂўР В РЎвЂ“Р В РЎвЂў Р РЋРІР‚В Р В РЎвЂР В РЎвЂќР В Р’В»Р В Р’В° Р Р†Р вЂљРІР‚Сњ Р В РўвЂР В Р’В»Р РЋР РЏ Р В Р’В»Р В РЎвЂўР В РЎвЂ“Р В РЎвЂўР В Р вЂ  Р В РЎвЂ Р В РЎВР В Р’ВµР РЋРІР‚С™Р РЋР вЂљР В РЎвЂР В РЎвЂќ."""
+
+    handled: bool
+    step_executed: bool
+    terminal: bool
+    lease_lost: bool
+
+
+def _worker_id() -> str:
+    # Р В Р’ВР В РўвЂР В Р’ВµР В Р вЂ¦Р РЋРІР‚С™Р В РЎвЂР РЋРІР‚С›Р В РЎвЂР В РЎвЂќР В Р’В°Р РЋРІР‚С™Р В РЎвЂўР РЋР вЂљ Р В Р вЂ Р В РЎвЂќР В Р’В»Р РЋР вЂ№Р РЋРІР‚РЋР В Р’В°Р В Р’ВµР РЋРІР‚С™ Р В РЎвЂР В РЎВР РЋР РЏ Р РЋРЎвЂњР В Р’В·Р В Р’В»Р В Р’В°: Р В РЎвЂ”Р В РЎвЂў Р В Р вЂ¦Р В Р’ВµР В РЎВР РЋРЎвЂњ Р В Р вЂ Р В РЎвЂР В РўвЂР В Р вЂ¦Р В РЎвЂў, Р В РЎвЂќР В Р’В°Р В РЎвЂќР В РЎвЂўР В РІвЂћвЂ“ Р В РЎвЂР В Р’В· Р В Р вЂ Р В РЎвЂўР РЋР вЂљР В РЎвЂќР В Р’ВµР РЋР вЂљР В РЎвЂўР В Р вЂ  Р В Р вЂ
+    # docker-compose Р РЋР С“Р В Р’ВµР В РІвЂћвЂ“Р РЋРІР‚РЋР В Р’В°Р РЋР С“ Р В РўвЂР В Р’ВµР РЋР вЂљР В Р’В¶Р В РЎвЂР РЋРІР‚С™ Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“.
+    return f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
 
 def _install_stop_handlers(stop_event: asyncio.Event) -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        # add_signal_handler недоступен на Windows и вне главного потока:
-        # без него SIGTERM завершит процесс минуя finally, не закрыв пул.
+        # add_signal_handler Р В Р вЂ¦Р В Р’ВµР В РўвЂР В РЎвЂўР РЋР С“Р РЋРІР‚С™Р РЋРЎвЂњР В РЎвЂ”Р В Р’ВµР В Р вЂ¦ Р В Р вЂ¦Р В Р’В° Windows Р В РЎвЂ Р В Р вЂ Р В Р вЂ¦Р В Р’Вµ Р В РЎвЂ“Р В Р’В»Р В Р’В°Р В Р вЂ Р В Р вЂ¦Р В РЎвЂўР В РЎвЂ“Р В РЎвЂў Р В РЎвЂ”Р В РЎвЂўР РЋРІР‚С™Р В РЎвЂўР В РЎвЂќР В Р’В°:
+        # Р В Р’В±Р В Р’ВµР В Р’В· Р В Р вЂ¦Р В Р’ВµР В РЎвЂ“Р В РЎвЂў SIGTERM Р В Р’В·Р В Р’В°Р В Р вЂ Р В Р’ВµР РЋР вЂљР РЋРІвЂљВ¬Р В РЎвЂР РЋРІР‚С™ Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР РЋРІР‚В Р В Р’ВµР РЋР С“Р РЋР С“ Р В РЎВР В РЎвЂР В РЎВР В РЎвЂў finally, Р В Р вЂ¦Р В Р’Вµ Р В Р’В·Р В Р’В°Р В РЎвЂќР РЋР вЂљР РЋРІР‚в„–Р В Р вЂ  Р В РЎвЂ”Р РЋРЎвЂњР В Р’В».
         with contextlib.suppress(NotImplementedError, AttributeError, ValueError):
             loop.add_signal_handler(sig, stop_event.set)
 
 
-async def run_worker(stop_event: asyncio.Event | None = None) -> None:
-    """Цикл опроса до получения сигнала остановки.
+async def _load_definition(
+    definition_id: uuid.UUID, cache: dict[uuid.UUID, WorkflowDefinitionSchema]
+) -> WorkflowDefinitionSchema | None:
+    """Р В Р’В§Р В РЎвЂР РЋРІР‚С™Р В Р’В°Р В Р’ВµР РЋРІР‚С™ Р В РЎвЂўР В РЎвЂ”Р РЋР вЂљР В Р’ВµР В РўвЂР В Р’ВµР В Р’В»Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’Вµ, Р В РЎвЂќР РЋР РЉР РЋРІвЂљВ¬Р В РЎвЂР РЋР вЂљР РЋРЎвЂњР РЋР РЏ Р РЋР вЂљР В Р’В°Р В Р’В·Р В РЎвЂўР В Р’В±Р РЋР вЂљР В Р’В°Р В Р вЂ¦Р В Р вЂ¦Р РЋРЎвЂњР РЋР вЂ№ Р РЋР С“Р РЋРІР‚В¦Р В Р’ВµР В РЎВР РЋРЎвЂњ.
 
-    `stop_event` внедряется, чтобы тест мог остановить цикл без отправки
-    сигнала всему процессу.
+    Р В РЎв„ўР РЋР РЉР РЋРІвЂљВ¬ Р РЋРІР‚С™Р В РЎвЂўР В Р’В»Р РЋР Р‰Р В РЎвЂќР В РЎвЂў Р В РЎвЂ”Р В РЎвЂў id: Р В Р вЂ Р В Р’ВµР РЋР вЂљР РЋР С“Р В РЎвЂР РЋР РЏ Р В РўвЂР В Р’ВµР РЋРІР‚С›Р В РЎвЂР В Р вЂ¦Р В РЎвЂР РЋРІвЂљВ¬Р В Р’ВµР В Р вЂ¦Р В Р’В° Р В Р вЂ¦Р В Р’ВµР В РЎвЂР В Р’В·Р В РЎВР В Р’ВµР В Р вЂ¦Р РЋР РЏР В Р’ВµР В РЎВР В Р’В°, Р В Р’В° Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“ Р В Р вЂ Р РЋР С“Р В Р’ВµР В РЎвЂ“Р В РўвЂР В Р’В° Р РЋР С“Р РЋР С“Р РЋРІР‚в„–Р В Р’В»Р В Р’В°Р В Р’ВµР РЋРІР‚С™Р РЋР С“Р РЋР РЏ
+    Р В Р вЂ¦Р В Р’В° Р В РЎвЂќР В РЎвЂўР В Р вЂ¦Р В РЎвЂќР РЋР вЂљР В Р’ВµР РЋРІР‚С™Р В Р вЂ¦Р РЋРЎвЂњР РЋР вЂ№ Р В Р вЂ Р В Р’ВµР РЋР вЂљР РЋР С“Р В РЎвЂР РЋР вЂ№.
+    """
+    if definition_id in cache:
+        return cache[definition_id]
+
+    async with session_scope() as session:
+        row = await session.get(WorkflowDefinition, definition_id)
+        if row is None:
+            return None
+        parsed = WorkflowDefinitionSchema.model_validate(row.definition)
+
+    cache[definition_id] = parsed
+    return parsed
+
+
+async def _compensate(
+    instance_id: uuid.UUID,
+    definition: WorkflowDefinitionSchema,
+    worker_id: str,
+) -> bool:
+    """Р В РІР‚в„ўР РЋРІР‚в„–Р В РЎвЂ”Р В РЎвЂўР В Р’В»Р В Р вЂ¦Р РЋР РЏР В Р’ВµР РЋРІР‚С™ Р В РЎвЂўР РЋРІР‚С™Р В РЎвЂќР В Р’В°Р РЋРІР‚С™ Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“Р В Р’В°. `True` Р Р†Р вЂљРІР‚Сњ Р В РЎвЂўР РЋРІР‚С™Р В РЎвЂќР В Р’В°Р РЋРІР‚С™ Р В Р’В·Р В Р’В°Р В Р вЂ Р В Р’ВµР РЋР вЂљР РЋРІвЂљВ¬Р РЋРІР‚ВР В Р вЂ¦.
+
+    Р В РЎвЂєР РЋРІР‚С™Р В РЎвЂќР В Р’В°Р РЋРІР‚С™ Р В РЎвЂўР В Р’В±Р РЋР РЏР В Р’В·Р В Р’В°Р В Р вЂ¦ Р В Р’В±Р РЋРІР‚в„–Р РЋРІР‚С™Р РЋР Р‰ Р В Р вЂ Р В РЎвЂР В РўвЂР В Р’ВµР В Р вЂ¦ Р В Р вЂ  Р В РЎвЂР В Р вЂ¦Р РЋРІР‚С™Р В Р’ВµР РЋР вЂљР РЋРІР‚С›Р В Р’ВµР В РІвЂћвЂ“Р РЋР С“Р В Р’Вµ: Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР В Р вЂ Р В Р’В°Р В Р’В» Р В РЎвЂќР В РЎвЂўР В РЎВР В РЎвЂ”Р В Р’ВµР В Р вЂ¦Р РЋР С“Р В Р’В°Р РЋРІР‚В Р В РЎвЂР В РЎвЂ Р В РЎвЂ”Р В Р’ВµР РЋР вЂљР В Р’ВµР В Р вЂ Р В РЎвЂўР В РўвЂР В РЎвЂР РЋРІР‚С™
+    Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“ Р В Р вЂ  `COMPENSATION_FAILED`, Р В Р’В° Р В Р вЂ¦Р В Р’Вµ Р В РЎВР В РЎвЂўР В Р’В»Р РЋРІР‚РЋР В Р’В° Р В Р’В·Р В Р’В°Р В Р вЂ Р В Р’ВµР РЋР вЂљР РЋРІвЂљВ¬Р В Р’В°Р В Р’ВµР РЋРІР‚С™ Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР РЋРІР‚В Р В Р’ВµР РЋР С“Р РЋР С“.
+    """
+    compensation_refs = {name: step.compensation for name, step in definition.steps.items()}
+
+    async with session_scope() as session:
+        instance_row = await session.get(WorkflowInstance, instance_id, with_for_update=True)
+        if (
+            instance_row is None
+        ):  # pragma: no cover - Р В РЎвЂ“Р В РЎвЂўР В Р вЂ¦Р В РЎвЂќР В Р’В° Р РЋР С“ Р РЋРЎвЂњР В РўвЂР В Р’В°Р В Р’В»Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’ВµР В РЎВ
+            return False
+
+        await append_event(session, instance_row.id, EventType.COMPENSATION_STARTED, {})
+        items = await saga.plan(session, instance_row.id, compensation_refs)
+        instance_row.status = InstanceStatus.COMPENSATING
+        await session.commit()
+
+    for item in items:
+        async with session_scope() as session:
+            log = await saga.start_attempt(
+                session, instance_id, item, attempt=item.attempts_made + 1
+            )
+            await session.commit()
+
+        succeeded, error = await _invoke_compensation(instance_id, item)
+
+        async with session_scope() as session:
+            log_row = await session.get(CompensationLog, log.id, with_for_update=True)
+            if (
+                log_row is None
+            ):  # pragma: no cover - Р В РЎвЂ“Р В РЎвЂўР В Р вЂ¦Р В РЎвЂќР В Р’В° Р РЋР С“ Р РЋРЎвЂњР В РўвЂР В Р’В°Р В Р’В»Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’ВµР В РЎВ
+                continue
+            await saga.finish_attempt(session, instance_id, log_row, item, succeeded, error)
+            await session.commit()
+
+        if not succeeded:
+            async with session_scope() as session:
+                instance_row = await session.get(WorkflowInstance, instance_id)
+                if instance_row is not None:
+                    instance_row.status = InstanceStatus.COMPENSATION_FAILED
+                    await session.commit()
+            return False
+
+    async with session_scope() as session:
+        instance_row = await session.get(WorkflowInstance, instance_id)
+        if instance_row is not None:
+            await executor.finish(session, instance_row, InstanceStatus.COMPENSATED)
+    return True
+
+
+async def _invoke_compensation(
+    instance_id: uuid.UUID, item: saga.CompensationItem
+) -> tuple[bool, str | None]:
+    """Вызывает обработчик компенсации вне транзакции БД.
+
+    Поддерживаются sync и async обработчики — так же, как у обычных шагов.
+    """
+    import inspect
+
+    from app.handlers.registry import resolve_handler
+
+    try:
+        handler = resolve_handler(item.compensation_ref)
+        pending = handler(None)
+        if inspect.isawaitable(pending):
+            await pending
+    except Exception as exc:
+        logger.warning(
+            "compensation.failed",
+            extra={
+                "step": item.step_name,
+                "error": str(exc),
+                "instance_id": str(instance_id),
+            },
+        )
+        return False, str(exc)
+    return True, None
+
+
+async def run_cycle(
+    worker_id: str, cache: dict[uuid.UUID, WorkflowDefinitionSchema]
+) -> CycleResult:
+    """Р В РЎвЂєР В РўвЂР В РЎвЂР В Р вЂ¦ Р РЋРІР‚В Р В РЎвЂР В РЎвЂќР В Р’В»: Р В РЎвЂ”Р В РЎвЂўР В РўвЂР В Р’В±Р В РЎвЂўР РЋР вЂљ Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“Р В Р’В° Р В РЎвЂ Р В РЎвЂР РЋР С“Р В РЎвЂ”Р В РЎвЂўР В Р’В»Р В Р вЂ¦Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’Вµ Р В РЎвЂўР В РўвЂР В Р вЂ¦Р В РЎвЂўР В РЎвЂ“Р В РЎвЂў Р РЋРІвЂљВ¬Р В Р’В°Р В РЎвЂ“Р В Р’В°."""
+    async with session_scope() as session:
+        claimed = await lease.claim_next(session, worker_id)
+        if claimed is None:
+            await scheduler.claim_due(session)
+            return CycleResult(handled=False, step_executed=False, terminal=False, lease_lost=False)
+
+        instance_row = await session.get(
+            WorkflowInstance, claimed.instance_id, with_for_update=True
+        )
+        if (
+            instance_row is None
+        ):  # pragma: no cover - Р В РЎвЂ“Р В РЎвЂўР В Р вЂ¦Р В РЎвЂќР В Р’В° Р РЋР С“ Р РЋРЎвЂњР В РўвЂР В Р’В°Р В Р’В»Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’ВµР В РЎВ
+            return CycleResult(handled=False, step_executed=False, terminal=False, lease_lost=False)
+
+        state = replay(await read_events(session, instance_row.id))
+        instance_row.status = state.status
+        definition = await _load_definition(instance_row.definition_id, cache)
+        if (
+            definition is None
+        ):  # pragma: no cover - Р В РЎвЂўР В РЎвЂ”Р РЋР вЂљР В Р’ВµР В РўвЂР В Р’ВµР В Р’В»Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’Вµ Р РЋРЎвЂњР В РўвЂР В Р’В°Р В Р’В»Р В Р’ВµР В Р вЂ¦Р В РЎвЂў
+            instance_row.status = InstanceStatus.FAILED
+            await session.commit()
+            return CycleResult(handled=True, step_executed=False, terminal=True, lease_lost=False)
+
+        await session.commit()
+
+    if state.status is InstanceStatus.COMPENSATING:
+        done = await _compensate(claimed.instance_id, definition, worker_id)
+        async with session_scope() as session:
+            await lease.release(session, claimed.instance_id, worker_id)
+        return CycleResult(handled=True, step_executed=False, terminal=done, lease_lost=False)
+
+    if state.is_terminal or state.current_step is None:
+        async with session_scope() as session:
+            instance_row = await session.get(WorkflowInstance, claimed.instance_id)
+            if instance_row is not None:
+                # Отсутствие готового шага при нетерминальном статусе означает,
+                # что граф дошёл до конца, а не что откат нужен: без шага нечего
+                # компенсировать.
+                final_status = (
+                    state.status if state.status in TERMINAL_STATUSES else InstanceStatus.COMPLETED
+                )
+                await executor.finish(session, instance_row, final_status)
+            await lease.release(session, claimed.instance_id, worker_id)
+        return CycleResult(handled=True, step_executed=False, terminal=True, lease_lost=False)
+
+    # Р В РЎвЂєР В Р’В¶Р В РЎвЂР В РўвЂР В Р’В°Р В Р вЂ¦Р В РЎвЂР В Р’Вµ Р РЋР С“ Р РЋРІР‚С™Р В Р’В°Р В РІвЂћвЂ“Р В РЎВР В Р’ВµР РЋР вЂљР В РЎвЂўР В РЎВ Р В Р вЂ¦Р В Р’Вµ Р РЋРІР‚С™Р РЋР вЂљР В Р’ВµР В Р’В±Р РЋРЎвЂњР В Р’ВµР РЋРІР‚С™ Р В РЎвЂР РЋР С“Р В РЎвЂ”Р В РЎвЂўР В Р’В»Р В Р вЂ¦Р В Р’ВµР В Р вЂ¦Р В РЎвЂР РЋР РЏ: Р РЋРІР‚С™Р В Р’В°Р В РІвЂћвЂ“Р В РЎВР В Р’ВµР РЋР вЂљ Р РЋР С“Р В Р’В°Р В РЎВ Р РЋР вЂљР В Р’В°Р В Р’В·Р В Р’В±Р РЋРЎвЂњР В РўвЂР В РЎвЂР РЋРІР‚С™ Р В РЎвЂР В Р вЂ¦Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р РЋР С“.
+    if state.status is InstanceStatus.WAITING:
+        async with session_scope() as session:
+            await lease.release(session, claimed.instance_id, worker_id)
+        return CycleResult(handled=True, step_executed=False, terminal=False, lease_lost=False)
+    attempt = await _next_attempt(claimed.instance_id, state.current_step)
+    try:
+        async with session_scope() as session:
+            instance_row = await session.get(WorkflowInstance, claimed.instance_id)
+            if (
+                instance_row is None
+            ):  # pragma: no cover - Р В РЎвЂ“Р В РЎвЂўР В Р вЂ¦Р В РЎвЂќР В Р’В° Р РЋР С“ Р РЋРЎвЂњР В РўвЂР В Р’В°Р В Р’В»Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’ВµР В РЎВ
+                return CycleResult(
+                    handled=True, step_executed=False, terminal=False, lease_lost=False
+                )
+            outcome = await executor.execute_step(
+                session, instance_row, definition, state.current_step, attempt, worker_id
+            )
+            instance_row.error = (
+                None
+                if outcome.success
+                else "Р РЋРІвЂљВ¬Р В Р’В°Р В РЎвЂ“ Р В Р вЂ¦Р В Р’Вµ Р В Р вЂ Р РЋРІР‚в„–Р В РЎвЂ”Р В РЎвЂўР В Р’В»Р В Р вЂ¦Р В Р’ВµР В Р вЂ¦"
+            )
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "step.failed_unexpected", extra={"step": state.current_step, "worker_id": worker_id}
+        )
+        async with session_scope() as session:
+            await lease.release(session, claimed.instance_id, worker_id)
+        return CycleResult(handled=True, step_executed=False, terminal=False, lease_lost=True)
+
+    terminal = not outcome.success
+    # Аренда освобождается всегда: удерживать её после шага означало бы ждать
+    # истечения TTL перед следующим шагом, а после неудачи — перед откатом.
+    # Инстанс без аренды немедленно подхватывается следующим циклом.
+    async with session_scope() as session:
+        await lease.release(session, claimed.instance_id, worker_id)
+    return CycleResult(handled=True, step_executed=True, terminal=terminal, lease_lost=False)
+
+
+async def _next_attempt(instance_id: uuid.UUID, step_name: str) -> int:
+    """Р В РЎСљР В РЎвЂўР В РЎВР В Р’ВµР РЋР вЂљ Р РЋР С“Р В Р’В»Р В Р’ВµР В РўвЂР РЋРЎвЂњР РЋР вЂ№Р РЋРІР‚В°Р В Р’ВµР В РІвЂћвЂ“ Р В РЎвЂ”Р В РЎвЂўР В РЎвЂ”Р РЋРІР‚в„–Р РЋРІР‚С™Р В РЎвЂќР В РЎвЂ Р РЋРІвЂљВ¬Р В Р’В°Р В РЎвЂ“Р В Р’В°.
+
+    Р В Р Р‹Р РЋРІР‚РЋР В РЎвЂР РЋРІР‚С™Р В Р’В°Р В Р’ВµР РЋРІР‚С™Р РЋР С“Р РЋР РЏ Р В РЎвЂ”Р В РЎвЂў `step_runs`, Р В Р’В° Р В Р вЂ¦Р В Р’Вµ Р В РЎвЂ”Р В РЎвЂў Р В РЎвЂ”Р В Р’В°Р В РЎВР РЋР РЏР РЋРІР‚С™Р В РЎвЂ: Р В РЎвЂ”Р В РЎвЂўР РЋР С“Р В Р’В»Р В Р’Вµ Р В РЎвЂ”Р В Р’ВµР РЋР вЂљР В Р’ВµР В Р’В·Р В Р’В°Р В РЎвЂ”Р РЋРЎвЂњР РЋР С“Р В РЎвЂќР В Р’В° Р В Р вЂ Р В РЎвЂўР РЋР вЂљР В РЎвЂќР В Р’ВµР РЋР вЂљР В Р’В° Р РЋР С“Р РЋРІР‚РЋР РЋРІР‚ВР РЋРІР‚С™Р РЋРІР‚РЋР В РЎвЂР В РЎвЂќ
+    Р В РЎвЂўР В Р’В±Р РЋР РЏР В Р’В·Р В Р’В°Р В Р вЂ¦ Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР В РўвЂР В РЎвЂўР В Р’В»Р В Р’В¶Р В РЎвЂР РЋРІР‚С™Р РЋР Р‰Р РЋР С“Р РЋР РЏ, Р В РЎвЂР В Р вЂ¦Р В Р’В°Р РЋРІР‚РЋР В Р’Вµ Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР РЋРІР‚В Р В Р’ВµР РЋР С“Р РЋР С“ Р В Р’В·Р В Р’В°Р РЋРІР‚В Р В РЎвЂР В РЎвЂќР В Р’В»Р В РЎвЂР РЋРІР‚С™Р РЋР С“Р РЋР РЏ Р В Р вЂ¦Р В Р’В° Р В РЎвЂ”Р В Р’ВµР РЋР вЂљР В Р вЂ Р В РЎвЂўР В РІвЂћвЂ“ Р В РЎвЂ”Р В РЎвЂўР В РЎвЂ”Р РЋРІР‚в„–Р РЋРІР‚С™Р В РЎвЂќР В Р’Вµ.
+    """
+    from sqlalchemy import func
+
+    from app.models.workflow import StepRun
+
+    async with session_scope() as session:
+        count = await session.scalar(
+            select(func.count())
+            .select_from(StepRun)
+            .where(StepRun.instance_id == instance_id, StepRun.step_name == step_name)
+        )
+    return int(count or 0) + 1
+
+
+async def run_worker(stop_event: asyncio.Event | None = None) -> None:
+    """Р В Р’В¦Р В РЎвЂР В РЎвЂќР В Р’В» Р В Р вЂ Р В РЎвЂўР РЋР вЂљР В РЎвЂќР В Р’ВµР РЋР вЂљР В Р’В° Р В РўвЂР В РЎвЂў Р В РЎвЂ”Р В РЎвЂўР В Р’В»Р РЋРЎвЂњР РЋРІР‚РЋР В Р’ВµР В Р вЂ¦Р В РЎвЂР РЋР РЏ Р РЋР С“Р В РЎвЂР В РЎвЂ“Р В Р вЂ¦Р В Р’В°Р В Р’В»Р В Р’В° Р В РЎвЂўР РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р В РЎвЂўР В Р вЂ Р В РЎвЂќР В РЎвЂ.
+
+    `stop_event` Р В Р вЂ Р В Р вЂ¦Р В Р’ВµР В РўвЂР РЋР вЂљР РЋР РЏР В Р’ВµР РЋРІР‚С™Р РЋР С“Р РЋР РЏ, Р РЋРІР‚РЋР РЋРІР‚С™Р В РЎвЂўР В Р’В±Р РЋРІР‚в„– Р РЋРІР‚С™Р В Р’ВµР РЋР С“Р РЋРІР‚С™ Р В РЎВР В РЎвЂўР В РЎвЂ“ Р В РЎвЂўР РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р В РЎвЂўР В Р вЂ Р В РЎвЂР РЋРІР‚С™Р РЋР Р‰ Р РЋРІР‚В Р В РЎвЂР В РЎвЂќР В Р’В» Р В Р’В±Р В Р’ВµР В Р’В· Р В РЎвЂўР РЋРІР‚С™Р В РЎвЂ”Р РЋР вЂљР В Р’В°Р В Р вЂ Р В РЎвЂќР В РЎвЂ
+    Р РЋР С“Р В РЎвЂР В РЎвЂ“Р В Р вЂ¦Р В Р’В°Р В Р’В»Р В Р’В° Р В Р вЂ Р РЋР С“Р В Р’ВµР В РЎВР РЋРЎвЂњ Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР РЋРІР‚В Р В Р’ВµР РЋР С“Р РЋР С“Р РЋРЎвЂњ.
     """
     settings = get_settings()
-    worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
+    worker_id = _worker_id()
 
     if stop_event is None:
         stop_event = asyncio.Event()
@@ -52,10 +307,18 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         },
     )
 
+    definition_cache: dict[uuid.UUID, WorkflowDefinitionSchema] = {}
     try:
         while not stop_event.is_set():
-            # wait_for вместо sleep: событие останавливает цикл немедленно,
-            # а не по истечении интервала опроса.
+            steps_done = 0
+            while steps_done < settings.worker_max_steps_per_cycle and not stop_event.is_set():
+                result = await run_cycle(worker_id, definition_cache)
+                if not result.handled:
+                    break
+                if result.step_executed:
+                    steps_done += 1
+            # wait_for Р В Р вЂ Р В РЎВР В Р’ВµР РЋР С“Р РЋРІР‚С™Р В РЎвЂў sleep: Р РЋР С“Р В РЎвЂўР В Р’В±Р РЋРІР‚в„–Р РЋРІР‚С™Р В РЎвЂР В Р’Вµ Р В РЎвЂўР РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ¦Р В Р’В°Р В Р вЂ Р В Р’В»Р В РЎвЂР В Р вЂ Р В Р’В°Р В Р’ВµР РЋРІР‚С™ Р РЋРІР‚В Р В РЎвЂР В РЎвЂќР В Р’В» Р В Р вЂ¦Р В Р’ВµР В РЎВР В Р’ВµР В РўвЂР В Р’В»Р В Р’ВµР В Р вЂ¦Р В Р вЂ¦Р В РЎвЂў,
+            # Р В Р’В° Р В Р вЂ¦Р В Р’Вµ Р В РЎвЂ”Р В РЎвЂў Р В РЎвЂР РЋР С“Р РЋРІР‚С™Р В Р’ВµР РЋРІР‚РЋР В Р’ВµР В Р вЂ¦Р В РЎвЂР В РЎвЂ Р В РЎвЂР В Р вЂ¦Р РЋРІР‚С™Р В Р’ВµР РЋР вЂљР В Р вЂ Р В Р’В°Р В Р’В»Р В Р’В° Р В РЎвЂўР В РЎвЂ”Р РЋР вЂљР В РЎвЂўР РЋР С“Р В Р’В°.
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
                     stop_event.wait(), timeout=settings.worker_poll_interval_seconds

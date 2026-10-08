@@ -111,6 +111,6 @@ heartbeat — заметно проще.
 ## References
 
 - `AGENTS.md` §3.3 — инварианты lease
-- `docs/ENGINE.md` §2, §4 — захват, heartbeat, восстановление
+- `docs/ENGINE.md` §2, §7 — захват, heartbeat, восстановление
 - `docs/OPERATIONS.md` §1 — подбор `LEASE_TTL_SECONDS`
 - `docs/diagrams/recovery-sequence.mmd`

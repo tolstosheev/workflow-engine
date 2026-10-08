@@ -1,0 +1,285 @@
+"""Исполнение шага: от вызова обработчика до записи результата.
+
+Ключевое правило — транзакция закрывается **до** внешнего вызова. Между
+«шаг начался» и «шаг закончился» инстанс находится в состоянии, которое
+восстанавливается по журналу, а не по открытому соединению с БД (§3.2).
+
+Порядок внутри шага:
+
+1. транзакция: `STEP_STARTED` + новая строка `step_runs`;
+2. транзакция закрыта, heartbeat продлевает аренду;
+3. вызов обработчика, проверка `processed_operations` перед эффектом;
+4. транзакция: эффект + `processed_operations`;
+5. транзакция: `STEP_COMPLETED` + освобождение аренды.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import inspect
+import logging
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.core.errors import LeaseLostError
+from app.engine import idempotency, interpreter, lease, scheduler
+from app.engine.journal import RecordedEvent, append_event, read_events, replay
+from app.handlers.registry import resolve_handler
+from app.models.enums import EventType, InstanceStatus, StepRunStatus
+from app.models.workflow import StepRun, WorkflowInstance
+from app.schemas.definition import WorkflowDefinitionSchema
+
+logger = logging.getLogger(__name__)
+
+
+class StepFailed(Exception):
+    """Шаг не выполнен. Повторяемость определяется политикой шага."""
+
+    def __init__(self, message: str, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.message = message
+        self.retryable = retryable
+
+
+async def load_state(db_session: AsyncSession, instance_id: uuid.UUID) -> tuple[RecordedEvent, ...]:
+    """Читает журнал инстанса. Основа восстановления после падения."""
+    return tuple(await read_events(db_session, instance_id))
+
+
+async def build_context(
+    definition: WorkflowDefinitionSchema,
+    state_variables: dict[str, Any],
+    instance_input: dict[str, Any],
+    instance_id: uuid.UUID,
+    step_name: str,
+    attempt: int,
+) -> Any:
+    """Собирает контекст обработчика.
+
+    Тип не уточняется здесь намеренно: контекст живёт в `demo.handlers`, и ядро
+    не должно зависеть от модуля предметной области.
+    """
+    action_ref = definition.steps[step_name].action
+    module_path = action_ref.partition(":")[0]
+    module = __import__(module_path, fromlist=["StepContext"])
+    context_class = getattr(module, "StepContext", None)
+    if context_class is None:  # pragma: no cover - обработчик без контекста
+        return None
+
+    return context_class(
+        instance_id=str(instance_id),
+        step_name=step_name,
+        attempt=attempt,
+        operation_id=str(idempotency.make_key(instance_id, step_name, attempt)),
+        input=instance_input,
+        variables=state_variables,
+    )
+
+
+async def _heartbeat_loop(instance_id: uuid.UUID, worker_id: str, stop: asyncio.Event) -> None:
+    """Продлевает аренду во время долгого шага.
+
+    Без этого шаг длиннее TTL признаётся брошенным, и его начнёт другой воркер
+    — то есть работа выполнится дважды.
+    """
+    settings = get_settings()
+    from app.core.db import session_scope
+
+    while not stop.is_set():
+        try:
+            async with session_scope() as session:
+                await lease.heartbeat(session, instance_id, worker_id)
+        except Exception:
+            # Потерянный lease обнаружится при следующей записи; молчаливый
+            # проглатывание здесь недопустимо, но и падать нельзя — цикл
+            # обязан завершиться.
+            logger.warning("heartbeat.failed", extra={"instance_id": str(instance_id)})
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=settings.heartbeat_interval_seconds)
+
+
+async def execute_step(
+    db_session: AsyncSession,
+    instance: WorkflowInstance,
+    definition: WorkflowDefinitionSchema,
+    step_name: str,
+    attempt: int,
+    worker_id: str,
+) -> interpreter.StepOutcome:
+    """Исполняет один шаг и фиксирует результат в журнале."""
+    step = definition.steps[step_name]
+    events = await load_state(db_session, instance.id)
+    state = replay(list(events))
+
+    # --- Транзакция 1: начало шага -------------------------------------------
+    await append_event(
+        db_session, instance.id, EventType.STEP_STARTED, {"step": step_name, "attempt": attempt}
+    )
+    step_run = StepRun(
+        instance_id=instance.id,
+        step_name=step_name,
+        attempt=attempt,
+        status=StepRunStatus.RUNNING,
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(step_run)
+    instance.current_step = step_name
+    await db_session.commit()
+
+    # --- Транзакция закрыта. Внешний вызов ниже --------------------------
+    stop_heartbeat = asyncio.Event()
+    heartbeat_task = asyncio.create_task(_heartbeat_loop(instance.id, worker_id, stop_heartbeat))
+    try:
+        outcome = await _invoke(
+            db_session,
+            definition,
+            state.variables,
+            instance.input,
+            instance.id,
+            step_name,
+            attempt,
+            step.timeout_seconds,
+        )
+    except Exception as exc:
+        outcome = interpreter.StepOutcome(
+            success=False,
+            output={},
+            retryable=not isinstance(exc, LeaseLostError),
+        )
+        error_message = str(exc)
+    finally:
+        stop_heartbeat.set()
+        await heartbeat_task
+
+    # --- Транзакция 2: результат шага ---------------------------------------
+    if outcome.success:
+        decision = interpreter.decide_after_success(definition, step_name, step)
+        await append_event(
+            db_session,
+            instance.id,
+            EventType.STEP_COMPLETED,
+            {"step": step_name, "output": outcome.output, "next": decision.step_name},
+        )
+        step_run.status = StepRunStatus.COMPLETED
+        step_run.output = outcome.output
+        step_run.finished_at = datetime.now(UTC)
+        instance.variables = {**state.variables, **outcome.output}
+        instance.current_step = decision.step_name
+        await db_session.commit()
+    else:
+        max_attempts = interpreter.attempts_for(step, get_settings().step_max_attempts)
+        decision = interpreter.decide_after_failure(
+            definition, step_name, step, attempt, max_attempts
+        )
+        if decision.step_name == step_name and attempt < max_attempts:
+            await append_event(
+                db_session,
+                instance.id,
+                EventType.STEP_RETRY_SCHEDULED,
+                {"step": step_name, "attempt": attempt + 1, "error": error_message},
+            )
+            step_run.status = StepRunStatus.FAILED
+            step_run.error = error_message
+            step_run.finished_at = datetime.now(UTC)
+            await db_session.commit()
+            delay = interpreter.backoff_for(step, attempt, max_attempts)
+            if delay:
+                await scheduler.schedule(db_session, instance.id, step_name, delay)
+            return interpreter.StepOutcome(success=False, output={}, retryable=outcome.retryable)
+
+        await append_event(
+            db_session,
+            instance.id,
+            EventType.STEP_FAILED,
+            {
+                "step": step_name,
+                "attempt": attempt,
+                "error": error_message,
+                "terminal": decision.kind == "stop",
+            },
+        )
+        step_run.status = StepRunStatus.FAILED
+        step_run.error = error_message
+        step_run.finished_at = datetime.now(UTC)
+        await db_session.commit()
+
+    return outcome
+
+
+async def _invoke(
+    db_session: AsyncSession,
+    definition: WorkflowDefinitionSchema,
+    variables: dict[str, Any],
+    instance_input: dict[str, Any],
+    instance_id: uuid.UUID,
+    step_name: str,
+    attempt: int,
+    timeout_seconds: float,
+) -> interpreter.StepOutcome:
+    """Вызывает обработчик с таймаутом и проверкой идемпотентности."""
+    step = definition.steps[step_name]
+    key = idempotency.make_key(instance_id, step_name, attempt)
+
+    if await idempotency.already_applied(db_session, key):
+        # Повтор после падения: эффект уже применён, второй вызов был бы дублем.
+        logger.info("step.skipped_already_applied", extra={"step": step_name, "attempt": attempt})
+        return interpreter.StepOutcome(success=True, output=dict(variables))
+
+    handler: Callable[..., Any] = resolve_handler(step.action)
+    context = await build_context(
+        definition, variables, instance_input, instance_id, step_name, attempt
+    )
+
+    try:
+        pending = handler(context)
+    except Exception as exc:
+        raise StepFailed(str(exc), retryable=True) from exc
+
+    if inspect.isawaitable(pending):
+        # Таймаут применим только к awaitable: синхронный обработчик блокирует
+        # event loop, и прервать его извне нельзя. Такие обработчики обязаны
+        # быть короткими — это зафиксировано в docs/ENGINE.md §5.
+        try:
+            result = await asyncio.wait_for(pending, timeout=timeout_seconds)
+        except TimeoutError as exc:
+            raise StepFailed(
+                f"шаг {step_name!r} не ответил за {timeout_seconds} с", retryable=True
+            ) from exc
+    else:
+        result = pending
+
+    output = dict(result) if isinstance(result, dict) else {"result": result}
+    await idempotency.mark_applied(db_session, key)
+    await db_session.commit()
+    return interpreter.StepOutcome(success=True, output=output)
+
+
+async def finish(
+    db_session: AsyncSession, instance: WorkflowInstance, status: InstanceStatus
+) -> None:
+    """Переводит инстанс в терминальное состояние через событие журнала."""
+    event_type = {
+        InstanceStatus.COMPLETED: EventType.INSTANCE_COMPLETED,
+        InstanceStatus.COMPENSATED: EventType.INSTANCE_COMPENSATED,
+        InstanceStatus.CANCELLED: EventType.INSTANCE_CANCELLED,
+    }.get(status, EventType.INSTANCE_COMPENSATED)
+
+    await append_event(db_session, instance.id, event_type, {})
+    instance.status = status
+    instance.current_step = None
+    await db_session.commit()
+
+
+__all__ = [
+    "StepFailed",
+    "build_context",
+    "execute_step",
+    "finish",
+    "load_state",
+]

@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     # docker-compose упал бы на разборе, не дойдя до field_validator.
     cors_origins: str = "http://localhost:5173"
 
-    database_url: str = "postgresql+asyncpg://workflow:workflow@localhost:5433/workflow_engine"
-    sync_database_url: str = "postgresql+psycopg://workflow:workflow@localhost:5433/workflow_engine"
+    database_url: str = "postgresql+asyncpg://workflow:workflow@localhost:5434/workflow_engine"
+    sync_database_url: str = "postgresql+psycopg://workflow:workflow@localhost:5434/workflow_engine"
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_echo: bool = False
