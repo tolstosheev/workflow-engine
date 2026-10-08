@@ -1,0 +1,51 @@
+flowchart TB
+    subgraph client["Клиент"]
+        UI["React SPA<br/>дашборд, таймлайн, редактор"]
+    end
+
+    subgraph backend["Бэкенд (FastAPI)"]
+        API["REST API + SSE /stream"]
+        SVC["Сервисы<br/>definitions, instances"]
+    end
+
+    subgraph workers["Воркеры (реплики)"]
+        W1["worker 1"]
+        W2["worker 2"]
+        WN["worker N"]
+    end
+
+    subgraph core["Ядро движка"]
+        JOURNAL["Журнал событий<br/>append-only"]
+        INTERP["Интерпретатор<br/>переходы состояний"]
+        LEASE["Менеджер lease<br/>heartbeat"]
+        SAGA["Компенсации Saga"]
+        IDEMP["Идемпотентность"]
+        TIMERS["Durable-таймеры"]
+    end
+
+    DB[("PostgreSQL 16<br/>журнал, инстансы, таймеры,<br/>processed_operations")]
+
+    subgraph demo["Предметная область"]
+        INV["inventory"]
+        PAY["payment"]
+        SHIP["shipment"]
+    end
+
+    UI -->|"HTTP + SSE"| API
+    API --> SVC
+    SVC --> JOURNAL
+    SVC --> DB
+
+    W1 & W2 & WN --> INTERP
+    INTERP --> LEASE
+    INTERP --> JOURNAL
+    INTERP --> SAGA
+    INTERP --> IDEMP
+    INTERP --> TIMERS
+    INTERP -->|"вызов обработчика"| INV & PAY & SHIP
+
+    JOURNAL --> DB
+    LEASE --> DB
+    IDEMP --> DB
+    TIMERS --> DB
+    SAGA --> DB

@@ -1,0 +1,46 @@
+sequenceDiagram
+    autonumber
+    participant W as Воркер
+    participant DB as PostgreSQL
+    participant H as Обработчик шага
+    participant S as Внешний сервис
+
+    Note over W,DB: Транзакция 1 — захват lease и выбор шага
+    W->>DB: SELECT ... FOR UPDATE SKIP LOCKED<br/>инстансы без lease
+    DB-->>W:кандидат
+    W->>DB: UPDATE workflow_instances SET lease_owner, lease_expires_at<br/>WHERE id = $1 AND (lease_expires_at IS NULL OR lease_expires_at < now())
+    DB-->>W: 1 строка — захват успешен
+
+    Note over W,DB: Транзакция 2 — чтение состояния из журнала
+    W->>DB: SELECT * FROM workflow_events<br/>WHERE instance_id = $1 ORDER BY seq
+    DB-->>W: журнал событий
+    W->>W: replay() → текущее состояние и готовый к исполнению шаг
+
+    Note over W,DB: Транзакция 3 — отметка начала шага
+    W->>DB: BEGIN
+    W->>DB: INSERT INTO step_runs (step, attempt, started_at)
+    W->>DB: INSERT INTO workflow_events (seq, type=STEP_STARTED)
+    W->>DB: COMMIT
+
+    Note over H,S: Транзакция БД не открыта — §3.2
+    W->>H: вызов обработчика
+    H->>DB: SELECT из processed_operations<br/>операция уже применялась?
+    DB-->>H: нет
+    H->>S: внешний вызов (HTTP, очередь)
+    S-->>H: результат
+
+    Note over W,H: Отдельная транзакция — эффект шага
+    H->>DB: BEGIN
+    H->>DB: изменение данных предметной области
+    H->>DB: INSERT INTO processed_operations (op_key) ON CONFLICT DO NOTHING
+    H->>DB: COMMIT
+
+    Note over W,DB: Транзакция 4 — чекпоинт результата
+    W->>DB: BEGIN
+    W->>DB: INSERT INTO workflow_events (seq, type=STEP_COMPLETED, payload)
+    W->>DB: UPDATE step_runs SET finished_at
+    W->>DB: COMMIT
+
+    Note over W,DB: Транзакция 5 — освобождение lease
+    W->>DB: UPDATE workflow_instances SET lease_owner = NULL<br/>WHERE id = $1 AND lease_owner = $2
+    W->>W: следующий цикл опроса
