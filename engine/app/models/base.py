@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, MetaData, func
+from sqlalchemy import DateTime, MetaData, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Единое имя конвенции делает автогенерацию Alembic детерминированной:
@@ -20,6 +20,12 @@ NAMING_CONVENTION = {
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+# Идентификатор генерирует и ORM, и база: journal.py пишет события сырым
+# INSERT ради одной транзакции с изменением состояния, а у такого INSERT нет
+# Python-объекта, который подставил бы default.
+UUID_PK_DEFAULT = text("gen_random_uuid()")
 
 
 class TimestampMixin:
