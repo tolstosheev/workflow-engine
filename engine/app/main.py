@@ -15,6 +15,9 @@ from app.core.db import dispose_engine, get_session_factory
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.routers.definitions import router as definitions_router
+from app.routers.instances import router as instances_router
+from app.routers.service import router as service_router
+from app.routers.stream import router as stream_router
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,9 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     application.include_router(definitions_router)
+    application.include_router(instances_router)
+    application.include_router(stream_router)
+    application.include_router(service_router)
 
     return application
 
