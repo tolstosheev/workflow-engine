@@ -87,5 +87,9 @@ class EventType(StrEnum):
     COMPENSATION_SKIPPED = "COMPENSATION_SKIPPED"
     INSTANCE_COMPLETED = "INSTANCE_COMPLETED"
     INSTANCE_COMPENSATED = "INSTANCE_COMPENSATED"
+    # Запрос отмены — не завершение. Отдельное событие потому, что
+    # INSTANCE_CANCELLED терминален: при его трактовке как запроса отмены
+    # процесс завершался, минуя откат выполненных шагов.
+    INSTANCE_CANCEL_REQUESTED = "INSTANCE_CANCEL_REQUESTED"
     INSTANCE_CANCELLED = "INSTANCE_CANCELLED"
     LEASE_EXPIRED = "LEASE_EXPIRED"

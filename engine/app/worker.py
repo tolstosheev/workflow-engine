@@ -28,7 +28,7 @@ from app.core.config import get_settings
 from app.core.db import dispose_engine, session_scope
 from app.core.logging import configure_logging
 from app.engine import executor, interpreter, lease, saga, scheduler
-from app.engine.journal import append_event, read_events, replay
+from app.engine.journal import read_events, replay
 from app.models.enums import TERMINAL_STATUSES, EventType, InstanceStatus
 from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
@@ -106,8 +106,13 @@ async def _compensate(
         if instance_row is None:  # pragma: no cover - гонка с удалением
             return False
 
-        await append_event(session, instance_row.id, EventType.COMPENSATION_STARTED, {})
         items = await saga.plan(session, instance_row.id, compensation_refs)
+        if not items:
+            # Откатывать нечего. Отмена при этом всё равно завершилась, но
+            # называть её `COMPENSATED` было бы враньём: компенсаций не было.
+            await executor.finish(session, instance_row, InstanceStatus.CANCELLED)
+            return True
+
         instance_row.status = InstanceStatus.COMPENSATING
         await session.commit()
 
@@ -118,7 +123,9 @@ async def _compensate(
             )
             await session.commit()
 
-        succeeded, error = await _invoke_compensation(instance_id, item)
+        succeeded, error = await _invoke_compensation(
+            instance_id, item, attempt=item.attempts_made + 1
+        )
 
         async with session_scope() as session:
             log_row = await session.get(CompensationLog, log.id, with_for_update=True)
@@ -143,15 +150,33 @@ async def _compensate(
 
 
 async def _invoke_compensation(
-    instance_id: uuid.UUID, item: saga.CompensationItem
+    instance_id: uuid.UUID, item: saga.CompensationItem, attempt: int
 ) -> tuple[bool, str | None]:
     """Вызывает обработчик компенсации вне транзакции БД.
 
     Поддерживаются sync и async обработчики — так же, как у обычных шагов.
+
+    Ключ идемпотентности проверяется **до** вызова: падение воркера между
+    успешной компенсацией и её фиксацией привело бы к повторному возврату
+    средств (§3.4). Обратный порядок не защищает ничего — к моменту проверки
+    дубль уже применён.
     """
     import inspect
 
+    from app.core.db import session_scope
+    from app.engine import idempotency
     from app.handlers.registry import resolve_handler
+
+    key = saga.operation_key(instance_id, item, attempt)
+
+    async with session_scope() as session:
+        if await idempotency.already_applied(session, key):
+            # Повтор после падения воркера: эффект уже применён.
+            logger.info(
+                "compensation.skipped_already_applied",
+                extra={"step": item.step_name, "instance_id": str(instance_id)},
+            )
+            return True, None
 
     try:
         handler = resolve_handler(item.compensation_ref)
@@ -168,6 +193,9 @@ async def _invoke_compensation(
             },
         )
         return False, str(exc)
+
+    async with session_scope() as session:
+        await idempotency.mark_applied(session, key)
     return True, None
 
 
@@ -221,7 +249,9 @@ async def run_cycle(
 
         await session.commit()
 
-    if state.status is InstanceStatus.COMPENSATING:
+    # Отмена и провал шага приводят в одну точку: выполненные шаги надо
+    # вернуть. Различаются они только тем, как процесс сюда попал.
+    if state.status in (InstanceStatus.COMPENSATING, InstanceStatus.CANCELLING):
         done = await _compensate(claimed.instance_id, definition, worker_id)
         async with session_scope() as session:
             await lease.release(session, claimed.instance_id, worker_id)

@@ -164,13 +164,18 @@ async def cancel_instance(db_session: AsyncSession, instance_id: uuid.UUID) -> W
     """Запрашивает отмену: инстанс переходит в откат.
 
     Отмена не означает остановку: выполненные шаги надо вернуть, поэтому
-    инстанс уходит в `COMPENSATING`, а не в терминальное состояние сразу.
+    инстанс уходит в `CANCELLING`, а откат выполняет воркер. Терминальный
+    `CANCELLED` наступает позже и только если компенсировать было нечего.
+
+    Ожидания снимаются здесь: оставленный таймер разбудил бы уже
+    откатываемый процесс (§3.5).
     """
     instance = await get_instance(db_session, instance_id)
     if InstanceStatus(instance.status) in _terminal_statuses():
         raise ConflictError(f"инстанс в статусе {instance.status} отменить нельзя")
 
-    await append_event(db_session, instance.id, EventType.INSTANCE_CANCELLED, {})
+    await scheduler.cancel_for(db_session, instance_id)
+    await append_event(db_session, instance.id, EventType.INSTANCE_CANCEL_REQUESTED, {})
     instance.status = InstanceStatus.CANCELLING
     return instance
 
