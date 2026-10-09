@@ -9,6 +9,7 @@
 | [DATA-MODEL.md](DATA-MODEL.md) | Схема БД, ER-диаграмма, индексы, миграции |
 | [API.md](API.md) | REST-эндпоинты, SSE-поток, примеры запросов |
 | [BENCHMARKS.md](BENCHMARKS.md) | Замеры: throughput, длительность шагов, время компенсации |
+| [DEPLOYMENT-ACT.md](DEPLOYMENT-ACT.md) | Акт внедрения: состав системы, испытания, границы применимости |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Локальное окружение, запуск, отладка, тесты, кодовые соглашения |
 | [OPERATIONS.md](OPERATIONS.md) | Эксплуатация, наблюдаемость, разбор типовых сбоев |
 | [adr/](adr/README.md) | Architecture Decision Records — принятые архитектурные решения |
