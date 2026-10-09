@@ -54,6 +54,7 @@ def _to_out(instance: WorkflowInstance, definition: WorkflowDefinition) -> Insta
         error=instance.error,
         lease_owner=instance.lease_owner,
         lease_expires_at=instance.lease_expires_at,
+        heartbeat_at=instance.heartbeat_at,
         created_at=instance.created_at,
         updated_at=instance.updated_at,
     )

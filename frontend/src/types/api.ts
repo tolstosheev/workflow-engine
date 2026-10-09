@@ -95,6 +95,7 @@ export interface WorkflowInstance {
   error: string | null
   lease_owner: string | null
   lease_expires_at: string | null
+  heartbeat_at: string | null
   created_at: string
   updated_at: string
 }

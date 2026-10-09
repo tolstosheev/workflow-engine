@@ -84,6 +84,9 @@ class InstanceOut(BaseModel):
     error: str | None
     lease_owner: str | None
     lease_expires_at: datetime | None
+    # Отдельно от срока аренды: по нему видно, что воркер жив, даже если
+    # аренда формально истекла в момент запроса.
+    heartbeat_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

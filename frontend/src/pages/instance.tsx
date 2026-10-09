@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 
 import { instances as instancesApi, definitions as definitionsApi } from '@/api/client'
+import { useEventStream } from '@/api/stream'
 import { DefinitionGraph } from '@/components/DefinitionGraph'
 import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
@@ -52,6 +53,14 @@ export default function InstancePage() {
     const timer = setInterval(() => void load(), 1500)
     return () => clearInterval(timer)
   }, [load])
+
+  // События открытого инстанса применяются сразу: перечитывание раз в полторы
+  // секунды оставляло бы заметную задержку между действием движка и экраном.
+  useEventStream({
+    onEvent: (event) => {
+      if (event.instance_id === id) void load()
+    },
+  })
 
   if (!id) return <EmptyState message="Идентификатор инстанса не указан" />
   if (error && !instance) return <ErrorState message={error} onRetry={() => void load()} />

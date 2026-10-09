@@ -6,7 +6,7 @@ import { nodeStates } from '@/lib/graphState'
 import type { InstanceState, StepRun } from '@/types/api'
 
 function step(partial: Partial<StepRun> & { step_name: string }): StepRun {
-  return {
+  const base: StepRun = {
     id: partial.step_name,
     step_name: partial.step_name,
     attempt: 1,
@@ -16,8 +16,8 @@ function step(partial: Partial<StepRun> & { step_name: string }): StepRun {
     compensated: false,
     started_at: '2026-01-01T00:00:00Z',
     finished_at: '2026-01-01T00:00:01Z',
-    ...partial,
   }
+  return { ...base, ...partial }
 }
 
 function state(partial: Partial<InstanceState>): InstanceState {

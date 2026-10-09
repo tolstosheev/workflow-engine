@@ -13,6 +13,7 @@ interface InstancesState {
   loading: boolean
   error: string | null
   connected: boolean
+  lastEventAt: string | null
   statusFilter: InstanceStatus | 'ALL'
   load: () => Promise<void>
   setStatusFilter: (status: InstanceStatus | 'ALL') => void
@@ -25,6 +26,7 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
   loading: false,
   error: null,
   connected: false,
+  lastEventAt: null,
   statusFilter: 'ALL',
 
   load: async () => {
@@ -46,6 +48,7 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
   // каждом шаге превратила бы живой экран в мигание.
   handleEvent: (event) => {
     const current = get().items
+    set({ lastEventAt: event.created_at })
     const index = current.findIndex((item) => item.id === event.instance_id)
     if (index === -1) {
       // Новый инстанс или шаг уже удалённого: список доберём на ближайшем цикле.

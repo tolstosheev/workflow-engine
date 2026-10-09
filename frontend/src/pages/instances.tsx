@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 
+import { WorkerLeases, StreamStatus } from '@/components/WorkerLeases'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useInstancesFeed } from '@/hooks/useInstancesFeed'
 import { formatDateTime, statusLabel, statusTone } from '@/lib/status'
@@ -15,7 +16,7 @@ const FILTERS: Array<{ value: InstanceStatus | 'ALL'; label: string }> = [
 ]
 
 export default function InstancesPage() {
-  const { items, loading, error, connected, load } = useInstancesFeed()
+  const { items, all, loading, error, connected, lastEventAt, load } = useInstancesFeed()
   const statusFilter = useInstancesStore((state) => state.statusFilter)
   const setStatusFilter = useInstancesStore((state) => state.setStatusFilter)
 
@@ -23,7 +24,7 @@ export default function InstancesPage() {
     <section className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Инстансы workflow</h1>
-        <ConnectionBadge connected={connected} />
+        <StreamStatus connected={connected} lastEventAt={lastEventAt} />
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -39,6 +40,8 @@ export default function InstancesPage() {
       </div>
 
       {error && <ErrorState message={error} onRetry={() => void load()} />}
+
+      <WorkerLeases instances={all} />
 
       <Card>
         {loading && items.length === 0 ? (
@@ -84,18 +87,5 @@ export default function InstancesPage() {
         )}
       </Card>
     </section>
-  )
-}
-
-function ConnectionBadge({ connected }: { connected: boolean }) {
-  return (
-    <StatusBadge
-      label={connected ? 'Поток событий подключён' : 'Поток событий недоступен'}
-      toneClass={
-        connected
-          ? 'bg-success/15 text-success border-success/40'
-          : 'bg-warning/15 text-warning border-warning/40'
-      }
-    />
   )
 }
