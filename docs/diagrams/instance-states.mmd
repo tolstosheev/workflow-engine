@@ -36,4 +36,6 @@ stateDiagram-v2
         Ожидание — durable-объект
         в БД, не asyncio.sleep.
         Переживает рестарт воркера.
+        Воркер WAITING не подбирает:
+        его будит таймер.
     end note
