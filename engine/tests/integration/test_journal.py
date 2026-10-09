@@ -202,6 +202,35 @@ def test_retry_scheduled_returns_to_running() -> None:
     assert state.current_step == "a"
 
 
+def test_cancel_requested_is_not_terminal() -> None:
+    # Запрос отмены — не завершение: выполненные шаги ещё не откачены.
+    # Терминальный статус здесь оставлял бы резерв товара висеть навсегда.
+    state = replay(
+        [
+            _event(0, EventType.INSTANCE_STARTED, step="a"),
+            _event(1, EventType.INSTANCE_CANCEL_REQUESTED),
+        ]
+    )
+
+    assert state.status is InstanceStatus.CANCELLING
+    assert state.current_step == "a"
+    assert not state.is_terminal
+
+
+def test_cancel_requested_does_not_hide_completed_steps() -> None:
+    # Пошаговый откат строится по выполненным шагам, и отмена их не отменяет:
+    # именно их и надо вернуть.
+    state = replay(
+        [
+            _event(0, EventType.STEP_STARTED, step="a"),
+            _event(1, EventType.STEP_COMPLETED, step="a", next="b"),
+            _event(2, EventType.INSTANCE_CANCEL_REQUESTED),
+        ]
+    )
+
+    assert state.completed_steps == ["a"]
+
+
 def test_terminal_events_clear_current_step() -> None:
     for event_type, expected in [
         (EventType.INSTANCE_COMPLETED, InstanceStatus.COMPLETED),

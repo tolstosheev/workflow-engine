@@ -595,6 +595,152 @@ async def test_on_failure_branch_is_taken(
     assert await _status(db_session, instance_id) == InstanceStatus.COMPLETED
 
 
+# ?????? ????????, ?????? ??????? ???? ?? ???????? ????????. ?????? ? ????
+# ????????? ? ??????? ??????: ????? ????, ? ?????? ?????????.
+CANCEL_FLOW = {
+    "start": "reserve_inventory",
+    "steps": {
+        "reserve_inventory": {
+            "action": f"{DEMO}:reserve_inventory",
+            "compensation": f"{DEMO}:release_inventory",
+            "next": "await_delivery",
+        },
+        "await_delivery": {
+            "action": f"{DEMO}:confirm_delivery",
+            "wait_before_seconds": 3600,
+        },
+    },
+}
+
+
+async def _request_cancel(db_session: AsyncSession, instance_id: uuid.UUID) -> None:
+    """?????? ???, ??? ?? ?????? ????????? ????."""
+    from app.engine.journal import append_event
+
+    await append_event(db_session, instance_id, EventType.INSTANCE_CANCEL_REQUESTED, {})
+    instance_row = await db_session.get(WorkflowInstance, instance_id)
+    assert instance_row is not None
+    instance_row.status = InstanceStatus.CANCELLING
+
+
+async def test_cancel_rolls_back_completed_steps(db_session: AsyncSession) -> None:
+    # ?????? ??????? ??????? ??????????? ??????. ???????????? `CANCELLED`
+    # ??? ??????????? ???????? ?? ????? ????????????????? ???????? ? ?????
+    # ??, ???? ???? ??????????????? Saga (\u00a73.5).
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    assert await _status(db_session, instance_id) == InstanceStatus.WAITING
+
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+
+    await _run_cycles("w2")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+    db_session.expire_all()
+    steps = (
+        await db_session.scalars(
+            select(StepRun).where(
+                StepRun.instance_id == instance_id,
+                StepRun.step_name == "reserve_inventory",
+            )
+        )
+    ).all()
+    assert steps
+    assert steps[0].compensated is True
+
+
+async def test_cancel_removes_pending_timer(db_session: AsyncSession) -> None:
+    # Неотменённый таймер разбудил бы уже откатанный процесс: отменённый
+    # заказ не должен просыпаться по расписанию доставки.
+    from app.engine import scheduler
+    from app.services import instances as instance_service
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    assert await scheduler.pending_count(db_session, instance_id) == 1
+
+    # Отмена идёт через сервисный слой: именно там снимаются ожидания.
+    await instance_service.cancel_instance(db_session, instance_id)
+    await db_session.commit()
+
+    assert await scheduler.pending_count(db_session, instance_id) == 0
+
+
+async def test_cancel_without_work_ends_as_cancelled(db_session: AsyncSession) -> None:
+    # Компенсировать нечего, поэтому называть результат `COMPENSATED` было бы
+    # враньём: отката не было.
+    instance_id, _ = await _create_instance(db_session, ORDER_FLOW)
+    await _seed_journal(db_session, instance_id, ORDER_FLOW)
+    await db_session.commit()
+
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.CANCELLED
+
+
+async def test_compensation_started_written_once_per_attempt(db_session: AsyncSession) -> None:
+    # Один факт — одно событие. Два `COMPENSATION_STARTED` на одну попытку
+    # засоряют журнал и противоречат §3.1.
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+
+    await _run_cycles("w2")
+
+    types = [e.type for e in await read_events(db_session, instance_id)]
+    assert types.count(EventType.COMPENSATION_STARTED) == 1
+
+
+async def test_compensation_is_not_applied_twice(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Повтор компенсации после падения воркера обязан быть безопасным: возврат
+    # средств дважды — двойной платёж наоборот (§3.4).
+    import app.demo.handlers as demo
+    from app.engine import idempotency, saga
+
+    calls: list[object] = []
+    original = demo.release_inventory
+
+    def counting(ctx: object) -> dict:
+        calls.append(ctx)
+        return original(ctx)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(demo, "release_inventory", counting)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    assert len(calls) == 1
+
+    # Ключ компенсации отмечен: повтор не должен дойти до обработчика.
+    items = await saga.plan(db_session, instance_id, {"reserve_inventory": None})
+    assert items == []
+    applied = await idempotency.list_applied(db_session, instance_id)
+    assert any(key.startswith(f"{instance_id}:compensate:") for key in applied)
+    monkeypatch.setattr(demo, "release_inventory", original)
+
+
 async def test_branch_without_on_failure_goes_to_compensation(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
