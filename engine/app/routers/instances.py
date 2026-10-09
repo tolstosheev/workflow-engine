@@ -152,6 +152,8 @@ async def cancel_instance(
 ) -> ActionResult:
     instance = await service.cancel_instance(db_session, instance_id)
     await db_session.commit()
+    # CANCELLING, а не терминальный статус: откат выполняет воркер. Если
+    # компенсировать нечего, процесс позже придёт в CANCELLED.
     return ActionResult(
         status=InstanceStatus(instance.status), message="отмена принята, выполняется откат"
     )

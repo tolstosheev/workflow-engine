@@ -276,7 +276,20 @@ curl -X POST http://localhost:8000/api/instances \
 
 ### `POST /api/instances/{id}/cancel`
 
-Запрос отмены. Инстанс переходит в `CANCELLING`, затем в `COMPENSATING`.
+Запрос отмены. Ответ отдаёт статус `CANCELLING` — отмена ещё не выполнена.
+
+Дальше инстанс уходит в откат: `COMPENSATING` → `COMPENSATED`, если были
+выполненные шаги с компенсациями. Если компенсировать нечего, процесс
+завершается как `CANCELLED` — отката не было, и называть его компенсацией
+было бы враньём.
+
+Ожидания инстанса при этом снимаются: оставленный таймер разбудил бы уже
+откатанный процесс.
+
+```text
+POST /cancel → CANCELLING → COMPENSATING → COMPENSATED
+                              └── (нечего откатывать) → CANCELLED
+```
 
 ```bash
 curl -X POST http://localhost:8000/api/instances/b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e/cancel
@@ -342,9 +355,10 @@ data: {"instance_id":"b2c3d4e5-...","type":"STEP_COMPLETED","payload":{"step":"r
 ```
 
 Публикуются `INSTANCE_CREATED`, `INSTANCE_COMPLETED`, `INSTANCE_COMPENSATED`,
-`INSTANCE_CANCELLED`, `STEP_COMPLETED`, `STEP_FAILED`, `COMPENSATION_STARTED`,
-`COMPENSATION_COMPLETED`, `COMPENSATION_FAILED`. `LEASE_EXPIRED` не
-публикуется: на экране он ничего не меняет и только увеличивает поток.
+`INSTANCE_CANCEL_REQUESTED`, `INSTANCE_CANCELLED`, `STEP_COMPLETED`,
+`STEP_FAILED`, `COMPENSATION_STARTED`, `COMPENSATION_COMPLETED`,
+`COMPENSATION_FAILED`. `LEASE_EXPIRED` не публикуется: на экране он ничего
+не меняет и только увеличивает поток.
 
 Курсор — время последнего прочитанного события (`seq` уникален только внутри
 инстанса и для глобального потока не годится). Пропущенные события клиент
