@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Accepted (частично отменён ADR-0008: `fork` / `join` не исполняются) |
 | **Date** | 2026-10-08 |
 | **Deciders** | команда проекта |
 
@@ -65,7 +65,7 @@ Pydantic v2. Ядро описания:
 | `retry` | `max_attempts`, `backoff_seconds` |
 | `wait_before_seconds` | Durable-ожидание перед шагом |
 | `loop` | Явный признак цикла с `max_iterations` |
-| `fork` / `join` | Параллельные ветки |
+| `fork` / `join` | Параллельные ветки. **Объявлены, но не исполняются** — валидатор отвергает такие определения (ADR-0008) |
 | `timeout_seconds` | Таймаут шага |
 
 Валидация двух уровней:
