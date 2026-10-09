@@ -203,11 +203,19 @@ async def execute_step(
                 "attempt": attempt,
                 "error": error_message,
                 "terminal": decision.kind == "stop",
+                # Решение интерпретатора едет в журнале: без него ветка
+                # `on_failure` терялась, и процесс уходил в откат вместо
+                # перехода по объявленной ветке.
+                "next": decision.step_name,
             },
         )
         step_run.status = StepRunStatus.FAILED
         step_run.error = error_message
         step_run.finished_at = datetime.now(UTC)
+        # Колонка догоняет журнал: `claim_next` смотрит на неё, и без
+        # обновления инстанс остался бы на упавшем шаге.
+        if decision.step_name is not None:
+            instance.current_step = decision.step_name
         await db_session.commit()
 
     return outcome
