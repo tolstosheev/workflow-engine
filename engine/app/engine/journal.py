@@ -156,6 +156,10 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.status = (
                 InstanceStatus.COMPENSATING if payload.get("terminal") else InstanceStatus.RUNNING
             )
+            # Переход по объявленной ветке `on_failure`. Терминальный отказ
+            # означает откат, а не продолжение, поэтому в нём шага нет.
+            if not payload.get("terminal") and payload.get("next"):
+                state.current_step = payload["next"]
 
         case EventType.STEP_RETRY_SCHEDULED:
             state.status = InstanceStatus.RUNNING

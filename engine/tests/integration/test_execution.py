@@ -528,3 +528,94 @@ async def test_processed_operations_block_duplicate_effect(
         select(WorkflowEvent.seq).where(WorkflowEvent.instance_id == instance_id)
     )
     assert len(rows.all()) == 1
+
+
+# --- Ветвление по результату шага -------------------------------------------
+
+BRANCH_FLOW = {
+    "start": "charge_payment",
+    "steps": {
+        "charge_payment": {
+            "action": f"{DEMO}:charge_payment",
+            "compensation": f"{DEMO}:refund_payment",
+            "retry": {"max_attempts": 1},
+            "next": {"on_success": "happy", "on_failure": "fallback"},
+        },
+        "happy": {"action": f"{DEMO}:reserve_inventory", "next": "confirm_delivery"},
+        "fallback": {"action": f"{DEMO}:create_shipment", "next": "confirm_delivery"},
+        "confirm_delivery": {"action": f"{DEMO}:confirm_delivery"},
+    },
+}
+
+
+async def test_on_success_branch_is_taken(db_session: AsyncSession) -> None:
+    # Ветка объявлена в формате дефинишена и обязана исполняться: иначе
+    # `on_success` и `on_failure` были бы декоративными ключами.
+    instance_id, _ = await _create_instance(db_session, BRANCH_FLOW)
+    await _seed_journal(db_session, instance_id, BRANCH_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+
+    assert await _step_names(db_session, instance_id) == [
+        "charge_payment",
+        "happy",
+        "confirm_delivery",
+    ]
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPLETED
+
+
+async def test_on_failure_branch_is_taken(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Ключевой случай: сбой шага с объявленной веткой `on_failure` обязан
+    # перейти в неё, а не уходить в откат. Иначе ветвление по результату —
+    # заявленная возможность формата — молча не работает.
+    import app.demo.handlers as demo
+
+    original = demo.charge_payment
+
+    async def failing(ctx: object) -> dict:
+        raise RuntimeError("платёжный шлюз недоступен")
+
+    monkeypatch.setattr(demo, "charge_payment", failing)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, BRANCH_FLOW)
+    await _seed_journal(db_session, instance_id, BRANCH_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    monkeypatch.setattr(demo, "charge_payment", original)
+
+    names = await _step_names(db_session, instance_id)
+    assert names == ["charge_payment", "fallback", "confirm_delivery"], (
+        f"ветка on_failure не выполнена: {names}"
+    )
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPLETED
+
+
+async def test_branch_without_on_failure_goes_to_compensation(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Обратный случай: если ветка не объявлена, сбой шага ведёт в откат, а не
+    # в повтор того же шага. Иначе `on_failure` был бы необязательным.
+    import app.demo.handlers as demo
+
+    original = demo.charge_payment
+
+    async def failing(ctx: object) -> dict:
+        raise RuntimeError("платёжный шлюз недоступен")
+
+    monkeypatch.setattr(demo, "charge_payment", failing)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, FAILING_FLOW)
+    await _seed_journal(db_session, instance_id, FAILING_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    monkeypatch.setattr(demo, "charge_payment", original)
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+    assert "fallback" not in await _step_names(db_session, instance_id)

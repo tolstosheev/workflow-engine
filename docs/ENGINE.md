@@ -277,10 +277,14 @@ sequenceDiagram
 ### 5.1 Переходы
 
 - **Линейный** — `next` указывает на следующий шаг.
-- **Условный** — результат шага (`success` / `failure`) выбирает ветку.
-- **Fork / join** — параллельные ветки расходятся после fork и сходятся в join.
-- **Wait** — шаг создаёт durable-таймер; исполнение продолжается после
-  `TIMER_FIRED`.
+- **Условный** — `next` как объект `{"on_success": ..., "on_failure": ...}`;
+  переход выбирается по результату шага. Исполняется.
+- **Wait** — шаг с `wait_before_seconds` создаёт durable-таймер; исполнение
+  продолжается после `TIMER_FIRED`.
+- **Fork / join** — параллельные ветки. Схема и валидатор их принимают и
+  проверяют разрешимость, но **исполнение не реализовано**: после fork-шага
+  процесс завершается, ветки не запускаются. Это зафиксированное ограничение
+  (см. `docs/DEPLOYMENT-ACT.md` §7).
 
 ### 5.2 Циклы
 
@@ -299,6 +303,10 @@ sequenceDiagram
 
 Исчерпание попыток ведёт **в откат**, а не в остановку: выполненные шаги надо
 вернуть, иначе процесс остаётся с частично применённым эффектом.
+
+Переход по ветке `on_failure` едет в журнале полем `next` события `STEP_FAILED`.
+Без него решение интерпретатора терялось: процесс возвращался на упавший шаг и
+уходил в откат вместо объявленной ветки.
 
 ### 5.4 Sync и async обработчики
 
@@ -640,3 +648,6 @@ stateDiagram-v2
 | Спящий инстанс не берётся в подбор | `tests/integration/test_lease.py::test_claim_next_skips_waiting_instance` |
 | Проснувшийся инстанс снова доступен | `::test_woken_instance_becomes_claimable_again` |
 | Отметка и событие идут одной транзакцией | `tests/integration/test_saga_and_timers.py::test_fire_due_is_skipped_when_already_fired` |
+| Ветка `on_success` исполняется | `tests/integration/test_execution.py::test_on_success_branch_is_taken` |
+| Ветка `on_failure` исполняется, а не уходит в откат | `::test_on_failure_branch_is_taken` |
+| Без объявленной ветки сбой ведёт в откат | `::test_branch_without_on_failure_goes_to_compensation` |

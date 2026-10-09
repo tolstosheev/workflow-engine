@@ -173,6 +173,7 @@ workflow-engine/
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Окружение, запуск, отладка, тесты |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Эксплуатация, наблюдаемость, типовые сбои |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Замеры производительности и условия их получения |
+| [`docs/DEPLOYMENT-ACT.md`](docs/DEPLOYMENT-ACT.md) | Акт внедрения: состав, испытания, границы применимости |
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records |
 | [`AGENTS.md`](AGENTS.md) | Инварианты движка и правила работы над проектом |
 
