@@ -113,10 +113,17 @@ async def claim_next(
     ttl = ttl_seconds if ttl_seconds is not None else settings.lease_ttl_seconds
     now = _now()
 
+    # Спящий инстанс воркером не обслуживается: его разбудит таймер. Если бы он
+    # попадал в выборку, воркер брал бы один и тот же спящий инстанс, пока тот
+    # не проснётся, и вся очередь за ним стояла бы.
+    ready_values = sorted(
+        value for value in _ACTIVE_STATUS_VALUES if value != str(InstanceStatus.WAITING)
+    )
+
     candidates = (
         select(WorkflowInstance.id)
         .where(
-            WorkflowInstance.status.in_(_ACTIVE_STATUS_VALUES),
+            WorkflowInstance.status.in_(ready_values),
             _lease_free(now),
         )
         .order_by(WorkflowInstance.created_at)

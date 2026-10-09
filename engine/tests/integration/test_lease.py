@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.engine import lease
-from app.models.enums import InstanceStatus
+from app.models.enums import EventType, InstanceStatus
 from app.models.workflow import WorkflowDefinition, WorkflowInstance
 
 pytestmark = pytest.mark.integration
@@ -135,10 +135,46 @@ async def test_claim_next_ignores_terminal_instances(db_session: AsyncSession) -
     assert await lease.claim_next(db_session, "w1") is None
 
 
-async def test_claim_next_covers_waiting_instance(db_session: AsyncSession) -> None:
+async def test_claim_next_skips_waiting_instance(db_session: AsyncSession) -> None:
+    # Спящий инстанс обслуживает таймер, а не воркер. Если бы он попадал в
+    # выборку, воркер брал бы его снова и снова, и очередь за ним стояла бы.
     await _new_instance(db_session, status=InstanceStatus.WAITING)
 
-    assert await lease.claim_next(db_session, "w1") is not None
+    assert await lease.claim_next(db_session, "w1") is None
+
+
+async def test_claim_next_skips_waiting_but_takes_ready_instance(
+    db_session: AsyncSession,
+) -> None:
+    # Второй инстанс обязан обрабатываться, пока первый спит: иначе одно
+    # ожидание останавливало бы всю очередь.
+    await _new_instance(db_session, status=InstanceStatus.WAITING)
+    ready_id = await _new_instance(db_session, status=InstanceStatus.PENDING)
+
+    claimed = await lease.claim_next(db_session, "w1")
+
+    assert claimed is not None
+    assert claimed.instance_id == ready_id
+
+
+async def test_woken_instance_becomes_claimable_again(db_session: AsyncSession) -> None:
+    # После таймера инстанс возвращается в RUNNING и обязан снова попадать
+    # в подбор: без этого проснувшийся процесс никогда бы не исполнил шаг.
+    from app.engine import scheduler
+    from app.engine.journal import append_event
+
+    instance_id = await _new_instance(db_session, status=InstanceStatus.WAITING)
+    await scheduler.schedule(db_session, instance_id, "await_delivery", 0)
+    await append_event(db_session, instance_id, EventType.TIMER_FIRED, {"step": "await_delivery"})
+    row = await db_session.get(WorkflowInstance, instance_id)
+    assert row is not None
+    row.status = InstanceStatus.RUNNING
+    await db_session.flush()
+
+    claimed = await lease.claim_next(db_session, "w1")
+
+    assert claimed is not None
+    assert claimed.instance_id == instance_id
 
 
 async def test_claim_next_covers_compensating_instance(db_session: AsyncSession) -> None:

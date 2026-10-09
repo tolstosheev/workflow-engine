@@ -1,7 +1,13 @@
 .DEFAULT_GOAL := check
 
+# Адрес API для скриптов. Переопределяется на стенде, где порт 8000 занят:
+#   make smoke API_URL=http://localhost:8001
+API_URL ?= http://localhost:8000
+INSTANCES ?= 300
+
 .PHONY: help up down logs migrate api worker check check-backend check-frontend \
-        test test-fast test-integration test-chaos test-full coverage seed
+        test test-fast test-integration test-chaos test-full coverage \
+        seed smoke bench chaos-demo
 
 help:  ## Список целей
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -52,3 +58,12 @@ coverage:  ## HTML-отчёт покрытия
 
 seed:  ## Загрузить демонстрационные определения workflow
 	cd engine && python -m scripts.seed
+
+smoke:  ## Сквозная проверка работающей системы (нужен запущенный API)
+	cd engine && python -m scripts.smoke --url $(API_URL)
+
+bench:  ## Нагрузочный прогон и замеры (нужен запущенный API)
+	cd engine && python -m scripts.load --url $(API_URL) --instances $(INSTANCES)
+
+chaos-demo:  ## Показать автоматический откат: сбой на шаге оплаты
+	cd engine && python -m scripts.smoke --url $(API_URL) --compensation-only
