@@ -765,3 +765,102 @@ async def test_branch_without_on_failure_goes_to_compensation(
 
     assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
     assert "fallback" not in await _step_names(db_session, instance_id)
+
+
+# --- Циклы ----------------------------------------------------------------
+
+
+LOOP_FLOW = {
+    "start": "reserve_inventory",
+    "steps": {
+        "reserve_inventory": {
+            "action": f"{DEMO}:reserve_inventory",
+            "compensation": f"{DEMO}:release_inventory",
+            "next": "charge_payment",
+        },
+        "charge_payment": {
+            "action": f"{DEMO}:charge_payment",
+            "compensation": f"{DEMO}:refund_payment",
+            "next": "reserve_inventory",
+            "loop": True,
+            "max_iterations": 3,
+        },
+    },
+}
+
+
+async def test_loop_stops_at_declared_limit(db_session: AsyncSession) -> None:
+    """Проходы заканчиваются на объявленном пределе, и процесс уходит в откат.
+
+    Без учёта итераций этот шаг крутился бы вечно: определение проходило
+    валидацию, а `max_iterations` не читался.
+    """
+    instance_id, _ = await _create_instance(db_session, LOOP_FLOW)
+    await _seed_journal(db_session, instance_id, LOOP_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1", count=40)
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+
+
+async def test_loop_runs_declared_number_of_passes(db_session: AsyncSession) -> None:
+    """Шаг с пределом 3 выполняется ровно три раза, не больше и не меньше."""
+    instance_id, _ = await _create_instance(db_session, LOOP_FLOW)
+    await _seed_journal(db_session, instance_id, LOOP_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1", count=40)
+
+    db_session.expire_all()
+    passes = await db_session.scalar(
+        select(func.count())
+        .select_from(StepRun)
+        .where(StepRun.instance_id == instance_id, StepRun.step_name == "charge_payment")
+    )
+    assert passes == 3
+
+
+async def test_loop_exhaustion_is_written_to_journal(db_session: AsyncSession) -> None:
+    """Исчерпание предела — событие журнала, а не молчаливая остановка."""
+    instance_id, _ = await _create_instance(db_session, LOOP_FLOW)
+    await _seed_journal(db_session, instance_id, LOOP_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1", count=40)
+
+    db_session.expire_all()
+    rows = await db_session.scalars(
+        select(WorkflowEvent.payload).where(
+            WorkflowEvent.instance_id == instance_id, WorkflowEvent.type == "LOOP_EXHAUSTED"
+        )
+    )
+    payloads = [dict(p) for p in rows]
+
+    assert len(payloads) == 1
+    assert payloads[0]["step"] == "charge_payment"
+    assert payloads[0]["iterations"] == 3
+    assert payloads[0]["max_iterations"] == 3
+
+
+async def test_loop_limit_survives_worker_restart(db_session: AsyncSession) -> None:
+    """Счётчик проходов живёт в журнале, поэтому новый воркер его видит.
+
+    Если бы счётчик был в памяти воркера, падение между проходами обнулило бы
+    его — и цикл начался бы заново.
+    """
+    instance_id, _ = await _create_instance(db_session, LOOP_FLOW)
+    await _seed_journal(db_session, instance_id, LOOP_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1", count=2)
+    # Смена идентичности воркера: другой процесс, тот же журнал.
+    await _run_cycles("w2", count=40)
+
+    db_session.expire_all()
+    passes = await db_session.scalar(
+        select(func.count())
+        .select_from(StepRun)
+        .where(StepRun.instance_id == instance_id, StepRun.step_name == "charge_payment")
+    )
+    assert passes == 3

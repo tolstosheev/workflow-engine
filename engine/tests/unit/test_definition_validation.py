@@ -62,6 +62,8 @@ def test_linear_flow_is_valid() -> None:
 
 def test_declared_loop_is_valid() -> None:
     # Явный цикл с пределом итераций — разрешённое поведение, а не ошибка.
+    # Предел теперь не только пров��ряется, но и применяется: по нему движок
+    # прекращает проходы и уходит в компенсацию.
     result = validate_definition(
         _definition(
             first={"action": f"{DEMO}:validate_cart", "next": "retry_me"},
@@ -77,25 +79,33 @@ def test_declared_loop_is_valid() -> None:
     assert result.valid
 
 
-def test_fork_and_join_are_valid() -> None:
+def test_fork_is_rejected_as_not_executed() -> None:
+    """Параллельные ветки отвергаются: исполнять их движок не умеет."""
     result = validate_definition(
         _definition(
             start_step={"action": f"{DEMO}:validate_cart", "fork": {"left": ["a"], "right": ["b"]}},
-            a={
-                "action": f"{DEMO}:reserve_inventory",
-                "compensation": f"{DEMO}:release_inventory",
-                "next": "merge",
-            },
-            b={
-                "action": f"{DEMO}:create_shipment",
-                "compensation": f"{DEMO}:cancel_shipment",
-                "next": "merge",
-            },
+            a={"action": f"{DEMO}:reserve_inventory", "next": "merge"},
+            b={"action": f"{DEMO}:create_shipment", "next": "merge"},
             merge={"action": f"{DEMO}:confirm_delivery", "join": ["a", "b"]},
         )
     )
 
-    assert result.valid
+    assert not result.valid
+    codes = _codes(result)
+    assert "fork_not_executed" in codes
+    assert "join_not_executed" in codes
+
+
+def test_join_alone_is_rejected() -> None:
+    """Слияние отвергается и без fork: сливать нечего."""
+    result = validate_definition(
+        _definition(
+            a={"action": f"{DEMO}:reserve_inventory", "next": "merge"},
+            merge={"action": f"{DEMO}:confirm_delivery", "join": ["a"]},
+        )
+    )
+
+    assert "join_not_executed" in _codes(result)
 
 
 def test_conditional_transitions_are_valid() -> None:
