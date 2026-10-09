@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine import saga, scheduler
 from app.engine.journal import read_events, replay
-from app.models.enums import CompensationStatus, EventType, StepRunStatus
+from app.models.enums import CompensationStatus, EventType, InstanceStatus, StepRunStatus
 from app.models.workflow import (
     CompensationLog,
     StepRun,
@@ -344,32 +344,72 @@ async def test_due_timer_is_claimed(db_session: AsyncSession) -> None:
     claimed = await scheduler.claim_due(db_session)
 
     assert [t.id for t in claimed] == [timer.id]
-    assert claimed[0].fired is True
+    # Подбор не помечает таймер: отметка идёт в fire_due вместе с событием,
+    # иначе падение между ними оставило бы инстанс спящим навсегда.
+    assert claimed[0].fired is False
 
 
-async def test_timer_is_claimed_only_once(db_session: AsyncSession) -> None:
-    # Второй воркер не должен получить тот же таймер: он уже сработал.
+async def test_timer_is_fired_only_once(db_session: AsyncSession) -> None:
+    # Второй воркер не должен сработать тот же таймер: он уже обработан.
     instance_id = await _new_instance(db_session)
     timer = await scheduler.schedule(db_session, instance_id, "confirm", 0)
     timer.due_at = datetime.now(UTC) - timedelta(seconds=1)
     await db_session.flush()
-    await scheduler.claim_due(db_session)
 
-    assert await scheduler.claim_due(db_session) == []
+    claimed = (await scheduler.claim_due(db_session))[0]
+    assert await scheduler.fire_due(db_session, claimed) is True
+    assert await scheduler.fire_due(db_session, claimed) is False
 
 
-async def test_fired_event_resumes_instance(db_session: AsyncSession) -> None:
+async def test_fired_timer_wakes_instance(db_session: AsyncSession) -> None:
+    # Статус в колонке и в replay обязан стать RUNNING: без этого воркер не
+    # подберёт инстанс и шаг после ожидания не выполнится.
     instance_id = await _new_instance(db_session)
     timer = await scheduler.schedule(db_session, instance_id, "confirm", 0)
     timer.due_at = datetime.now(UTC) - timedelta(seconds=1)
     await db_session.flush()
     claimed = (await scheduler.claim_due(db_session))[0]
 
-    await scheduler.notify_fired(db_session, claimed)
+    await scheduler.fire_due(db_session, claimed)
 
     state = replay(await read_events(db_session, instance_id))
     assert state.status.value == "RUNNING"
     assert state.current_step == "confirm"
+
+    row = await db_session.get(WorkflowInstance, instance_id)
+    assert row is not None
+    assert row.status == InstanceStatus.RUNNING
+
+
+async def test_fire_due_is_skipped_when_already_fired(db_session: AsyncSession) -> None:
+    # Гонка двух воркеров: выигрывает один, второй не пишет событие вторично.
+    instance_id = await _new_instance(db_session)
+    timer = await scheduler.schedule(db_session, instance_id, "confirm", 0)
+    timer.due_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.flush()
+    claimed = (await scheduler.claim_due(db_session))[0]
+
+    assert await scheduler.fire_due(db_session, claimed) is True
+    await scheduler.fire_due(db_session, claimed)
+
+    events = await read_events(db_session, instance_id)
+    assert [e.type for e in events].count(EventType.TIMER_FIRED) == 1
+
+
+async def test_planned_for_sees_fired_timer(db_session: AsyncSession) -> None:
+    # `wait_before_seconds` ждёт один раз: после срабатывания таймера новый
+    # ожидатель создаваться не должен, иначе шаг не наступил бы никогда.
+    instance_id = await _new_instance(db_session)
+    timer = await scheduler.schedule(db_session, instance_id, "confirm", 0)
+    timer.due_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.flush()
+
+    assert await scheduler.planned_for(db_session, instance_id, "confirm") is True
+    assert await scheduler.planned_for(db_session, instance_id, "other") is False
+
+    await scheduler.fire_due(db_session, (await scheduler.claim_due(db_session))[0])
+
+    assert await scheduler.planned_for(db_session, instance_id, "confirm") is True
 
 
 async def test_pending_count_tracks_unfired(db_session: AsyncSession) -> None:
