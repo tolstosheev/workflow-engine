@@ -5,22 +5,11 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-import pytest
-
 from app.engine.interpreter import (
-    StepDecision,
-    StepOutcome,
     attempts_for,
     backoff_for,
     decide_after_failure,
     decide_after_success,
-    handlers_of,
-    is_join,
-    join_waits_for,
-    loop_budget,
-    next_step,
-    pending_branches,
-    timeout_for,
     wait_before,
 )
 from app.engine.journal import RecordedEvent
@@ -140,13 +129,13 @@ def test_failure_stops_after_last_attempt() -> None:
     assert "откат" in decision.reason
 
 
-def test_missing_step_stops_gracefully() -> None:
+def test_step_without_successor_completes() -> None:
     definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
 
-    decision = next_step(definition, "ghost", StepOutcome(success=True, output={}), 1, 3)
+    decision = decide_after_success(definition, "a", _step(definition, "a"))
 
-    assert decision.kind == "stop"
-    assert "отсутствует" in decision.reason
+    assert decision.step_name is None
+    assert decision.kind == "complete"
 
 
 # --- Политика повторов -----------------------------------------------------
@@ -201,7 +190,7 @@ def test_timeout_has_safe_default() -> None:
     # Таймаут нужен всегда: внешний вызов без него может висеть бесконечно.
     definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
 
-    assert timeout_for(_step(definition, "a")) == 30
+    assert _step(definition, "a").timeout_seconds == 30
 
 
 def test_wait_before_is_durable_delay() -> None:
@@ -210,100 +199,39 @@ def test_wait_before_is_durable_delay() -> None:
     assert wait_before(_step(definition, "a")) == 60
 
 
-# --- Циклы и параллельные ветки ---------------------------------------------
+# --- ??????? ?????????????? -------------------------------------------------
 
 
-def test_loop_budget_requires_loop_flag() -> None:
-    definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
+def test_fork_is_accepted_by_schema_but_not_executed() -> None:
+    """????????? ?????????? ???????????, ? ?? ???????? ?????????.
 
-    assert loop_budget(_step(definition, "a")) is None
-
-
-def test_loop_budget_returns_limit() -> None:
-    definition = _definition(
-        a={"action": f"{DEMO}:confirm_delivery", "loop": True, "max_iterations": 3}
-    )
-
-    assert loop_budget(_step(definition, "a")) == 3
-
-
-def test_pending_branches_are_flattened() -> None:
-    definition = _definition(
-        split={"action": f"{DEMO}:validate_cart", "fork": {"x": ["a"], "y": ["b", "c"]}},
-        a={"action": f"{DEMO}:reserve_inventory", "compensation": f"{DEMO}:release_inventory"},
-        b={"action": f"{DEMO}:create_shipment", "compensation": f"{DEMO}:cancel_shipment"},
-        c={"action": f"{DEMO}:confirm_delivery"},
-    )
-
-    assert pending_branches(_step(definition, "split")) == ["a", "b", "c"]
-
-
-def test_pending_branches_empty_for_plain_step() -> None:
-    definition = _definition(a={"action": f"{DEMO}:confirm_delivery"})
-
-    assert pending_branches(_step(definition, "a")) == []
-
-
-def test_join_step_is_detected() -> None:
+    ????? ????????? fork ? join, ? ????????? ????????? ?? ????????????, ??
+    ????????????? ????? ?? ?????????: ????? fork-???? ??????? ???????????.
+    ???? ????????? ????????, ???? ?????? ?????? ? ? ??? ?????????? ??????.
+    """
     definition = _definition(
         split={"action": f"{DEMO}:validate_cart", "fork": {"x": ["a"]}},
-        a={
-            "action": f"{DEMO}:reserve_inventory",
-            "compensation": f"{DEMO}:release_inventory",
-            "next": "j",
-        },
+        a={"action": f"{DEMO}:reserve_inventory"},
+        j={"action": f"{DEMO}:confirm_delivery", "join": ["a"], "next": None},
+    )
+
+    decision = decide_after_success(definition, "split", _step(definition, "split"))
+
+    assert decision.kind == "fork"
+    assert decision.branches == {"x": ["a"]}
+    # ???, ??????? ????????? ??????, ?? ????????: ????? ?? ???????????.
+    assert decision.step_name is None
+
+
+def test_join_step_has_no_successor() -> None:
+    definition = _definition(
+        a={"action": f"{DEMO}:reserve_inventory", "next": "j"},
         j={"action": f"{DEMO}:confirm_delivery", "join": ["a"]},
     )
 
-    assert is_join(_step(definition, "j")) is True
-    assert is_join(_step(definition, "a")) is False
+    decision = decide_after_success(definition, "j", _step(definition, "j"))
 
-
-def test_join_waits_for_listed_steps() -> None:
-    definition = _definition(
-        split={"action": f"{DEMO}:validate_cart", "fork": {"x": ["a"], "y": ["b"]}},
-        a={
-            "action": f"{DEMO}:reserve_inventory",
-            "compensation": f"{DEMO}:release_inventory",
-            "next": "j",
-        },
-        b={
-            "action": f"{DEMO}:create_shipment",
-            "compensation": f"{DEMO}:cancel_shipment",
-            "next": "j",
-        },
-        j={"action": f"{DEMO}:confirm_delivery", "join": ["a", "b"]},
-    )
-
-    assert join_waits_for(_step(definition, "j")) == ["a", "b"]
-
-
-def test_handlers_are_exposed() -> None:
-    definition = _definition(
-        a={
-            "action": f"{DEMO}:charge_payment",
-            "compensation": f"{DEMO}:refund_payment",
-        }
-    )
-
-    action, compensation = handlers_of(_step(definition, "a"))
-
-    assert action.endswith("charge_payment")
-    assert compensation is not None
-    assert compensation.endswith("refund_payment")
-
-
-def test_step_without_compensation_yields_none() -> None:
-    definition = _definition(a={"action": f"{DEMO}:validate_cart"})
-
-    assert handlers_of(_step(definition, "a"))[1] is None
-
-
-def test_decision_is_immutable() -> None:
-    decision = StepDecision(step_name="a", kind="run")
-
-    with pytest.raises(Exception, match="cannot assign|immutable"):
-        decision.kind = "stop"  # type: ignore[misc]
+    assert decision.kind == "complete"
 
 
 # --- Порядок компенсаций из журнала ----------------------------------------

@@ -194,7 +194,14 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.status = InstanceStatus.COMPENSATED
             state.current_step = None
 
+        case EventType.INSTANCE_CANCEL_REQUESTED:
+            # Отмена запрошена, но выполненные шаги ещё не откачены. Текущий
+            # шаг сохраняется: он указывает, где процесс остановился, и по
+            # нему видно, что ждать отката ещё есть чего.
+            state.status = InstanceStatus.CANCELLING
+
         case EventType.INSTANCE_CANCELLED:
+            # Терминально: компенсировать было нечего, и откат завершён.
             state.status = InstanceStatus.CANCELLED
             state.current_step = None
 

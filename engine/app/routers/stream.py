@@ -36,6 +36,7 @@ NOTIFIABLE = frozenset(
         EventType.INSTANCE_CREATED,
         EventType.INSTANCE_COMPLETED,
         EventType.INSTANCE_COMPENSATED,
+        EventType.INSTANCE_CANCEL_REQUESTED,
         EventType.INSTANCE_CANCELLED,
         EventType.STEP_COMPLETED,
         EventType.STEP_FAILED,

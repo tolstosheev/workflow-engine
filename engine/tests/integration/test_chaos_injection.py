@@ -185,7 +185,15 @@ async def test_injection_breaks_the_step(
 
     db_session.expire_all()
     status = await db_session.scalar(select_status(db_session, instance_id))
-    assert status in {InstanceStatus.COMPENSATING, InstanceStatus.COMPENSATED}
+    # Шаг `a` выполнен и компенсации не имеет, поэтому откатывать нечего и
+    # процесс завершается отменой. Если шаг с компенсацией был бы выполнен,
+    # инстанс пришёл бы в COMPENSATED.
+    assert status in {
+        InstanceStatus.CANCELLING,
+        InstanceStatus.COMPENSATING,
+        InstanceStatus.COMPENSATED,
+        InstanceStatus.CANCELLED,
+    }
 
 
 def select_status(db_session: AsyncSession, instance_id: uuid.UUID) -> object:

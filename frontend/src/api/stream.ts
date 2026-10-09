@@ -42,6 +42,7 @@ export function useEventStream({ onEvent, onStatusChange }: StreamOptions): void
       'INSTANCE_CREATED',
       'INSTANCE_COMPLETED',
       'INSTANCE_COMPENSATED',
+      'INSTANCE_CANCEL_REQUESTED',
       'INSTANCE_CANCELLED',
       'STEP_COMPLETED',
       'STEP_FAILED',

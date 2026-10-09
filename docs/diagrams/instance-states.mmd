@@ -7,16 +7,17 @@ stateDiagram-v2
     WAITING --> RUNNING: таймер сработал
 
     RUNNING --> COMPENSATING: STEP_FAILED и попытки исчерпаны
-    WAITING --> COMPENSATING: отмена инстанса
-    RUNNING --> CANCELLING: отмена инстанса
-    CANCELLING --> COMPENSATING: отмена подтверждена
+    RUNNING --> CANCELLING: INSTANCE_CANCEL_REQUESTED
+    WAITING --> CANCELLING: INSTANCE_CANCEL_REQUESTED
+    CANCELLING --> COMPENSATING: есть что компенсировать
 
     COMPENSATING --> COMPENSATING: COMPENSATION_STARTED / COMPLETED
     COMPENSATING --> COMPENSATION_FAILED: компенсация провалена, попытки исчерпаны
     COMPENSATION_FAILED --> COMPENSATING: ручной перезапуск компенсации
 
     COMPENSATING --> COMPENSATED: все компенсации выполнены
-    COMPENSATING --> FAILED: компенсации не объявлены
+    CANCELLING --> CANCELLED: компенсировать нечего
+    COMPENSATING --> CANCELLED: компенсации не объявлены
     RUNNING --> FAILED: необратимая ошибка, откат невозможен
     RUNNING --> COMPLETED: все шаги выполнены
 
@@ -38,4 +39,13 @@ stateDiagram-v2
         Переживает рестарт воркера.
         Воркер WAITING не подбирает:
         его будит таймер.
+    end note
+
+    note right of CANCELLING
+        Отмена не завершение.
+        Откат делает воркер,
+        и процесс кончится
+        COMPENSATED, а если
+        компенсировать нечего —
+        CANCELLED.
     end note
