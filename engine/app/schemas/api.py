@@ -173,6 +173,9 @@ class InstanceStateOut(BaseModel):
     completed_steps: list[str]
     pending_compensations: list[str]
     is_terminal: bool
+    # Сколько раз шаг успешно завершился: интерфейсу нужен для показа
+    # «проход 2 из 3» у цикла.
+    step_iterations: dict[str, int] = Field(default_factory=dict)
 
 
 class ForceCompleteRequest(BaseModel):

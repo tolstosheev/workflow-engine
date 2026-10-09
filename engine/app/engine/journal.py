@@ -45,6 +45,12 @@ class InstanceState:
 
     `ready_step` — шаг, готовый к исполнению. `None` означает, что процесс либо
     завершён, либо ждёт таймера, либо откатывается.
+
+    `step_iterations` — сколько раз шаг успешно завершился. Отдельный от
+    `completed_steps`: тот хранит порядок для компенсации и уникален по имени,
+    а циклу нужен именно счётчик. Живёт здесь, а не в `step_runs`, потому что
+    состояние обязано выводиться replay'ом (§3.1 AGENTS.md) — иначе подхват
+    воркера дал бы другой счётчик, чем тот, что видел упавший.
     """
 
     status: InstanceStatus = InstanceStatus.PENDING
@@ -53,6 +59,7 @@ class InstanceState:
     completed_steps: list[str] = field(default_factory=list)
     failed_step: str | None = None
     compensation_for: str | None = None
+    step_iterations: dict[str, int] = field(default_factory=dict)
 
     @property
     def is_terminal(self) -> bool:
@@ -144,10 +151,22 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
 
         case EventType.STEP_COMPLETED:
             state.variables.update(payload.get("output") or {})
+            step_name = payload.get("step", "")
             if payload.get("step") not in state.completed_steps:
                 state.completed_steps.append(payload.get("step", ""))
+            # Счётчик растёт на каждом успешном завершении: он ограничивает
+            # число проходов цикла, а число попыток ошибочных повторов сюда не
+            # относится — они не завершают шаг.
+            state.step_iterations[step_name] = state.step_iterations.get(step_name, 0) + 1
             state.status = InstanceStatus.RUNNING
             state.current_step = payload.get("next", state.current_step)
+
+        case EventType.LOOP_EXHAUSTED:
+            # Число проходов исчерпано. Процесс уходит в компенсацию, а не
+            # «успешно» останавливается: цель цикла не достигнута, и сделать
+            # вид, что она достигнута, было бы враньём в журнале.
+            state.status = InstanceStatus.COMPENSATING
+            state.failed_step = payload.get("step")
 
         case EventType.STEP_FAILED:
             state.failed_step = payload.get("step")

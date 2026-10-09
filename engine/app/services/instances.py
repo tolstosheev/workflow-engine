@@ -224,6 +224,7 @@ async def rebuild_state(db_session: AsyncSession, instance_id: uuid.UUID) -> dic
         "completed_steps": state.completed_steps,
         "pending_compensations": steps_to_compensate(state),
         "is_terminal": state.is_terminal,
+        "step_iterations": state.step_iterations,
     }
 
 
