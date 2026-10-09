@@ -13,7 +13,6 @@ from typing import Any
 
 from app.schemas.definition import (
     ForkStep,
-    JoinStep,
     RetryPolicy,
     Step,
     WorkflowDefinitionSchema,
@@ -103,59 +102,14 @@ def backoff_for(step: Step, attempt: int, fallback_max: int) -> float:
     return policy.backoff_seconds * (policy.backoff_multiplier ** max(attempt - 1, 0))
 
 
-def next_step(
-    definition: WorkflowDefinitionSchema,
-    ready_step: str,
-    outcome: StepOutcome,
-    attempt: int,
-    max_attempts: int,
-) -> StepDecision:
-    """Главная точка входа: что делать после результата шага."""
-    step = definition.steps.get(ready_step)
-    if step is None:
-        return StepDecision(step_name=None, kind="stop", reason="шаг отсутствует в определении")
-
-    if outcome.success:
-        return decide_after_success(definition, ready_step, step)
-    return decide_after_failure(definition, ready_step, step, attempt, max_attempts)
-
-
 def wait_before(step: Step) -> float:
     """Задержка перед шагом. Ожидание — durable-объект, не sleep в памяти."""
     return step.wait_before_seconds
 
 
-def timeout_for(step: Step) -> float:
-    return step.timeout_seconds
-
-
-def pending_branches(step: Step) -> list[str]:
-    """Все шаги параллельных ветвей, объявленные на fork-шаге."""
-    return (
-        [name for branch in step.fork.values() for name in branch]
-        if isinstance(step, ForkStep)
-        else []
-    )
-
-
-def is_join(step: Step) -> bool:
-    return isinstance(step, JoinStep)
-
-
-def join_waits_for(step: JoinStep) -> list[str]:
-    """Шаги, которые join обязан дождаться."""
-    return list(step.join)
-
-
-def loop_budget(step: Step) -> int | None:
-    """Предел итераций цикла. `None` — цикл не заявлен.
-
-    Валидация дефинишена требует предела для каждого `loop: true`: без него
-    процесс не завершится никогда.
-    """
-    return step.max_iterations if step.loop else None
-
-
-def handlers_of(step: Step) -> tuple[str, str | None]:
-    """Обработчик действия и компенсации."""
-    return step.action, step.compensation
+# Параллельные ветки и циклы описаны в схеме и проверяются валидатором, но
+# не исполняются: интерпретатор не запускает ветви fork и не ведёт счётчик
+# итераций. Функции-аксессоры для них удалены вместе с этой оговоркой —
+# код, который никогда не вызывается, создаёт впечатление работающей
+# поддержки, которой нет. Границы применимости перечислены в
+# `docs/DEPLOYMENT-ACT.md`.
