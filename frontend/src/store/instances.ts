@@ -81,6 +81,11 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
         next.status = 'COMPENSATED'
         next.current_step = null
         break
+      case 'INSTANCE_CANCEL_REQUESTED':
+        // Отмена ещё не выполнена: компенсации впереди, статус сменится на
+        // COMPENSATED либо CANCELLED.
+        next.status = 'CANCELLING'
+        break
       case 'INSTANCE_CANCELLED':
         next.status = 'CANCELLED'
         break

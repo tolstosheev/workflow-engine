@@ -61,6 +61,7 @@ const EVENT_LABELS: Record<EventType, string> = {
   COMPENSATION_SKIPPED: 'Компенсация не объявлена',
   INSTANCE_COMPLETED: 'Процесс завершён',
   INSTANCE_COMPENSATED: 'Процесс откатан',
+  INSTANCE_CANCEL_REQUESTED: 'Запрошена отмена',
   INSTANCE_CANCELLED: 'Процесс отменён',
   LEASE_EXPIRED: 'Аренда истекла',
 }
