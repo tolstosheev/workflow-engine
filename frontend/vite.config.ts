@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url'
 
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -24,5 +24,11 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  test: {
+    // Окружение jsdom нужен будущим тестам компонентов; сейчас проверяется
+    // чистая логика раскладки, для неё достаточно node.
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
   },
 })

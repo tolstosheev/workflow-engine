@@ -34,6 +34,7 @@ export type EventType =
   | 'LEASE_EXPIRED'
 
 export interface DefinitionRef {
+  id: string
   name: string
   version: number
 }
@@ -139,6 +140,8 @@ export interface InstanceState {
   completed_steps: string[]
   pending_compensations: string[]
   is_terminal: boolean
+  /** Сколько раз шаг успешно завершился: для показа «проход 2 из 3». */
+  step_iterations: Record<string, number>
 }
 
 export interface ValidationIssue {
