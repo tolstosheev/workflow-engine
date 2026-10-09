@@ -304,6 +304,8 @@ async def finish(
         InstanceStatus.COMPENSATED: EventType.INSTANCE_COMPENSATED,
         InstanceStatus.CANCELLED: EventType.INSTANCE_CANCELLED,
     }.get(status, EventType.INSTANCE_COMPENSATED)
+    # FAILED не имеет собственного события: компенсировать нечего, а
+    # INSTANCE_COMPENSATED здесь означала бы «откат завершён», чего не было.
 
     await append_event(db_session, instance.id, event_type, {})
     instance.status = status
