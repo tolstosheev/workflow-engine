@@ -61,13 +61,54 @@ async def build_context(
     step_name: str,
     attempt: int,
 ) -> Any:
-    """Собирает контекст обработчика.
+    """Собирает контекст обработчика шага.
+
+    Ключ операции — шаговый: повтор шага обязан узнать свой ключ.
+    """
+    operation_id = str(idempotency.make_key(instance_id, step_name, attempt))
+    return await _build_context(
+        definition, state_variables, instance_input, instance_id, step_name, attempt, operation_id
+    )
+
+
+async def build_compensation_context(
+    definition: WorkflowDefinitionSchema,
+    state_variables: dict[str, Any],
+    instance_input: dict[str, Any],
+    instance_id: uuid.UUID,
+    step_name: str,
+    attempt: int,
+) -> Any:
+    """Собирает контекст обработчика компенсации.
+
+    Ключ операции здесь компенсационный, а не шаговый: отмена возвращает
+    средства один раз, и повтор шага не должен выглядеть как повтор отмены.
+    Разные префиксы — потому что это разные операции.
+    """
+    operation_id = str(idempotency.make_key(instance_id, f"compensate:{step_name}", attempt))
+    return await _build_context(
+        definition, state_variables, instance_input, instance_id, step_name, attempt, operation_id
+    )
+
+
+async def _build_context(
+    definition: WorkflowDefinitionSchema,
+    state_variables: dict[str, Any],
+    instance_input: dict[str, Any],
+    instance_id: uuid.UUID,
+    step_name: str,
+    attempt: int,
+    operation_id: str,
+) -> Any:
+    """Общая часть построения контекста.
 
     Тип не уточняется здесь намеренно: контекст живёт в `demo.handlers`, и ядро
     не должно зависеть от модуля предметной области.
     """
-    action_ref = definition.steps[step_name].action
-    module_path = action_ref.partition(":")[0]
+    step = definition.steps.get(step_name)
+    module_path = (step.action if step else "").partition(":")[0]
+    if not module_path:  # pragma: no cover - компенсация для неизвестного шага
+        return None
     module = __import__(module_path, fromlist=["StepContext"])
     context_class = getattr(module, "StepContext", None)
     if context_class is None:  # pragma: no cover - обработчик без контекста
@@ -77,7 +118,7 @@ async def build_context(
         instance_id=str(instance_id),
         step_name=step_name,
         attempt=attempt,
-        operation_id=str(idempotency.make_key(instance_id, step_name, attempt)),
+        operation_id=operation_id,
         input=instance_input,
         variables=state_variables,
     )
@@ -334,6 +375,7 @@ async def finish(
 
 __all__ = [
     "StepFailed",
+    "build_compensation_context",
     "build_context",
     "execute_step",
     "finish",

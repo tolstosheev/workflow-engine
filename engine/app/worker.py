@@ -106,6 +106,11 @@ async def _compensate(
         if instance_row is None:  # pragma: no cover - гонка с удалением
             return False
 
+        # Вход и переменные нужны компенсации: освободить резерв по
+        # идентификатору инстанса, не зная состав заказа, невозможно.
+        instance_input = dict(instance_row.input or {})
+        variables = dict(instance_row.variables or {})
+
         items = await saga.plan(session, instance_row.id, compensation_refs)
         if not items:
             # Откатывать нечего. Отмена при этом всё равно завершилась, но
@@ -124,7 +129,12 @@ async def _compensate(
             await session.commit()
 
         succeeded, error = await _invoke_compensation(
-            instance_id, item, attempt=item.attempts_made + 1
+            instance_id,
+            item,
+            attempt=item.attempts_made + 1,
+            definition=definition,
+            instance_input=instance_input,
+            variables=variables,
         )
 
         async with session_scope() as session:
@@ -150,7 +160,12 @@ async def _compensate(
 
 
 async def _invoke_compensation(
-    instance_id: uuid.UUID, item: saga.CompensationItem, attempt: int
+    instance_id: uuid.UUID,
+    item: saga.CompensationItem,
+    attempt: int,
+    definition: WorkflowDefinitionSchema,
+    instance_input: dict,
+    variables: dict,
 ) -> tuple[bool, str | None]:
     """Вызывает обработчик компенсации вне транзакции БД.
 
@@ -165,6 +180,7 @@ async def _invoke_compensation(
 
     from app.core.db import session_scope
     from app.engine import idempotency
+    from app.engine.executor import build_compensation_context
     from app.handlers.registry import resolve_handler
 
     key = saga.operation_key(instance_id, item, attempt)
@@ -180,7 +196,18 @@ async def _invoke_compensation(
 
     try:
         handler = resolve_handler(item.compensation_ref)
-        pending = handler(None)
+        # Контекст строится так же, как для обычного шага. Раньше компенсация
+        # получала None и знать не могла, что отменяет, — освободить резерв
+        # по идентификатору инстанса ей было нечем.
+        context = await build_compensation_context(
+            definition,
+            variables,
+            instance_input,
+            instance_id,
+            item.step_name,
+            attempt,
+        )
+        pending = handler(context)
         if inspect.isawaitable(pending):
             await pending
     except Exception as exc:
