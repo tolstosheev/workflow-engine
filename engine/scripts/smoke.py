@@ -22,6 +22,8 @@ from typing import Any
 
 import httpx
 
+from scripts.definitions import DEMO_INVENTORY
+
 DEFAULT_BASE_URL = "http://localhost:8000"
 
 # Состояния, в которых процесс уже не изменится. Ждать дальше бессмысленно:
@@ -142,12 +144,62 @@ async def steps_of(client: httpx.AsyncClient, instance_id: str) -> list[dict[str
     return response.json()["items"]
 
 
+# --- Данные предметной области ---------------------------------------------
+#
+# Откат проверяется по данным, а не только по журналу: у отката должен быть
+# предмет. Раньше обработчики ничего не писали, и «резерв снят» было не на чем.
+
+
+async def _domain_snapshot() -> dict[str, Any]:
+    """Резерв по складу, платежи и отправления."""
+    from sqlalchemy import select
+
+    from app.core.db import get_session_factory
+    from app.models.workflow import DemoInventoryItem, DemoPayment, DemoShipment
+
+    async with get_session_factory()() as session:
+        stock = {
+            row.sku: (int(row.available), int(row.reserved))
+            for row in await session.scalars(select(DemoInventoryItem))
+        }
+        payments = sorted(
+            (str(row.amount), row.status) for row in await session.scalars(select(DemoPayment))
+        )
+        shipments = sorted(row.status for row in await session.scalars(select(DemoShipment)))
+    return {"stock": stock, "payments": payments, "shipments": shipments}
+
+
+def _reserved_for(snapshot: dict[str, Any], sku: str) -> int:
+    return snapshot["stock"].get(sku, (0, -1))[1]
+
+
+async def _available_for(sku: str) -> int:
+    """Свободный остаток по артикулу — чтобы заказ заведомо превышал склад."""
+    return (await _domain_snapshot())["stock"].get(sku, (0, 0))[0]
+
+
+# Артикулы берутся из склада, который наполняет `make seed`: несуществующий
+# артикул упал бы с «товар не найден на складе» и не сказал бы ничего.
+DEMO_SKU = DEMO_INVENTORY[0]["sku"]
+FAIL_SKU = DEMO_INVENTORY[1]["sku"]
+
+
 async def check_happy_path(scenario: Scenario, definition_id: str) -> None:
     """Полный проход без сбоев."""
+    # Снимок до запуска: проверяется рост данных, а не абсолютное значение —
+    # платежи и отправления от предыдущих прогонов в базе остаются.
+    before = await _domain_snapshot()
+    payments_before = len(before["payments"])
+    shipments_before = len(before["shipments"])
+
     instance_id = await start_instance(
         scenario.client,
         definition_id,
-        {"order_number": "SMOKE-OK", "items": [{"sku": "SKU-000", "qty": 2}], "amount": "199.00"},
+        {
+            "order_number": "SMOKE-OK",
+            "items": [{"sku": DEMO_SKU, "qty": 2}],
+            "amount": "199.00",
+        },
     )
 
     status = await wait_for_terminal(scenario.client, instance_id, scenario.wait_seconds)
@@ -195,13 +247,35 @@ async def check_happy_path(scenario: Scenario, definition_id: str) -> None:
         f"replay: {replayed['status']}",
     )
 
+    # Данные после полного прохода. Проверяется рост, а не абсолютное
+    # значение: склад и платежи могли быть заняты другими прогонами.
+    domain = await _domain_snapshot()
+    scenario.record(
+        "резервирование записано в данные",
+        _reserved_for(domain, DEMO_SKU) >= 2,
+        f"резерв {_reserved_for(domain, DEMO_SKU)}",
+    )
+    scenario.record(
+        "списание и отправление записаны в данные",
+        len(domain["payments"]) > payments_before and len(domain["shipments"]) > shipments_before,
+        f"платежей {len(domain['payments'])} (было {payments_before}), "
+        f"отправлений {len(domain['shipments'])} (было {shipments_before})",
+    )
+
 
 async def check_compensation(scenario: Scenario, definition_id: str) -> None:
     """Контрольный пример: сбой на оплате и автоматический откат."""
+    # Снимок снимается до запуска: резерв сравнивается с тем, что было до
+    # заказа, а не с абсолютным нулём — склад может быть занят другими.
+    before = await _domain_snapshot()
+    reserved_before = _reserved_for(before, FAIL_SKU)
+    payments_before = len(before["payments"])
+    shipments_before = len(before["shipments"])
+
     instance_id = await start_instance(
         scenario.client,
         definition_id,
-        {"order_number": "SMOKE-FAIL", "items": [{"sku": "SKU-001", "qty": 1}], "amount": "99.00"},
+        {"order_number": "SMOKE-FAIL", "items": [{"sku": FAIL_SKU, "qty": 1}], "amount": "99.00"},
     )
 
     # Инъекция адресная: иначе сломались бы параллельные прогоны.
@@ -249,6 +323,118 @@ async def check_compensation(scenario: Scenario, definition_id: str) -> None:
         f"последнее событие {types[-1] if types else 'нет'}",
     )
 
+    # Главная проверка сценария: откат возвращает данные, а не только
+    # дописывает события в журнал. Снимок снят до запуска сломанного заказа,
+    # поэтому сравнение идёт с ним, а не с абсолютным нулём: склад может быть
+    # занят другими прогонами.
+    after = await _domain_snapshot()
+    scenario.record(
+        "откат вернул резерв на складе к исходному",
+        _reserved_for(after, FAIL_SKU) == reserved_before,
+        f"было {reserved_before}, стало {_reserved_for(after, FAIL_SKU)}",
+    )
+    # Проверяются только записи, созданные этим заказом: платежи от других
+    # прогонов в базе остаются и не должны мешать.
+    new_payments = [status for _, status in after["payments"][payments_before:]]
+    scenario.record(
+        "откат не оставил несписанных средств",
+        "HELD" not in new_payments,
+        f"новые платежи {new_payments}",
+    )
+    new_shipments = after["shipments"][shipments_before:]
+    scenario.record(
+        "откат не оставил активных отправлений",
+        "CREATED" not in new_shipments,
+        f"новые отправления {new_shipments}",
+    )
+
+
+async def check_refund_after_charge(scenario: Scenario, definition_id: str) -> None:
+    """Сбой после списания: деньги приходится возвращать по-настоящему.
+
+    Сбой на оплате не проверяет возврат средств — платёж там просто не
+    создаётся. Чтобы компенсация возврата была доказана данными, сбой
+    ставится на шаг после списания.
+    """
+    before = await _domain_snapshot()
+    payments_before = len(before["payments"])
+
+    instance_id = await start_instance(
+        scenario.client,
+        definition_id,
+        {"order_number": "SMOKE-REFUND", "items": [{"sku": FAIL_SKU, "qty": 1}], "amount": "77.00"},
+    )
+    injection = await scenario.client.post(
+        "/api/chaos/fail-step",
+        json={
+            "instance_id": instance_id,
+            "step": "create_shipment",
+            "mode": "always",
+            "error": "сбой шага (инъекция)",
+        },
+    )
+    injection.raise_for_status()
+
+    status = await wait_for_terminal(scenario.client, instance_id, scenario.wait_seconds * 2)
+    await scenario.client.delete("/api/chaos")
+
+    scenario.record(
+        "сбой после списания приводит к откату",
+        status == "COMPENSATED",
+        f"статус {status}",
+    )
+
+    after = await _domain_snapshot()
+    new_payments = [state for _, state in after["payments"][payments_before:]]
+    scenario.record(
+        "откат вернул списанные средства",
+        bool(new_payments) and all(state == "REFUNDED" for state in new_payments),
+        f"новые платежи {new_payments}",
+    )
+
+
+async def check_beyond_stock(scenario: Scenario, definition_id: str) -> None:
+    """Заказ больше остатка: сбой настоящий, без подставной инъекции.
+
+    Резерв ограничен `reserved <= available`, поэтому такой заказ падает на
+    шаге резервирования и уходит в компенсацию сам.
+    """
+    available = await _available_for(FAIL_SKU)
+    beyond = available + 10_000
+
+    instance_id = await start_instance(
+        scenario.client,
+        definition_id,
+        {
+            "order_number": "SMOKE-BEYOND",
+            "items": [{"sku": FAIL_SKU, "qty": beyond}],
+            "amount": "5.00",
+        },
+    )
+    status = await wait_for_terminal(scenario.client, instance_id, scenario.wait_seconds * 2)
+
+    # CANCELLED здесь законен: шаг резервирования не выполнился, компенсировать
+    # нечего, и называть это COMPENSATED было бы враньём.
+    scenario.record(
+        "заказ больше остатка падает, а не проходит",
+        status in {"COMPENSATED", "FAILED", "CANCELLED"},
+        f"статус {status}, запрошено {beyond} при остатке {available}",
+    )
+
+    by_name = {step["step_name"]: step for step in await steps_of(scenario.client, instance_id)}
+    scenario.record(
+        "нехватка товара остановила шаг резервирования",
+        by_name.get("reserve_inventory", {}).get("status") == "FAILED",
+        f"статус {by_name.get('reserve_inventory', {}).get('status', 'нет шага')}",
+    )
+
+    snapshot = await _domain_snapshot()
+    scenario.record(
+        "недоступный товар не оставил резерва",
+        _reserved_for(snapshot, FAIL_SKU) == 0,
+        f"резерв {_reserved_for(snapshot, FAIL_SKU)}",
+    )
+
 
 async def run(base_url: str, wait_seconds: float, compensation_only: bool) -> int:
     async with httpx.AsyncClient(base_url=base_url, timeout=30) as client:
@@ -272,7 +458,7 @@ async def run(base_url: str, wait_seconds: float, compensation_only: bool) -> in
             definition_id,
             {
                 "order_number": "SMOKE-WARMUP",
-                "items": [{"sku": "SKU-000", "qty": 1}],
+                "items": [{"sku": DEMO_SKU, "qty": 1}],
                 "amount": "10.00",
             },
         )
@@ -287,6 +473,12 @@ async def run(base_url: str, wait_seconds: float, compensation_only: bool) -> in
             started = time.monotonic()
             await check_happy_path(scenario, definition_id)
             happy_elapsed = time.monotonic() - started
+            # Сбой после списания: единственный сценарий, где возврат средств
+            # действительно происходит, а не «платёж не создался».
+            await check_refund_after_charge(scenario, definition_id)
+            # Сбой без инъекции: заказ больше остатка. Идёт последним, чтобы
+            # проверка не влияла на предыдущие, где резерв ожидался занятым.
+            await check_beyond_stock(scenario, definition_id)
 
         scenario.record(
             "откат укладывается в разумное время",
