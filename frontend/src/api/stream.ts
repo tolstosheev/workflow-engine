@@ -38,12 +38,17 @@ export function useEventStream({ onEvent, onStatusChange }: StreamOptions): void
       }
     }
 
+    // Список должен совпадать с бекендовым `NOTIFIABLE`
+    // в `engine/app/routers/stream.py`. Расхождение двух списков обязательно
+    // содержать: событие, раньше превращались было без подписки в потоке.
     const types: StreamEvent['type'][] = [
       'INSTANCE_CREATED',
       'INSTANCE_COMPLETED',
       'INSTANCE_COMPENSATED',
+      'INSTANCE_FAILED',
       'INSTANCE_CANCEL_REQUESTED',
       'INSTANCE_CANCELLED',
+      'LOOP_EXHAUSTED',
       'STEP_COMPLETED',
       'STEP_FAILED',
       'COMPENSATION_STARTED',

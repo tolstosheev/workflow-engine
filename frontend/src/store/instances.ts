@@ -92,6 +92,15 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
       case 'INSTANCE_CANCELLED':
         next.status = 'CANCELLED'
         break
+      case 'INSTANCE_FAILED':
+        // Отказ без компенсации: упавший шаг, откатывать нечему.
+        next.status = 'FAILED'
+        next.current_step = null
+        break
+      case 'LOOP_EXHAUSTED':
+        // Цикл исчерпан: процесс уходит в откат.
+        next.status = 'COMPENSATING'
+        break
       default:
         break
     }
