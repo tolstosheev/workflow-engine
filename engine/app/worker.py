@@ -54,7 +54,7 @@ class CycleResult:
 
 
 def _worker_id() -> str:
-    # Идентификатор включает имя узла: по нему видно, какой из воркеров �??
+    # Идентификатор включает имя узла: по нему видно, какой из воркеров подхватил.
     # docker-compose сейчас держит инстанс.
     return f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
@@ -106,16 +106,27 @@ async def _compensate(
         if instance_row is None:  # pragma: no cover - гонка с удалением
             return False
 
-        # Вход и переменные нужны компенсации: освободить резерв по
-        # идентификатору инстанса, не зная состав заказа, невозможно.
+        # Порядок выполнения и переменные берутся из replay'а журнала, а не из
+        # колонок инстанса (§3.1). Колонка отстаёт: шаг, завершившийся в текущей
+        # итерации, в ней ещё не учтён, и план отката вырвался бы в пустой —
+        # при том что резерв на складе уже занят.
+        state = replay(await read_events(session, instance_id))
         instance_input = dict(instance_row.input or {})
-        variables = dict(instance_row.variables or {})
+        variables = dict(state.variables)
 
-        items = await saga.plan(session, instance_row.id, compensation_refs)
+        items = await saga.plan(
+            session, instance_row.id, compensation_refs, executed_steps=state.completed_steps
+        )
         if not items:
             # Откатывать нечего. Отмена при этом всё равно завершилась, но
             # называть её `COMPENSATED` было бы враньём: компенсаций не было.
-            await executor.finish(session, instance_row, InstanceStatus.CANCELLED)
+            # Итог утечённое состояние зависит от последнего события:
+            # пользователь запросил отмену — инстанс отменён,
+            # а упавший шаг — отказан — отказан в себя успешно не был.
+            empty_status = (
+                InstanceStatus.CANCELLED if state.cancel_requested else InstanceStatus.FAILED
+            )
+            await executor.finish(session, instance_row, empty_status)
             return True
 
         instance_row.status = InstanceStatus.COMPENSATING

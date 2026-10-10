@@ -92,6 +92,10 @@ class EventType(StrEnum):
     COMPENSATION_SKIPPED = "COMPENSATION_SKIPPED"
     INSTANCE_COMPLETED = "INSTANCE_COMPLETED"
     INSTANCE_COMPENSATED = "INSTANCE_COMPENSATED"
+    # Отказ без компенсации: упал первый шаг, откатывать нечего.
+    # Раньше такое завершение писало INSTANCE_COMPENSATED, и журнал утверждал
+    # об откате, которого не было.
+    INSTANCE_FAILED = "INSTANCE_FAILED"
     # Запрос отмены — не завершение. Отдельное событие потому, что
     # INSTANCE_CANCELLED терминален: при его трактовке как запроса отмены
     # процесс завершался, минуя откат выполненных шагов.

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import session_scope
 from app.engine import idempotency
+from app.engine.executor import PermanentStepError
 from app.models.workflow import DemoInventoryItem, DemoPayment, DemoShipment
 
 
@@ -106,12 +107,14 @@ async def reserve_inventory(ctx: StepContext) -> dict[str, Any]:
                 select(DemoInventoryItem).where(DemoInventoryItem.sku == sku)
             )
             if row is None:
-                raise RuntimeError(f"товар {sku!r} не найден на складе")
+                raise PermanentStepError(f"товар {sku!r} не найден на складе")
             if row.reserved + qty > row.available:
                 # Проверка в обработчике, а не только ограничением таблицы:
                 # ограничение поймало бы превышение при записи, а сообщение
                 # оператору должно объяснять причину.
-                raise RuntimeError(
+                # Ошибка постоянная: товар сам не появится, и повтор `max_attempts`
+                # раз лишь отложит откат зарезервированного.
+                raise PermanentStepError(
                     f"товара {sku!r} недостаточно: доступно "
                     f"{row.available - row.reserved}, запрошено {qty}"
                 )

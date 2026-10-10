@@ -438,3 +438,37 @@ async def test_append_is_rolled_back_with_transaction(db_session: AsyncSession) 
     await db_session.rollback()
 
     assert await read_events(db_session, instance_id) == []
+
+
+def test_cancel_requested_marks_origin_of_compensation() -> None:
+    """Журнал различает, почему начался откат."""
+    events = [
+        _event(1, EventType.STEP_FAILED, step="a", terminal=True),
+    ]
+    assert replay(events).cancel_requested is False
+
+    events.append(_event(2, EventType.INSTANCE_CANCEL_REQUESTED))
+    assert replay(events).cancel_requested is True
+
+
+def test_failure_after_cancel_clears_origin() -> None:
+    """Повторная отмена не должна записываться в журнале
+    после предыдущей отмены."""
+    events = [
+        _event(1, EventType.INSTANCE_CANCEL_REQUESTED),
+        _event(2, EventType.STEP_FAILED, step="a", terminal=True),
+    ]
+    assert replay(events).cancel_requested is False
+
+
+def test_instance_failed_event_marks_terminal_failure() -> None:
+    events = [
+        _event(1, EventType.INSTANCE_STARTED, step="a"),
+        _event(2, EventType.INSTANCE_FAILED),
+    ]
+
+    state = replay(events)
+
+    assert state.status is InstanceStatus.FAILED
+    assert state.current_step is None
+    assert state.is_terminal

@@ -95,6 +95,7 @@ def decide_after_failure(
     step: Step,
     attempt: int,
     max_attempts: int,
+    permanent: bool = False,
 ) -> StepDecision:
     """Переход после неудачного шага.
 
@@ -106,6 +107,13 @@ def decide_after_failure(
 
     if on_failure is not None:
         return StepDecision(step_name=on_failure, kind="run")
+
+    if permanent:
+        # Отказ по сути дела: товар не появится, и ещё несколько попыток
+        # только отдалит откат в себя уже выполненного шага.
+        return StepDecision(
+            step_name=None, kind="stop", reason="постоянная ошибка, повтор не поможет"
+        )
 
     if attempt < max_attempts:
         return StepDecision(step_name=step_name, kind="run", reason="повтор шага")

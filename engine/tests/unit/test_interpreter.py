@@ -297,3 +297,35 @@ def test_compensation_order_comes_from_journal_not_definition() -> None:
 
 def test_instance_id_is_uuid_for_keys() -> None:
     assert isinstance(uuid.uuid4(), uuid.UUID)
+
+
+def test_permanent_failure_stops_without_retries() -> None:
+    """Постоянная ошибка не повторяется, даже есть попытки.
+
+    Без этого интерпретация считала бы повтором ибо шаг, а потом откат всего
+    резервированного товара.
+    """
+    definition = _definition(a={"action": f"{DEMO}:charge_payment"})
+
+    decision = decide_after_failure(definition, "a", _step(definition, "a"), 1, 3, permanent=True)
+
+    assert decision.step_name is None
+    assert decision.kind == "stop"
+    assert "постоянная" in decision.reason
+
+
+def test_permanent_failure_still_honours_on_failure_branch() -> None:
+    """Явная ветка обязательна: первая попытка не отменяет
+    замятленный шаг для сообщения покупателя."""
+    definition = _definition(
+        a={
+            "action": f"{DEMO}:charge_payment",
+            "next": {"on_success": "ok", "on_failure": "undo"},
+        },
+        ok={"action": f"{DEMO}:confirm_delivery"},
+        undo={"action": f"{DEMO}:refund_payment"},
+    )
+
+    decision = decide_after_failure(definition, "a", _step(definition, "a"), 1, 3, permanent=True)
+
+    assert decision.step_name == "undo"

@@ -868,3 +868,110 @@ async def test_loop_limit_survives_worker_restart(db_session: AsyncSession) -> N
         .where(StepRun.instance_id == instance_id, StepRun.step_name == "charge_payment")
     )
     assert passes == 3
+
+
+# --- Ошибки, которые повтор не исправит --------------------------------------
+
+PERMANENT_FLOW = {
+    "start": "reserve_inventory",
+    "steps": {
+        "reserve_inventory": {
+            "action": f"{DEMO}:reserve_inventory",
+            "next": "charge_payment",
+            "retry": {"max_attempts": 3, "backoff_seconds": 0},
+        },
+        "charge_payment": {"action": f"{DEMO}:charge_payment"},
+    },
+}
+
+
+async def test_permanent_error_is_not_retried(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Постоянный отказ не должен повторяться.
+
+    Товара больше нет — он не появится за время backoff. Три попытки лишь
+    отложили бы откат резерва, занятого предыдущими шагами.
+    """
+    import app.demo.handlers as demo
+    from app.engine.executor import PermanentStepError
+
+    original = demo.reserve_inventory
+
+    async def rejecting(ctx: object) -> dict:
+        raise PermanentStepError("товара больше нет")
+
+    monkeypatch.setattr(demo, "reserve_inventory", rejecting)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, PERMANENT_FLOW)
+    await _seed_journal(db_session, instance_id, PERMANENT_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    monkeypatch.setattr(demo, "reserve_inventory", original)
+
+    db_session.expire_all()
+    attempts = await db_session.scalar(
+        select(func.count())
+        .select_from(StepRun)
+        .where(StepRun.instance_id == instance_id, StepRun.step_name == "reserve_inventory")
+    )
+    events = await read_events(db_session, instance_id)
+
+    assert attempts == 1, f"шаг повторён {attempts} раз при постоянной ошибке"
+    assert EventType.STEP_RETRY_SCHEDULED not in [e.type for e in events]
+    assert EventType.STEP_FAILED in [e.type for e in events]
+
+
+async def test_permanent_error_carries_retryable_false() -> None:
+    """Контракт: обработчик объявляет постоянство через `retryable`."""
+    from app.engine.executor import PermanentStepError, StepFailed
+
+    assert PermanentStepError("x").retryable is False
+    assert StepFailed("x").retryable is True
+
+
+async def test_failed_without_completed_steps_ends_as_failed(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Отказ на первом шаге — это FAILED, а не «откат завершён».
+
+    Компенсировать нечего, и журнал не должен утверждать обратного.
+    """
+    import app.demo.handlers as demo
+
+    original = demo.validate_cart
+
+    async def failing(ctx: object) -> dict:
+        raise RuntimeError("корзина пуста")
+
+    monkeypatch.setattr(demo, "validate_cart", failing)
+    _patch_resolver(monkeypatch, demo)
+
+    flow = {
+        "start": "validate_cart",
+        "steps": {
+            "validate_cart": {
+                "action": f"{DEMO}:validate_cart",
+                "next": "reserve_inventory",
+                # Без этого шаг ушёл бы в повтор с backoff, и инстанс остался
+                # бы RUNNING: тест проверяет терминальное состояние, а не повтор.
+                "retry": {"max_attempts": 1},
+            },
+            "reserve_inventory": {"action": f"{DEMO}:reserve_inventory"},
+        },
+    }
+    instance_id, _ = await _create_instance(db_session, flow)
+    await _seed_journal(db_session, instance_id, flow)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    monkeypatch.setattr(demo, "validate_cart", original)
+
+    events = await read_events(db_session, instance_id)
+    types = [e.type for e in events]
+
+    assert EventType.INSTANCE_FAILED in types
+    assert EventType.INSTANCE_COMPENSATED not in types
+    assert replay(events).status is InstanceStatus.FAILED

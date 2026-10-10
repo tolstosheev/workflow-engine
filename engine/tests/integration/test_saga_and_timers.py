@@ -73,6 +73,15 @@ async def _completed_step(
     return step_run.id
 
 
+async def _completed_event(
+    db_session: AsyncSession, instance_id: uuid.UUID, step_name: str
+) -> None:
+    """Записывает `STEP_COMPLETED` в журнал — источник истины о выполнении."""
+    from app.engine.journal import append_event
+
+    await append_event(db_session, instance_id, EventType.STEP_COMPLETED, {"step": step_name})
+
+
 def func_count() -> object:
     from sqlalchemy import func
 
@@ -128,6 +137,59 @@ async def test_compensation_plan_is_reverse_order(db_session: AsyncSession) -> N
     )
 
     assert [item.step_name for item in plan] == ["charge", "reserve", "validate"]
+
+
+async def test_plan_from_journal_matches_plan_from_step_runs(db_session: AsyncSession) -> None:
+    """Порядок из журнала и из step_runs должен совпадать.
+
+    План отката строится по журналу: колонка инстанса отстаёт на шаг,
+    завершившийся в текущей итерации, и отмена, пришедшая в ту же итерацию,
+    вырвалась бы в пустой план при занятом резерве.
+    """
+    instance_id = await _new_instance(db_session)
+    for name in ("validate", "reserve", "charge"):
+        await _completed_step(db_session, instance_id, name)
+        await _completed_event(db_session, instance_id, name)
+
+    refs = {
+        "validate": "app.demo.handlers:undo_validate",
+        "reserve": "app.demo.handlers:release_inventory",
+        "charge": "app.demo.handlers:refund_payment",
+    }
+    from_runs = await saga.plan(db_session, instance_id, refs)
+    from_journal = await saga.plan(
+        db_session,
+        instance_id,
+        refs,
+        executed_steps=["validate", "reserve", "charge"],
+    )
+
+    assert [item.step_name for item in from_journal] == [item.step_name for item in from_runs]
+
+
+async def test_plan_from_journal_includes_step_absent_in_step_runs(
+    db_session: AsyncSession,
+) -> None:
+    """Шаг, завершившийся в текущей итерации, обязан попасть в откат.
+
+    Это и есть регрессия: прогон шага пишется в одной транзакции, а вызов
+    отката — в следующей, и между ними шаг успевает исчезнуть из выборки по
+    колонке.
+    """
+    instance_id = await _new_instance(db_session)
+    await _completed_event(db_session, instance_id, "reserve")
+
+    plan = await saga.plan(
+        db_session,
+        instance_id,
+        {"reserve": "app.demo.handlers:release_inventory"},
+        executed_steps=["reserve"],
+    )
+
+    # Без прогона компенсировать нечего, но шаг не должен исчезнуть молча:
+    # решение принимает воркер, а не валидатор.
+    assert plan == []
+    assert await saga.completed_steps(db_session, instance_id) == []
 
 
 async def test_steps_without_compensation_are_skipped(db_session: AsyncSession) -> None:
