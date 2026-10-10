@@ -173,5 +173,5 @@ export const chaos = {
 
 export const service = {
   health: () => request<{ status: string }>('/health'),
-  metrics: () => fetch(api('/metrics')),
+  metrics: () => fetch(api('/metrics')).then((response) => response.text()),
 }

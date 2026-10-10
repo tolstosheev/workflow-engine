@@ -15,6 +15,15 @@ const SERVICES = [
   { value: 'shipment', label: 'Доставка' },
 ] as const
 
+/** Шаги заказа: подставляются по имени, без правки текста вручную. */
+const PRESETS = [
+  'validate_cart',
+  'reserve_inventory',
+  'charge_payment',
+  'create_shipment',
+  'confirm_delivery',
+] as const
+
 /**
  * Панель инъекции отказов.
  *
@@ -65,6 +74,23 @@ export default function ChaosPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Сломать шаг">
+          <p className="mb-3 text-sm text-white/60">
+            Пресет ломает шаг на любом инстансе: правило адресное, параллельные прогоны не мешают
+            друг другу.
+          </p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            {PRESETS.map((preset) => (
+              <Button
+                key={preset}
+                variant="secondary"
+                onClick={() => setStep(preset)}
+                className="font-mono"
+              >
+                {preset}
+              </Button>
+            ))}
+          </div>
+
           <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">
             Шаг
           </label>
