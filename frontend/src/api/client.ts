@@ -173,5 +173,14 @@ export const chaos = {
 
 export const service = {
   health: () => request<{ status: string }>('/health'),
-  metrics: () => fetch(api('/metrics')).then((response) => response.text()),
+  metrics: async () => {
+    const response = await fetch(api('/metrics'))
+    if (!response.ok) {
+      // Без этой проверки парсер вернёт текст ошибки как обычное содержимое,
+      // а parseMetrics не найдёт обрацев и вернёт пустой список: упавшая панель снову
+      // показывала бы «метрики ещё не собрани» — разнешение само о себе.
+      throw new ApiError(`Метрики недоступны: ответ ${response.status}`, response.status)
+    }
+    return response.text()
+  },
 }

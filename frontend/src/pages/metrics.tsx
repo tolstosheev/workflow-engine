@@ -92,7 +92,11 @@ export function MetricsPage() {
       {error && <ErrorState message={error} />}
 
       <Card title="Тревоги">
-        {samples.length === 0 ? (
+        {error ? (
+          // При ошибке запроса «метрики ещё не собраны» — поведает что именно
+          // вне во время приводки получилась пустый ответ и панель тревоги вродены в несе.
+          <p className="text-sm text-white/40">Показать нельзя сюже нет ни одного обрращения: алерта выше ошибка.</p>
+        ) : samples.length === 0 ? (
           <EmptyState message="Метрики ещё не собраны" />
         ) : alarms.length === 0 ? (
           <p className="text-sm text-success">
