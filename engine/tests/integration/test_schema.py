@@ -375,3 +375,27 @@ async def test_heartbeat_extends_lease_without_changing_owner(
     assert owner == "w1"
     assert after - before > timedelta(seconds=30)
     await db_session.rollback()
+
+
+# --- Индексы под горячие запросы ---------------------------------------------------
+
+
+async def test_hot_path_indexes_exist(db_session: AsyncSession) -> None:
+    """Индексы, которые обслуживают конкретные запросы движка.
+
+    Список на каждый запрос — не проектирование по плану запроса, а
+    если индекса нет — планирующий счётчик получисток. В настоящем
+    объеме родсте обращение без индекса, а давес вариант чем пустой
+    таблицы и регрестрация приведёт её снова к содержимой.
+    """
+    rows = await db_session.execute(
+        text("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'")
+    )
+    present = {row[0] for row in rows}
+
+    assert {
+        "ix_workflow_events_created",
+        "ix_timers_instance_step",
+        "ix_compensation_log_step_run",
+        "ix_workflow_instances_definition",
+    } <= present
