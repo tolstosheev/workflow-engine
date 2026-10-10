@@ -269,15 +269,29 @@ sequenceDiagram
 вызовов. Модуль сознательно ничего не знает про журнал и lease — это позволяет
 проверять правила переходов обычными unit-тестами.
 
-Обработчики демонстрационной предметной области:
+Обработчики демонстрационной предметной области. Все они асинхронные и
+работают с данными: компенсация имеет смысл, только когда отменять есть что.
 
-| Шаг | Обработчик | Компенсация |
-|---|---|---|
-| `validate_cart` | `demo/handlers.py:validate_cart` | — |
-| `reserve_inventory` | `demo/handlers.py:reserve_inventory` | `demo/handlers.py:release_inventory` |
-| `charge_payment` | `demo/handlers.py:charge_payment` | `demo/handlers.py:refund_payment` |
-| `create_shipment` | `demo/handlers.py:create_shipment` | `demo/handlers.py:cancel_shipment` |
-| `confirm_delivery` | `demo/handlers.py:confirm_delivery` | — |
+| Шаг | Обработчик | Что делает | Компенсация |
+|---|---|---|---|
+| `validate_cart` | `validate_cart` | Считает позиции | — |
+| `reserve_inventory` | `reserve_inventory` | `demo_inventory.reserved += qty` | `release_inventory`: `reserved -= qty` |
+| `charge_payment` | `charge_payment` | Запись в `demo_payments`, статус `HELD` | `refund_payment`: статус `REFUNDED` |
+| `create_shipment` | `create_shipment` | Запись в `demo_shipments` | `cancel_shipment`: статус `CANCELLED` |
+| `confirm_delivery` | `confirm_delivery` | Ничего: обратимость по умолчанию | — |
+
+Обработчик применяет эффект через `idempotency.apply_once_by_key`: проверка
+ключа, изменение и отметка операции идут **одной транзакцией**. Ключ приходит
+в контексте как `operation_id`. Это и есть требование §3.4, применённое к
+делу: падение воркера между действием и отметкой не приводит к повторному
+списанию или повторному резерву.
+
+Компенсация получает собственный ключ с префиксом `compensate:` — это другая
+операция, и повтор шага не должен выглядеть как уже выполненная отмена.
+
+Ограничение `reserved <= available` в таблице склада делает нехватку товара
+ошибкой шага, а не тихой ошибкой приложения. Проверка в обработчике остаётся
+тоже: она даёт оператору внятную причину, а не сообщение СУБД.
 
 ### 5.1 Переходы
 

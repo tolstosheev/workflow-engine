@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.errors import HandlerNotFoundError
-from app.demo.handlers import StepContext, charge_payment, validate_cart
+from app.demo.handlers import StepContext, validate_cart
 from app.handlers.registry import (
     clear_handler_cache,
     is_handler_importable,
@@ -78,6 +78,10 @@ def test_clear_cache_forces_reimport() -> None:
 
 
 # --- Демонстрационные обработчики -----------------------------------------
+#
+# Обработчики, обращающиеся к БД, проверяются в интеграционных тестах
+# `tests/integration/test_demo_handlers.py`: здесь нет соединения с базой.
+# Unit-тесты остаются только у резолва и у чистых функций.
 
 
 def _ctx(**kwargs: object) -> StepContext:
@@ -91,66 +95,30 @@ def _ctx(**kwargs: object) -> StepContext:
     return StepContext(**defaults)  # type: ignore[arg-type]
 
 
-def test_validate_cart_counts_items() -> None:
+async def test_validate_cart_counts_items() -> None:
     ctx = _ctx(input={"items": [{"sku": "A", "qty": 2}, {"sku": "B", "qty": 1}]})
 
-    result = validate_cart(ctx)
+    result = await validate_cart(ctx)
 
     assert result == {"items_count": 2, "valid": True}
 
 
-def test_validate_cart_falls_back_to_variables() -> None:
+async def test_validate_cart_falls_back_to_variables() -> None:
     # Вход инстанса — только на первом шаге; дальше данные приходят из
     # переменных, накопленных исполнением.
     ctx = _ctx(input={}, variables={"items": [{"sku": "A", "qty": 5}]})
 
-    assert validate_cart(ctx)["items_count"] == 1
+    assert (await validate_cart(ctx))["items_count"] == 1
 
 
-def test_validate_cart_handles_empty_order() -> None:
-    assert validate_cart(_ctx(input={}))["valid"] is False
+async def test_validate_cart_handles_empty_order() -> None:
+    assert (await validate_cart(_ctx(input={})))["valid"] is False
 
 
-def test_charge_payment_uses_input_amount() -> None:
-    ctx = _ctx(input={"amount": "1499.90"})
-
-    assert charge_payment(ctx) == {"charged": True, "amount": "1499.90"}
-
-
-def test_charge_payment_uses_variables_amount() -> None:
-    ctx = _ctx(input={}, variables={"amount": "10.00"})
-
-    assert charge_payment(ctx)["amount"] == "10.00"
-
-
-def test_charge_payment_without_amount_is_none() -> None:
-    assert charge_payment(_ctx(input={}))["amount"] is None
-
-
-def test_compensation_handlers_are_idempotent_noops() -> None:
-    # Компенсация необратима и должна быть безопасна при повторе: эти функции
-    # только подтверждают факт отмены, не обращаясь к внешнему миру.
-    from app.demo.handlers import cancel_shipment, refund_payment, release_inventory
-
-    ctx = _ctx(step_name="refund_payment")
-
-    assert release_inventory(ctx) == {"released": True}
-    assert refund_payment(ctx) == {"refunded": True}
-    assert cancel_shipment(ctx) == {"cancelled": True}
-
-
-def test_create_shipment_is_derived_from_instance() -> None:
-    from app.demo.handlers import create_shipment
-
-    result = create_shipment(_ctx(step_name="create_shipment"))
-
-    assert result["shipment_id"] == "shp-inst-123"
-
-
-def test_confirm_delivery_is_positive() -> None:
+async def test_confirm_delivery_is_positive() -> None:
     from app.demo.handlers import confirm_delivery
 
-    assert confirm_delivery(_ctx()) == {"confirmed": True}
+    assert await confirm_delivery(_ctx()) == {"confirmed": True}
 
 
 def test_context_defaults_are_not_shared() -> None:

@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom'
 
+import { useState } from 'react'
+
 import { WorkerLeases, StreamStatus } from '@/components/WorkerLeases'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useInstancesFeed } from '@/hooks/useInstancesFeed'
@@ -19,6 +21,22 @@ export default function InstancesPage() {
   const { items, all, loading, error, connected, lastEventAt, load } = useInstancesFeed()
   const statusFilter = useInstancesStore((state) => state.statusFilter)
   const setStatusFilter = useInstancesStore((state) => state.setStatusFilter)
+  const [query, setQuery] = useState('')
+  const [newestFirst, setNewestFirst] = useState(true)
+
+  // Поиск и сортировка применяются к уже полученному списку: это то, что
+  // видно сейчас, без запроса на каждый ввод.
+  const matches = (name: string): boolean =>
+    query.trim() ? name.toLowerCase().includes(query.trim().toLowerCase()) : true
+
+  const visible = items
+    .filter((instance) => matches(instance.definition.name))
+    .sort((a, b) =>
+      newestFirst ? b.created_at.localeCompare(a.created_at) : a.created_at.localeCompare(b.created_at),
+    )
+
+  const runningCount = all.filter((item) => matches(item.definition.name) && item.status === 'RUNNING')
+    .length
 
   return (
     <section className="space-y-4">
@@ -27,7 +45,7 @@ export default function InstancesPage() {
         <StreamStatus connected={connected} lastEventAt={lastEventAt} />
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {FILTERS.map((filter) => (
           <Button
             key={filter.value}
@@ -37,7 +55,23 @@ export default function InstancesPage() {
             {filter.label}
           </Button>
         ))}
+
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Поиск по процессу"
+          className="ml-auto w-56 rounded-md border border-surface-border bg-surface px-3 py-1.5 text-sm"
+        />
+        <Button onClick={() => setNewestFirst((value) => !value)}>
+          {newestFirst ? 'Сначала новые' : 'Сначала старые'}
+        </Button>
       </div>
+
+      {query.trim() && (
+        <p className="text-xs text-white/40">
+          По запросу «{query.trim()}» найдено {visible.length}, выполняется {runningCount}
+        </p>
+      )}
 
       {error && <ErrorState message={error} onRetry={() => void load()} />}
 
