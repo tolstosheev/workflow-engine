@@ -26,9 +26,13 @@ from app.models.workflow import (
 )
 from app.schemas.definition import WorkflowDefinitionSchema
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("inventory")]
 
 DEMO = "app.demo.handlers"
+
+# Артикул из заполненного склада: обработчик резервирования обращается к БД
+# и без существующей строки падает с «товар не найден на складе».
+DEFAULT_SKU = "SKU-000"
 
 ORDER_FLOW = {
     "start": "validate_cart",
@@ -91,7 +95,7 @@ async def _create_instance(
 
     instance = WorkflowInstance(
         definition_id=definition.id,
-        input=instance_input or {"items": [{"sku": "SKU-1", "qty": 2}], "amount": "1499.90"},
+        input=instance_input or {"items": [{"sku": DEFAULT_SKU, "qty": 2}], "amount": "1499.90"},
         variables={},
         status=InstanceStatus.PENDING,
     )
