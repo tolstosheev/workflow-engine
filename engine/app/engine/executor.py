@@ -61,13 +61,54 @@ async def build_context(
     step_name: str,
     attempt: int,
 ) -> Any:
-    """Собирает контекст обработчика.
+    """Собирает контекст обработчика шага.
+
+    Ключ операции — шаговый: повтор шага обязан узнать свой ключ.
+    """
+    operation_id = str(idempotency.make_key(instance_id, step_name, attempt))
+    return await _build_context(
+        definition, state_variables, instance_input, instance_id, step_name, attempt, operation_id
+    )
+
+
+async def build_compensation_context(
+    definition: WorkflowDefinitionSchema,
+    state_variables: dict[str, Any],
+    instance_input: dict[str, Any],
+    instance_id: uuid.UUID,
+    step_name: str,
+    attempt: int,
+) -> Any:
+    """Собирает контекст обработчика компенсации.
+
+    Ключ операции здесь компенсационный, а не шаговый: отмена возвращает
+    средства один раз, и повтор шага не должен выглядеть как повтор отмены.
+    Разные префиксы — потому что это разные операции.
+    """
+    operation_id = str(idempotency.make_key(instance_id, f"compensate:{step_name}", attempt))
+    return await _build_context(
+        definition, state_variables, instance_input, instance_id, step_name, attempt, operation_id
+    )
+
+
+async def _build_context(
+    definition: WorkflowDefinitionSchema,
+    state_variables: dict[str, Any],
+    instance_input: dict[str, Any],
+    instance_id: uuid.UUID,
+    step_name: str,
+    attempt: int,
+    operation_id: str,
+) -> Any:
+    """Общая часть построения контекста.
 
     Тип не уточняется здесь намеренно: контекст живёт в `demo.handlers`, и ядро
     не должно зависеть от модуля предметной области.
     """
-    action_ref = definition.steps[step_name].action
-    module_path = action_ref.partition(":")[0]
+    step = definition.steps.get(step_name)
+    module_path = (step.action if step else "").partition(":")[0]
+    if not module_path:  # pragma: no cover - компенсация для неизвестного шага
+        return None
     module = __import__(module_path, fromlist=["StepContext"])
     context_class = getattr(module, "StepContext", None)
     if context_class is None:  # pragma: no cover - обработчик без контекста
@@ -77,7 +118,7 @@ async def build_context(
         instance_id=str(instance_id),
         step_name=step_name,
         attempt=attempt,
-        operation_id=str(idempotency.make_key(instance_id, step_name, attempt)),
+        operation_id=operation_id,
         input=instance_input,
         variables=state_variables,
     )
@@ -115,15 +156,24 @@ async def execute_step(
 ) -> interpreter.StepOutcome:
     """Исполняет один шаг и фиксирует результат в журнале."""
     step = definition.steps[step_name]
-    events = await load_state(db_session, instance.id)
+    # Идентификатор читается один раз и дальше используется как скаляр:
+    # обработчик открывает собственную сессию, после чего атрибуты `instance`
+    # протухают, и обращение к ним потребовало бы синхронной подгрузки в
+    # асинхронном коде — `MissingGreenlet`.
+    instance_id = instance.id
+    events = await load_state(db_session, instance_id)
     state = replay(list(events))
+
+    # Вход читается до внешнего вызова: дальше атрибуты инстанса протухают,
+    # и их чтение потребовало бы подгрузки из асинхронного контекста.
+    instance_input = dict(instance.input or {})
 
     # --- Транзакция 1: начало шага -------------------------------------------
     await append_event(
-        db_session, instance.id, EventType.STEP_STARTED, {"step": step_name, "attempt": attempt}
+        db_session, instance_id, EventType.STEP_STARTED, {"step": step_name, "attempt": attempt}
     )
     step_run = StepRun(
-        instance_id=instance.id,
+        instance_id=instance_id,
         step_name=step_name,
         attempt=attempt,
         status=StepRunStatus.RUNNING,
@@ -135,14 +185,14 @@ async def execute_step(
 
     # --- Транзакция закрыта. Внешний вызов ниже --------------------------
     stop_heartbeat = asyncio.Event()
-    heartbeat_task = asyncio.create_task(_heartbeat_loop(instance.id, worker_id, stop_heartbeat))
+    heartbeat_task = asyncio.create_task(_heartbeat_loop(instance_id, worker_id, stop_heartbeat))
     try:
         outcome = await _invoke(
             db_session,
             definition,
             state.variables,
-            instance.input,
-            instance.id,
+            instance_input,
+            instance_id,
             step_name,
             attempt,
             step.timeout_seconds,
@@ -167,7 +217,7 @@ async def execute_step(
         decision = interpreter.decide_after_success(definition, step_name, step, iterations)
         await append_event(
             db_session,
-            instance.id,
+            instance_id,
             EventType.STEP_COMPLETED,
             {"step": step_name, "output": outcome.output, "next": decision.step_name},
         )
@@ -177,7 +227,7 @@ async def execute_step(
             # шаг выполнен, — а компенсировать его надо.
             await append_event(
                 db_session,
-                instance.id,
+                instance_id,
                 EventType.LOOP_EXHAUSTED,
                 {
                     "step": step_name,
@@ -200,7 +250,7 @@ async def execute_step(
         if decision.step_name == step_name and attempt < max_attempts:
             await append_event(
                 db_session,
-                instance.id,
+                instance_id,
                 EventType.STEP_RETRY_SCHEDULED,
                 {"step": step_name, "attempt": attempt + 1, "error": error_message},
             )
@@ -210,12 +260,12 @@ async def execute_step(
             await db_session.commit()
             delay = interpreter.backoff_for(step, attempt, max_attempts)
             if delay:
-                await scheduler.schedule(db_session, instance.id, step_name, delay)
+                await scheduler.schedule(db_session, instance_id, step_name, delay)
             return interpreter.StepOutcome(success=False, output={}, retryable=outcome.retryable)
 
         await append_event(
             db_session,
-            instance.id,
+            instance_id,
             EventType.STEP_FAILED,
             {
                 "step": step_name,
@@ -334,6 +384,7 @@ async def finish(
 
 __all__ = [
     "StepFailed",
+    "build_compensation_context",
     "build_context",
     "execute_step",
     "finish",

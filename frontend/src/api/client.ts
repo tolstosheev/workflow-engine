@@ -83,6 +83,16 @@ export const definitions = {
 
   validate: (id: string) => request<ValidationResult>(`/api/definitions/${id}/validate`, { method: 'POST' }),
 
+  /**
+   * Проверка текста без сохранения.
+   *
+   * Отдельная ручка: сохранённое определение проверяется по `id`, а здесь
+   * дефинишена ещё нет. Без неё единственный способ увидеть ошибки до
+   * сохранения — сохранить и получить отказ, что уводит вопрос не туда.
+   */
+  validatePayload: (body: unknown) =>
+    request<ValidationResult>('/api/definitions/validate', { method: 'POST', body: JSON.stringify(body) }),
+
   activate: (id: string) =>
     request<WorkflowDefinition>(`/api/definitions/${id}/activate`, { method: 'POST' }),
 
@@ -163,5 +173,5 @@ export const chaos = {
 
 export const service = {
   health: () => request<{ status: string }>('/health'),
-  metrics: () => fetch(api('/metrics')),
+  metrics: () => fetch(api('/metrics')).then((response) => response.text()),
 }

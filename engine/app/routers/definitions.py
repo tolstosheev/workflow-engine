@@ -12,6 +12,7 @@ from app.models.workflow import WorkflowDefinition
 from app.schemas.api import DefinitionListOut, DefinitionOut, DefinitionSummary, ValidationResult
 from app.schemas.definition import DefinitionCreate, DefinitionUpdate
 from app.services import definitions as service
+from app.services.definition_validation import validate_definition
 
 router = APIRouter(prefix="/api/definitions", tags=["definitions"])
 
@@ -71,8 +72,23 @@ async def update_definition(
     return DefinitionOut.model_validate(definition)
 
 
+@router.post("/validate", response_model=ValidationResult)
+async def validate_payload(
+    payload: DefinitionCreate, db_session: AsyncSession = Depends(get_db)
+) -> ValidationResult:
+    """Проверка дефинишена без сохранения — для редактора в интерфейсе.
+
+    Отдельная ручка от `/{id}/validate`: там проверяется уже сохранённое
+    определение, а в редакторе его ещё нет. Без неё единственный способ
+    увидеть ошибки до сохранения — сохранить и получить отказ, и вопрос
+    уводит не туда.
+    """
+    del db_session  # проверка не обращается к данным
+    return validate_definition(payload.definition)
+
+
 @router.post("/{definition_id}/validate", response_model=ValidationResult)
-async def validate_definition(
+async def validate_saved(
     definition_id: uuid.UUID, db_session: AsyncSession = Depends(get_db)
 ) -> ValidationResult:
     """Проверка без сохранения — для предпросмотра в редакторе."""

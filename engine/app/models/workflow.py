@@ -288,10 +288,16 @@ class DemoInventoryItem(Base, TimestampMixin):
     available: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    __table_args__ = (
-        CheckConstraint("available >= 0", name="available_non_negative"),
-        CheckConstraint("reserved >= 0", name="reserved_non_negative"),
-    )
+
+__table_args__ = (
+    CheckConstraint("available >= 0", name="available_non_negative"),
+    CheckConstraint("reserved >= 0", name="reserved_non_negative"),
+    # Резерв не может превысить остаток: заказ больше, чем есть на
+    # складе, обязан падать. Без этого ограничения резервирование
+    # неограниченного количества проходило бы незаметно, и проверка
+    # остатка в обработчике была бы единственной защитой.
+    CheckConstraint("reserved <= available", name="reserved_within_available"),
+)
 
 
 class DemoPayment(Base, TimestampMixin):

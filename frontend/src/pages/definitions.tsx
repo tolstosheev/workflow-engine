@@ -5,8 +5,19 @@ import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/
 import { formatDateTime } from '@/lib/status'
 import type { DefinitionSummary, ValidationResult } from '@/types/api'
 
+/**
+ * Образец определения.
+ *
+ * Совпадает с тем, что загружает `scripts/seed.py`, но назван иначе:
+ * `make seed` создаёт `order_fulfillment` версии 1, и определение с тем же
+ * именем и версией сохранить нельзя — сервер вернул бы 409. Образец должен
+ * сохраняться всегда, независимо от состояния базы.
+ *
+ * Ожидание в конце нужно, чтобы процесс дошёл до состояния «Ожидание»:
+ * без него весь процесс проходит за секунду и ждать нечего.
+ */
 const SAMPLE = `{
-  "name": "order_fulfillment",
+  "name": "demo_order",
   "definition": {
     "start": "validate_cart",
     "steps": {
@@ -21,23 +32,27 @@ const SAMPLE = `{
       },
       "charge_payment": {
         "action": "app.demo.handlers:charge_payment",
-        "compensation": "app.demo.handlers:refund",
+        "compensation": "app.demo.handlers:refund_payment",
         "next": "create_shipment",
         "retry": { "max_attempts": 3, "backoff_seconds": 2 }
       },
       "create_shipment": {
         "action": "app.demo.handlers:create_shipment",
         "compensation": "app.demo.handlers:cancel_shipment",
-        "next": "confirm_delivery"
+        "next": "await_delivery"
       },
-      "confirm_delivery": {
-        "action": "app.demo.handlers:confirm_delivery"
+      "await_delivery": {
+        "action": "app.demo.handlers:confirm_delivery",
+        "wait_before_seconds": 3600
       }
     }
   }
 }`
 
-const START_INPUT = '{\n  "items": [{ "sku": "SKU-1", "qty": 2 }],\n  "amount": "1499.90"\n}'
+// Артикул берётся из склада, заполняемого `make seed`. Несуществующий
+// артикул приводит к шагу, который падает с «товар не найден на складе».
+const START_INPUT =
+  '{\n  "items": [{ "sku": "SKU-000", "qty": 2 }],\n  "amount": "1499.90"\n}'
 
 export default function DefinitionsPage() {
   const [list, setList] = useState<DefinitionSummary[]>([])
@@ -64,15 +79,42 @@ export default function DefinitionsPage() {
   const save = async () => {
     try {
       const parsed = JSON.parse(source)
-      const created = await definitionsApi.create(parsed)
-      await definitionsApi.activate(created.id)
+      const name = String(parsed.name ?? '')
+      const version = Number(parsed.version ?? 1)
+
+      // Повторное сохранение того же образца — обычное дело, а не ошибка:
+      // определение с тем же именем и версией создать нельзя. Предложение
+      // обновить снимает тупик, в который попадает каждый, кто сохранил
+      // образец дважды.
+      const clash = list.find((item) => item.name === name && item.version === version)
+      const definition =
+        clash && window.confirm(`Определение «${name}» версии ${version} уже есть. Обновить его?`)
+          ? await definitionsApi.update(clash.id, parsed)
+          : await definitionsApi.create(parsed)
+
+      await definitionsApi.activate(definition.id)
       setError(null)
-      setNotice(`Определение ${created.name} сохранено и активировано`)
+      setNotice(`Определение ${definition.name} сохранено и активировано`)
       await load()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось сохранить определение')
       setNotice(null)
     }
+  }
+
+  /** Проверяет текст в редакторе до сохранения. */
+  const validateSource = async () => {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(source)
+    } catch {
+      setError('JSON не разбирается — проверьте синтаксис')
+      setValidation(null)
+      return
+    }
+    setError(null)
+    setNotice(null)
+    setValidation(await definitionsApi.validatePayload(parsed))
   }
 
   const validate = async (id: string) => {
@@ -114,12 +156,17 @@ export default function DefinitionsPage() {
             spellCheck={false}
             className="h-96 w-full rounded-md border border-surface-border bg-surface p-3 font-mono text-xs"
           />
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             <Button variant="primary" onClick={() => void save()}>
               Сохранить и активировать
             </Button>
+            <Button onClick={() => void validateSource()}>Проверить</Button>
             <Button onClick={() => setSource(SAMPLE)}>Сбросить к образцу</Button>
           </div>
+          <p className="mt-2 text-xs text-white/40">
+            «Проверить» разбирает текст и показывает проблемы без сохранения: ошибка в определении
+            видна до того, как под неё создадут инстанс.
+          </p>
         </Card>
 
         <div className="space-y-4">

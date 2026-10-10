@@ -24,9 +24,12 @@ from app.engine.journal import read_events, replay
 from app.models.enums import InstanceStatus, StepRunStatus
 from app.models.workflow import StepRun, WorkflowDefinition, WorkflowInstance
 
-pytestmark = pytest.mark.chaos
+pytestmark = [pytest.mark.chaos, pytest.mark.usefixtures("inventory")]
 
 DEMO = "app.demo.handlers"
+
+# Артикул из заполненного склада: обработчик резервирования обращается к БД.
+DEFAULT_SKU = "SKU-000"
 
 ORDER_FLOW = {
     "start": "validate_cart",
@@ -81,7 +84,7 @@ async def _create_instance(db_session: AsyncSession, flow: dict) -> uuid.UUID:
 
     instance = WorkflowInstance(
         definition_id=definition.id,
-        input={"items": [{"sku": "SKU-1", "qty": 2}], "amount": "100.00"},
+        input={"items": [{"sku": DEFAULT_SKU, "qty": 2}], "amount": "100.00"},
         variables={},
         status=InstanceStatus.PENDING,
     )
