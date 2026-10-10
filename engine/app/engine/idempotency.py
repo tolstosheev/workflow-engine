@@ -88,6 +88,51 @@ async def apply_once(db_session: AsyncSession, key: OperationKey, effect: Effect
     return await mark_applied(db_session, key)
 
 
+async def apply_once_by_key(
+    db_session: AsyncSession,
+    instance_id: uuid.UUID,
+    op_key: str,
+    step_name: str,
+    effect: Effect,
+) -> bool:
+    """Проверяет и применяет операцию по строковому ключу, в одной транзакции.
+
+    Существует рядом с `apply_once` для объекта-ключа и делает то же, но по
+    строке. Нужна обработчикам: у них есть `ctx.operation_id`, и разбирать его
+    обратно в UUID и собирать `OperationKey` заново значило бы продублировать
+    формат ключа в прикладном коде — с расхождением при первом же изменении
+    формата.
+
+    Ключевое отличие от проверки и отметки по отдельности: проверка, эффект и
+    отметка здесь **в одной транзакции**. Проверка в движке, а отметка после
+    эффекта оставляли окно, в котором падение воркера приводило к повторному
+    применению: эффект записан, отметка — нет. Для обработчика без побочных
+    эффектов это безобидно; для обработчика, который списывает средства, —
+    двойное списание.
+
+    `False` — операция уже была применена: это штатный повтор, а не ошибка.
+    """
+    found = await db_session.scalar(
+        select(ProcessedOperation.id).where(
+            ProcessedOperation.instance_id == instance_id,
+            ProcessedOperation.op_key == op_key,
+        )
+    )
+    if found is not None:
+        return False
+
+    await effect()
+    db_session.add(ProcessedOperation(instance_id=instance_id, op_key=op_key, step_name=step_name))
+    try:
+        await db_session.flush()
+    except IntegrityError:
+        # Гонка: тот же ключ успел зарегистрироваться. Откат нужен, чтобы
+        # транзакция осталась пригодной.
+        await db_session.rollback()
+        return False
+    return True
+
+
 async def list_applied(db_session: AsyncSession, instance_id: uuid.UUID) -> list[str]:
     """Список применённых операций инстанса — для диагностики и отладки."""
     rows = await db_session.scalars(
