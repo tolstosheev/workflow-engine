@@ -62,6 +62,20 @@ export default function DefinitionsPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [startInput, setStartInput] = useState(START_INPUT)
+  const [busy, setBusy] = useState(false)
+  const dirty = source !== SAMPLE || startInput !== START_INPUT
+
+  // Несохранённый JSON терялся бы молча: браузер или F5 уносят
+  // набытый жизный цикл. Без этого возвращение тоже найдёт
+  // несохранённый текст.
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
 
   const load = useCallback(async () => {
     try {
@@ -77,6 +91,11 @@ export default function DefinitionsPage() {
   }, [load])
 
   const save = async () => {
+    // Кнопка во время выполнения должна быть заблишена: save выполняет
+    // три последовательных запроса, и второй клик создал бы
+    // два одинаковых определения.
+    if (busy) return
+    setBusy(true)
     try {
       const parsed = JSON.parse(source)
       const name = String(parsed.name ?? '')
@@ -115,6 +134,8 @@ export default function DefinitionsPage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось сохранить определение')
       setNotice(null)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -143,6 +164,10 @@ export default function DefinitionsPage() {
   }
 
   const start = async (definitionId: string) => {
+    // Без бюгаудя выключа двой клик создаст два инстанса: инстансы
+    // создаются неколькими разами, а пользователь видит только один.
+    if (busy) return
+    setBusy(true)
     try {
       const created = await instancesApi.start(definitionId, JSON.parse(startInput))
       setError(null)
@@ -150,6 +175,8 @@ export default function DefinitionsPage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось запустить процесс')
       setNotice(null)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -172,12 +199,29 @@ export default function DefinitionsPage() {
             spellCheck={false}
             className="h-96 w-full rounded-md border border-surface-border bg-surface p-3 font-mono text-xs"
           />
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="primary" onClick={() => void save()}>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button variant="primary" disabled={busy} onClick={() => void save()}>
               Сохранить и активировать
             </Button>
-            <Button onClick={() => void validateSource()}>Проверить</Button>
-            <Button onClick={() => setSource(SAMPLE)}>Сбросить к образцу</Button>
+            <Button disabled={busy} onClick={() => void validateSource()}>
+              Проверить
+            </Button>
+            <Button
+              disabled={busy || source === SAMPLE}
+              onClick={() => {
+                // Сброс затирает набранный JSON молча: без вопроса потеряться работа.
+                if (window.confirm('Сбросить набранный текст определения?')) {
+                  setSource(SAMPLE)
+                  setValidation(null)
+                  setError(null)
+                }
+              }}
+            >
+              Сбросить к образцу
+            </Button>
+            {dirty && !busy && (
+              <span className="text-xs text-warning">Есть несохранённые изменения</span>
+            )}
           </div>
           <p className="mt-2 text-xs text-white/40">
             «Проверить» разбирает текст и показывает проблемы без сохранения: ошибка в определении
@@ -198,7 +242,7 @@ export default function DefinitionsPage() {
               className="h-40 w-full rounded-md border border-surface-border bg-surface p-3 font-mono text-xs"
             />
             {selected && (
-              <Button className="mt-3" variant="primary" onClick={() => void start(selected)}>
+              <Button className="mt-3" variant="primary" disabled={busy} onClick={() => void start(selected)}>
                 Запустить выбранное определение
               </Button>
             )}
@@ -242,7 +286,7 @@ export default function DefinitionsPage() {
                     <div className="flex gap-2">
                       <Button onClick={() => setSelected(item.id)}>Выбрать</Button>
                       <Button onClick={() => void validate(item.id)}>Проверить</Button>
-                      <Button onClick={() => void start(item.id)}>Запустить</Button>
+                      <Button disabled={busy} onClick={() => void start(item.id)}>Запустить</Button>
                     </div>
                   </td>
                 </tr>
