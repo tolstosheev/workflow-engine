@@ -295,3 +295,29 @@ async def test_failed_injection_writes_step_failed_event(
 
     assert EventType.STEP_FAILED in types
     await db_session.rollback()
+
+
+async def test_once_rule_expires_after_single_use(db_session: AsyncSession) -> None:
+    """Разовый раз более один раз.
+
+    Раньше счётчик `used` инкрементился, но не участвовал в выборке и не
+    фильтровался, поэтому «сломать один раз» срабатывал на всех последующие
+    попытки шага.
+    """
+    instance_id = uuid.uuid4()
+    await chaos.add_rule(db_session, instance_id, "b", "once", "сбой ораз")
+
+    first = await chaos.find_rule(db_session, instance_id, "b")
+    second = await chaos.find_rule(db_session, instance_id, "b")
+
+    assert first is not None
+    assert second is None
+
+
+async def test_once_rule_still_blocks_other_steps(db_session: AsyncSession) -> None:
+    """Исчерпание не делает правило целиком: оно только для своего шага."""
+    instance_id = uuid.uuid4()
+    await chaos.add_rule(db_session, instance_id, "b", "once", "сбой ораз")
+
+    assert await chaos.find_rule(db_session, instance_id, "b") is not None
+    assert await chaos.find_rule(db_session, instance_id, "a") is None

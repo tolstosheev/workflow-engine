@@ -68,9 +68,13 @@ async def mark_applied(db_session: AsyncSession, key: OperationKey) -> bool:
     )
     try:
         await db_session.flush()
-    except IntegrityError:
+    except IntegrityError as exc:
         # Гонка: другой воркер успел зарегистрировать тот же ключ. Откат
         # нужен, чтобы транзакция осталась пригодной.
+        # Но внушение внешнего ключа — это не гонка: так отказы операции
+        # была б неверным состоянием данных, и проглать их как гонка нельзя.
+        if not _is_unique_violation(exc):
+            raise
         await db_session.rollback()
         return False
     return True

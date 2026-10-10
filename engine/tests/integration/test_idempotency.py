@@ -11,6 +11,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine import idempotency
@@ -238,3 +239,15 @@ async def test_list_applied_is_empty_for_new_instance(db_session: AsyncSession) 
     instance_id = await _new_instance(db_session)
 
     assert await idempotency.list_applied(db_session, instance_id) == []
+
+
+async def test_mark_rejects_unknown_instance(db_session: AsyncSession) -> None:
+    """Нарушение внешнего ключа — не гонка, а ошибка данных.
+
+    Главное отличие: всё ведёт кей в `catch IntegrityError` без разбора,
+    и операция была применена невестимой, а теперь теперяла не возникает вообще.
+    """
+    key = make_key(uuid.uuid4(), "a")
+
+    with pytest.raises(IntegrityError):
+        await idempotency.mark_applied(db_session, key)

@@ -87,10 +87,26 @@ export default function DefinitionsPage() {
       // обновить снимает тупик, в который попадает каждый, кто сохранил
       // образец дважды.
       const clash = list.find((item) => item.name === name && item.version === version)
-      const definition =
-        clash && window.confirm(`Определение «${name}» версии ${version} уже есть. Обновить его?`)
-          ? await definitionsApi.update(clash.id, parsed)
-          : await definitionsApi.create(parsed)
+      // Обновление принимает только саму схему без имени и версии: у
+      // DefinitionUpdate с extra="forbid" отвергает name и version,
+      // и запрос падал бы с 422.
+      if (
+        clash &&
+        !window.confirm(
+          `Определение «${name}» версии ${version} уже есть. Обновить его?`,
+        )
+      ) {
+        return
+      }
+      // Обновление принимает только саму схему без имени и версии:
+      // DefinitionUpdate с extra="forbid" отвергает name и version,
+      // и запрос падал бы с 422.
+      const definition = clash
+        ? await definitionsApi.update(clash.id, {
+            definition: parsed.definition,
+            is_active: true,
+          })
+        : await definitionsApi.create(parsed)
 
       await definitionsApi.activate(definition.id)
       setError(null)

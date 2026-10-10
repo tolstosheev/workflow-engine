@@ -106,7 +106,15 @@ async def find_rule(
     once = (
         await db_session.scalars(
             select(ChaosRule)
-            .where(instance_filter, step_filter, ChaosRule.mode == "once")
+            .where(
+                instance_filter,
+                step_filter,
+                ChaosRule.mode == "once",
+                # Искать раз: без условия used == 0 правило с режимом once
+                # срабытало бы на все последующие шаги, а не только
+                # на первой. Сработаный счётчик раст без поляза.
+                ChaosRule.used == 0,
+            )
             .order_by(ChaosRule.created_at)
             .limit(1)
         )
