@@ -125,12 +125,33 @@ async def apply_once_by_key(
     db_session.add(ProcessedOperation(instance_id=instance_id, op_key=op_key, step_name=step_name))
     try:
         await db_session.flush()
-    except IntegrityError:
-        # Гонка: тот же ключ успел зарегистрироваться. Откат нужен, чтобы
-        # транзакция осталась пригодной.
+    except IntegrityError as exc:
+        # Гонкой считается только нарушение уникальности ключа: тот же ключ
+        # успел зарегистрироваться. Нарушение внешнего ключа — уже не гонка, а
+        # неверное состояние данных, и молчать о нём нельзя: откат тихо
+        # отменил бы применённый эффект, а вызывающий решил бы, что всё в
+        # порядке.
+        if not _is_unique_violation(exc):
+            raise
+        # Откат нужен, чтобы транзакция осталась пригодной.
         await db_session.rollback()
         return False
     return True
+
+
+def _is_unique_violation(exc: IntegrityError) -> bool:
+    """Нарушено ли именно уникальное ограничение.
+
+    Проверка по имени ограничения, а не по типу исключения: нарушение внешнего
+    ключа даёт тот же `IntegrityError`, и принять его за гонку значило бы
+    проглотить ошибку данных.
+    """
+    orig = getattr(exc, "orig", None)
+    constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if constraint is not None:
+        return constraint == "uq_processed_operations_key"
+    text = str(orig)
+    return "uq_processed_operations_key" in text or "duplicate key" in text.lower()
 
 
 async def list_applied(db_session: AsyncSession, instance_id: uuid.UUID) -> list[str]:
