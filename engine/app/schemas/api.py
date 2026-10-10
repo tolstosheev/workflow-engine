@@ -67,6 +67,7 @@ class ValidationResult(BaseModel):
 class DefinitionRef(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    id: uuid.UUID
     name: str
     version: int
 
@@ -83,6 +84,9 @@ class InstanceOut(BaseModel):
     error: str | None
     lease_owner: str | None
     lease_expires_at: datetime | None
+    # Отдельно от срока аренды: по нему видно, что воркер жив, даже если
+    # аренда формально истекла в момент запроса.
+    heartbeat_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -173,6 +177,9 @@ class InstanceStateOut(BaseModel):
     completed_steps: list[str]
     pending_compensations: list[str]
     is_terminal: bool
+    # Сколько раз шаг успешно завершился: интерфейсу нужен для показа
+    # «проход 2 из 3» у цикла.
+    step_iterations: dict[str, int] = Field(default_factory=dict)
 
 
 class ForceCompleteRequest(BaseModel):

@@ -79,6 +79,11 @@ class EventType(StrEnum):
     STEP_COMPLETED = "STEP_COMPLETED"
     STEP_FAILED = "STEP_FAILED"
     STEP_RETRY_SCHEDULED = "STEP_RETRY_SCHEDULED"
+    # Число проходов цикла исчерпано: шаг выполнен, но повторять его больше
+    # нельзя. Отдельное событие потому, что шаг-то успешен — «провалить» его
+    # значило бы записать в журнал ложь, а молча остановиться значило бы
+    # выдать неуспех за успех.
+    LOOP_EXHAUSTED = "LOOP_EXHAUSTED"
     TIMER_SCHEDULED = "TIMER_SCHEDULED"
     TIMER_FIRED = "TIMER_FIRED"
     COMPENSATION_STARTED = "COMPENSATION_STARTED"

@@ -34,6 +34,7 @@ export type EventType =
   | 'LEASE_EXPIRED'
 
 export interface DefinitionRef {
+  id: string
   name: string
   version: number
 }
@@ -94,6 +95,7 @@ export interface WorkflowInstance {
   error: string | null
   lease_owner: string | null
   lease_expires_at: string | null
+  heartbeat_at: string | null
   created_at: string
   updated_at: string
 }
@@ -139,6 +141,8 @@ export interface InstanceState {
   completed_steps: string[]
   pending_compensations: string[]
   is_terminal: boolean
+  /** Сколько раз шаг успешно завершился: для показа «проход 2 из 3». */
+  step_iterations: Record<string, number>
 }
 
 export interface ValidationIssue {

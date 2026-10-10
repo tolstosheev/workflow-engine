@@ -132,6 +132,63 @@ def test_completed_step_is_not_recorded_twice() -> None:
     assert state.completed_steps == ["a"]
 
 
+def test_iteration_counter_grows_on_every_completion() -> None:
+    # Счётчик проходов растёт, пока список выполненных шагов остаётся
+    # уникальным: циклу нужен счётчик, компенсации — порядок.
+    state = replay(
+        [
+            _event(0, EventType.STEP_COMPLETED, step="a"),
+            _event(1, EventType.STEP_COMPLETED, step="a"),
+            _event(2, EventType.STEP_COMPLETED, step="a"),
+        ]
+    )
+
+    assert state.step_iterations == {"a": 3}
+    assert state.completed_steps == ["a"]
+
+
+def test_iteration_counter_keeps_steps_apart() -> None:
+    state = replay(
+        [
+            _event(0, EventType.STEP_COMPLETED, step="a"),
+            _event(1, EventType.STEP_COMPLETED, step="b"),
+            _event(2, EventType.STEP_COMPLETED, step="a"),
+        ]
+    )
+
+    assert state.step_iterations == {"a": 2, "b": 1}
+
+
+def test_failed_step_does_not_count_as_iteration() -> None:
+    # Ошибочный повтор не завершает шаг, поэтому проходом он не считается:
+    # иначе предел цикла расходовался бы на неудачные попытки.
+    state = replay(
+        [
+            _event(0, EventType.STEP_COMPLETED, step="a"),
+            _event(1, EventType.STEP_FAILED, step="a", terminal=False),
+        ]
+    )
+
+    assert state.step_iterations == {"a": 1}
+
+
+def test_loop_exhausted_moves_to_compensation() -> None:
+    # Предел цикла исчерпан — процесс откатывается, а не «успешно»
+    # останавливается: цель цикла не достигнута.
+    state = replay(
+        [
+            _event(0, EventType.STEP_COMPLETED, step="a"),
+            _event(1, EventType.STEP_COMPLETED, step="a"),
+            _event(2, EventType.LOOP_EXHAUSTED, step="a", iterations=2, max_iterations=2),
+        ]
+    )
+
+    assert state.status is InstanceStatus.COMPENSATING
+    assert state.failed_step == "a"
+    # Шаг выполнен, значит его компенсировать: иначе откат был бы неполным.
+    assert state.completed_steps == ["a"]
+
+
 def test_failed_step_is_recorded() -> None:
     state = replay([_event(0, EventType.STEP_FAILED, step="charge", error="timeout")])
 

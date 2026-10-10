@@ -25,7 +25,11 @@ const STATUS_TONES: Record<InstanceStatus, Tone> = {
   FAILED: 'danger',
 }
 
-const STATUS_LABELS: Record<InstanceStatus, string> = {
+/**
+ * Подписи состояний вынесены наружу: ими пользуются и бейджи, и текстовые
+ * пояснения, а расходиться им нельзя.
+ */
+export const STATUS_LABELS: Record<InstanceStatus, string> = {
   PENDING: 'В очереди',
   RUNNING: 'Выполняется',
   WAITING: 'Ожидание',

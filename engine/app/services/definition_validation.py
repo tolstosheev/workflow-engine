@@ -210,12 +210,45 @@ def _validate_compensation_coverage(
             )
 
 
+def _validate_execution_support(
+    definition: WorkflowDefinitionSchema, collector: _Collector
+) -> None:
+    """Отвергает конструкции, которые движок не исполняет.
+
+    Параллельные ветки описаны в схеме, но исполнить их движок не умеет:
+    lease захватывает инстанс целиком, а не шаг, поэтому две ветви одновременно
+    в одном процессе не поместятся. Пока это так, определение с `fork` или
+    `join` отвергается — при сохранении, а не часом позже при запуске.
+
+    Молча пропустить проверку было бы хуже отказа: процесс выполнил бы только
+    префикс графа и отчитался об успехе, а определение создавало бы ложное
+    впечатление работающей поддержки. Решение и его цена — ADR-0008.
+    """
+    for name, step in definition.steps.items():
+        if isinstance(step, ForkStep):
+            collector.error(
+                "fork_not_executed",
+                f"шаг {name!r}: параллельные ветки (fork) объявлены, но не исполняются — "
+                f"движок обрабатывает один шаг за раз. Оставьте шаг обычным "
+                f"или разбейте процесс на два определения.",
+                name,
+            )
+        elif isinstance(step, JoinStep):
+            collector.error(
+                "join_not_executed",
+                f"шаг {name!r}: слияние веток (join) объявлено, но не исполняется — "
+                f"слияния параллельных веток в движке нет. Уберите join.",
+                name,
+            )
+
+
 def validate_definition(definition: WorkflowDefinitionSchema) -> ValidationResult:
     """Проверяет дефинишен и возвращает все найденные проблемы."""
     collector = _Collector()
 
     _validate_start(definition, collector)
     _validate_references(definition, collector)
+    _validate_execution_support(definition, collector)
     _validate_reachability(definition, collector)
     _validate_loops(definition, collector)
     _validate_compensation_coverage(definition, collector)

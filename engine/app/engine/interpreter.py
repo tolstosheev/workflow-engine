@@ -44,11 +44,23 @@ def _default_retry(step: Step, fallback: int) -> RetryPolicy:
 
 
 def decide_after_success(
-    definition: WorkflowDefinitionSchema, step_name: str, step: Step
+    definition: WorkflowDefinitionSchema,
+    step_name: str,
+    step: Step,
+    iterations: int = 1,
 ) -> StepDecision:
-    """Переход после успешного шага."""
+    """Переход после успешного шага.
+
+    `iterations` — сколько раз шаг завершился, включая текущий. Учитывается
+    только для шага с `loop: true`: именно ему ограничение числа проходов и
+    объявляется валидатором.
+    """
     if isinstance(step, ForkStep):
         return StepDecision(step_name=None, kind="fork", branches=dict(step.fork))
+
+    exhausted = _loop_exhausted(step, iterations)
+    if exhausted is not None:
+        return StepDecision(step_name=None, kind="stop", reason=exhausted)
 
     target = step.next
     if isinstance(target, str):
@@ -61,6 +73,20 @@ def decide_after_success(
         return StepDecision(step_name=on_success, kind="run")
 
     return StepDecision(step_name=None, kind="complete", reason="шаг не объявляет перехода")
+
+
+def _loop_exhausted(step: Step, iterations: int) -> str | None:
+    """Причина исчерпания цикла, либо `None`, если проходы ещё остались.
+
+    Проверяется именно достижение предела, а не его превышение: при
+    `max_iterations: 3` шаг выполняется ровно три раза, и на третьем цикл
+    заканчивается.
+    """
+    if not step.loop or step.max_iterations is None:
+        return None
+    if iterations < step.max_iterations:
+        return None
+    return f"исчерпан предел цикла: {iterations} из {step.max_iterations} проходов"
 
 
 def decide_after_failure(
@@ -107,9 +133,9 @@ def wait_before(step: Step) -> float:
     return step.wait_before_seconds
 
 
-# Параллельные ветки и циклы описаны в схеме и проверяются валидатором, но
-# не исполняются: интерпретатор не запускает ветви fork и не ведёт счётчик
-# итераций. Функции-аксессоры для них удалены вместе с этой оговоркой —
-# код, который никогда не вызывается, создаёт впечатление работающей
-# поддержки, которой нет. Границы применимости перечислены в
-# `docs/DEPLOYMENT-ACT.md`.
+# Параллельные ветки описаны в схеме, но не исполняются: интерпретатор не
+# запускает ветви fork и не ведёт счётчик ожидающих join. Валидатор отвергает
+# такие определения при сохранении, поэтому до исполнения они не доходят.
+# Цена решения зафиксирована в ADR-0008: честный отказ вместо объявленной
+# поддержки, которой нет. Границы применимости — в `docs/DEPLOYMENT-ACT.md`.
+# Циклы, в отличие от веток, исполняются: см. `_loop_exhausted`.

@@ -29,7 +29,8 @@ Neutral) / Alternatives considered / References. Раздел **Negative** об�
 | [0005](0005-at-least-once-i-idempotentnost.md) | At-least-once доставка и идемпотентность | Accepted |
 | [0006](0006-format-opredeleniya-workflow.md) | Формат определения workflow | Accepted |
 | [0007](0007-metodika-zmerov.md) | Методика измерения производительности | Accepted |
+| [0008](0008-parallelnye-vetki-otkaz.md) | Параллельные ветки: честный отказ вместо заявленной поддержки | Accepted |
 
 Реализация: ADR-0001 — в Фазе 0, ADR-0002…0006 — в Фазе 1 (схема данных и
 валидация дефинишена), ADR-0002…0005 в объёме ядра — в Фазе 2, ADR-0007 — в
-Фазе 5 (замеры и методика их проведения).
+Фазе 5 (замеры и методика их проведения), ADR-0008 — в Фазе 7.
