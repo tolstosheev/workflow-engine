@@ -27,8 +27,16 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://workflow:workflow@localhost:5434/workflow_engine"
     sync_database_url: str = "postgresql+psycopg://workflow:workflow@localhost:5434/workflow_engine"
-    db_pool_size: int = 10
-    db_max_overflow: int = 20
+    # Пул рассчитывается на процесс, а не на сервис: compose поднимает API и два
+    # воркера, и при 10 + 20 на каждый три процесса забиравали бы трить из 100
+    # слот. Один из воркеров обрабатывает по одному инстансу за циклам,
+    # поэтому больше места идёт для всех одновременных воркеров.
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
+    # Не дефолт SQLAlchemy (30 с) совпадаёт с LEASE_TTL_SECONDS: воркер, заблочивший
+    # соединением, птанут аренду ровно в момент истечения аренды.
+    db_pool_timeout: int = 5
+    db_pool_recycle: int = 1800
     db_echo: bool = False
 
     lease_ttl_seconds: int = 30

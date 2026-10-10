@@ -38,9 +38,7 @@ def upgrade() -> None:
     op.create_index("ix_workflow_events_created", "workflow_events", ["created_at"])
     op.create_index("ix_timers_instance_step", "timers", ["instance_id", "step_name"])
     op.create_index("ix_compensation_log_step_run", "compensation_log", ["step_run_id"])
-    op.create_index(
-        "ix_workflow_instances_definition", "workflow_instances", ["definition_id"]
-    )
+    op.create_index("ix_workflow_instances_definition", "workflow_instances", ["definition_id"])
 
 
 def downgrade() -> None:
