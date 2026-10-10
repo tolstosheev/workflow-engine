@@ -60,6 +60,7 @@ class InstanceState:
     failed_step: str | None = None
     compensation_for: str | None = None
     step_iterations: dict[str, int] = field(default_factory=dict)
+    cancel_requested: bool = False
 
     @property
     def is_terminal(self) -> bool:
@@ -175,6 +176,11 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.status = (
                 InstanceStatus.COMPENSATING if payload.get("terminal") else InstanceStatus.RUNNING
             )
+            if payload.get("terminal"):
+                # Откат восил по проводилению: если откат подадается из отказа,
+                # инстанс закончивается отказом, а не отменой. Воркер различает
+                # эти состояния по поля механизма.
+                state.cancel_requested = False
             # Переход по объявленной ветке `on_failure`. Терминальный отказ
             # означает откат, а не продолжение, поэтому в нём шага нет.
             if not payload.get("terminal") and payload.get("next"):
@@ -213,7 +219,14 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.status = InstanceStatus.COMPENSATED
             state.current_step = None
 
+        case EventType.INSTANCE_FAILED:
+            # Отказ, а не откат: компенсировать было нечего — процесс упал
+            # раньше, чем выполненный эффект появился.
+            state.status = InstanceStatus.FAILED
+            state.current_step = None
+
         case EventType.INSTANCE_CANCEL_REQUESTED:
+            state.cancel_requested = True
             # Отмена запрошена, но выполненные шаги ещё не откачены. Текущий
             # шаг сохраняется: он указывает, где процесс остановился, и по
             # нему видно, что ждать отката ещё есть чего.

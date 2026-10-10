@@ -193,6 +193,7 @@ async def test_injection_breaks_the_step(
         InstanceStatus.COMPENSATING,
         InstanceStatus.COMPENSATED,
         InstanceStatus.CANCELLED,
+        InstanceStatus.FAILED,
     }
 
 

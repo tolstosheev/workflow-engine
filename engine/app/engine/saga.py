@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ from app.engine.idempotency import OperationKey
 from app.engine.journal import append_event
 from app.models.enums import CompensationStatus, EventType, StepRunStatus
 from app.models.workflow import CompensationLog, StepRun, WorkflowInstance
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,19 +107,41 @@ async def plan(
     db_session: AsyncSession,
     instance_id: uuid.UUID,
     compensation_refs: dict[str, str | None],
+    executed_steps: list[str] | None = None,
 ) -> list[CompensationItem]:
     """Строит план отката в обратном порядке выполнения.
+
+    `executed_steps` — порядок выполнения из `replay` журнала. Передаётся
+    явно, потому что план отката и список выполненных шагов должны считаться
+    по одному источнику (§3.1): если брать шаги из `step_runs`, а порядок из
+    журнала, отмена, пришедшая в ту же итерацию, что и последний шаг,
+    выродила бы в «нечего откатывать», хотя резерв уже занят.
 
     Шаги без компенсации в план не попадают: у них нечего отменять, и воркер
     запишет для них `COMPENSATION_SKIPPED`.
     """
+    if executed_steps is None:
+        # `completed_steps` уже развёрнут: сортировка по времени завершения
+        # по убыванию. Журнал же даёт прямой порядок выполнения, и разворот
+        # применяется к нему. Разворот ровно один, в любом из путей.
+        order = await completed_steps(db_session, instance_id)
+    else:
+        order = list(reversed(executed_steps))
+
     items: list[CompensationItem] = []
-    for step_name in await completed_steps(db_session, instance_id):
+    for step_name in order:
         compensation_ref = compensation_refs.get(step_name)
         if not compensation_ref:
             continue
         step_run = await find_step_run(db_session, instance_id, step_name)
-        if step_run is None:  # pragma: no cover - рассинхронизация данных
+        if step_run is None:
+            # Шаг выполнен по журналу, но прогона нет: данных о нём нет, и
+            # компенсировать нечего. Молча пропустить опаснее, чем упасть,
+            # но это рассинхронизация, а не штатный путь.
+            logger.warning(
+                "compensation.no_step_run",
+                extra={"step": step_name, "instance_id": str(instance_id)},
+            )
             continue
         items.append(
             CompensationItem(

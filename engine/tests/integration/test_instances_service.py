@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
 from app.engine import scheduler
-from app.engine.journal import append_event, read_events
+from app.engine.journal import append_event, read_events, replay
 from app.models.enums import CompensationStatus, EventType, InstanceStatus, StepRunStatus
 from app.models.workflow import (
     CompensationLog,
@@ -340,3 +340,31 @@ async def test_compensation_failure_survives_in_log(db_session: AsyncSession) ->
 def test_active_statuses_contains_running() -> None:
     assert "RUNNING" in service.active_statuses()
     assert "COMPLETED" not in service.active_statuses()
+
+
+async def test_retry_compensation_is_visible_to_replay(
+    db_session: AsyncSession,
+) -> None:
+    """Повтор отката обязан статься в журнале.
+
+    Без события выполненного события replay вернул бы в статус
+    COMPENSATION_FAILED навсегда, и воркер после перезапуска не стал бы повторять
+    компенсацию.
+    """
+    instance = await _instance(db_session)
+    await append_event(db_session, instance.id, EventType.COMPENSATION_FAILED, {"error": "x"})
+    instance.status = InstanceStatus.COMPENSATION_FAILED
+
+    await service.retry_compensation(db_session, instance.id)
+
+    state = replay(await read_events(db_session, instance.id))
+    assert state.status is InstanceStatus.COMPENSATING
+
+    types = [e.type for e in await read_events(db_session, instance.id)]
+    # Повтор — это событие, а не дельго: без него replay вернул бы к
+    # COMPENSATION_FAILED и воркер не повторял бы компенсацию.
+    assert types == [
+        EventType.INSTANCE_CREATED,
+        EventType.COMPENSATION_FAILED,
+        EventType.COMPENSATION_STARTED,
+    ]

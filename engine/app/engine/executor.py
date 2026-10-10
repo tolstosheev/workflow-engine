@@ -48,6 +48,31 @@ class StepFailed(Exception):
         self.retryable = retryable
 
 
+class PermanentStepError(RuntimeError):
+    """Ошибка, которую повтор не исправит.
+
+    Недостаток товара или отказ внешнего сервиса по существу делают шаг
+    бессмысленным: повторять его `max_attempts` раз — значит тратить время и
+    время ожидания в задержках, не меняя результата. Повтор оправдан для сбоев
+    связи и таймаутов, а не для отказа по правилам.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+        self.retryable = False
+
+
+def _declared_retryable(exc: BaseException) -> bool:
+    """Читает объявленную обработчиком повторяемость ошибки.
+
+    Отсутствие атрибута — обычная ошибка, и она повторяема: иначе любая
+    опечатка в обработчике стала бы одноразовой.
+    """
+    declared = getattr(exc, "retryable", None)
+    return True if declared is None else bool(declared)
+
+
 async def load_state(db_session: AsyncSession, instance_id: uuid.UUID) -> tuple[RecordedEvent, ...]:
     """Читает журнал инстанса. Основа восстановления после падения."""
     return tuple(await read_events(db_session, instance_id))
@@ -201,7 +226,7 @@ async def execute_step(
         outcome = interpreter.StepOutcome(
             success=False,
             output={},
-            retryable=not isinstance(exc, LeaseLostError),
+            retryable=isinstance(exc, LeaseLostError) is False and _declared_retryable(exc),
         )
         error_message = str(exc)
     finally:
@@ -245,9 +270,11 @@ async def execute_step(
     else:
         max_attempts = interpreter.attempts_for(step, get_settings().step_max_attempts)
         decision = interpreter.decide_after_failure(
-            definition, step_name, step, attempt, max_attempts
+            definition, step_name, step, attempt, max_attempts, permanent=not outcome.retryable
         )
-        if decision.step_name == step_name and attempt < max_attempts:
+        if decision.step_name == step_name and attempt < max_attempts and outcome.retryable:
+            # Повтор делается только для повторяемой ошибки: см. `PermanentStepError`.
+            # Постоянный отказ (`retryable=False`) сразу уходит в `STEP_FAILED`.
             await append_event(
                 db_session,
                 instance_id,
@@ -343,7 +370,9 @@ async def _invoke(
     try:
         pending = handler(context)
     except Exception as exc:
-        raise StepFailed(str(exc), retryable=True) from exc
+        # Повторяемость ошибки сохраняется: обработчик вправе объявить отказ
+        # постоянным, и обёртка не должна молча делать его повторяемым.
+        raise StepFailed(str(exc), retryable=_declared_retryable(exc)) from exc
 
     if inspect.isawaitable(pending):
         # Таймаут применим только к awaitable: синхронный обработчик блокирует
@@ -372,9 +401,8 @@ async def finish(
         InstanceStatus.COMPLETED: EventType.INSTANCE_COMPLETED,
         InstanceStatus.COMPENSATED: EventType.INSTANCE_COMPENSATED,
         InstanceStatus.CANCELLED: EventType.INSTANCE_CANCELLED,
-    }.get(status, EventType.INSTANCE_COMPENSATED)
-    # FAILED не имеет собственного события: компенсировать нечего, а
-    # INSTANCE_COMPENSATED здесь означала бы «откат завершён», чего не было.
+        InstanceStatus.FAILED: EventType.INSTANCE_FAILED,
+    }.get(status, EventType.INSTANCE_FAILED)
 
     await append_event(db_session, instance.id, event_type, {})
     instance.status = status

@@ -207,6 +207,11 @@ async def retry_compensation(db_session: AsyncSession, instance_id: uuid.UUID) -
     if InstanceStatus(instance.status) is not InstanceStatus.COMPENSATION_FAILED:
         raise ConflictError(f"откат не требовался: статус {instance.status}")
 
+    # Статус меняется только через журнал (§3.1). Прямая запись в колонку дала
+    # бы replay'у состояние COMPENSATION_FAILED навсегда: нового события нет, а
+    # воркер, взявший инстанс после перезапуска, увидел бы отказ и не стал бы
+    # повторять компенсацию.
+    await append_event(db_session, instance_id, EventType.COMPENSATION_STARTED, {"retried": True})
     instance.status = InstanceStatus.COMPENSATING
     instance.error = None
     await db_session.flush()
