@@ -44,7 +44,9 @@ async def _definition_of(
 def _to_out(instance: WorkflowInstance, definition: WorkflowDefinition) -> InstanceOut:
     return InstanceOut(
         id=instance.id,
-        definition=DefinitionRef(name=definition.name, version=definition.version),
+        definition=DefinitionRef(
+            id=definition.id, name=definition.name, version=definition.version
+        ),
         status=InstanceStatus(instance.status),
         current_step=instance.current_step,
         input=instance.input,
@@ -52,6 +54,7 @@ def _to_out(instance: WorkflowInstance, definition: WorkflowDefinition) -> Insta
         error=instance.error,
         lease_owner=instance.lease_owner,
         lease_expires_at=instance.lease_expires_at,
+        heartbeat_at=instance.heartbeat_at,
         created_at=instance.created_at,
         updated_at=instance.updated_at,
     )
@@ -67,7 +70,9 @@ async def create_instance(
     definition = await _definition_of(db_session, instance)
     return InstanceCreated(
         id=instance.id,
-        definition=DefinitionRef(name=definition.name, version=definition.version),
+        definition=DefinitionRef(
+            id=definition.id, name=definition.name, version=definition.version
+        ),
         status=InstanceStatus(instance.status),
         input=instance.input,
         created_at=instance.created_at,

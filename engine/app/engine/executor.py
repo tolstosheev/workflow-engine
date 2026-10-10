@@ -160,13 +160,32 @@ async def execute_step(
 
     # --- Транзакция 2: результат шага ---------------------------------------
     if outcome.success:
-        decision = interpreter.decide_after_success(definition, step_name, step)
+        # Счётчик берётся из replay'а до записи текущего события, поэтому к
+        # нему прибавляется единица: решение принимается для числа проходов,
+        # включая этот.
+        iterations = state.step_iterations.get(step_name, 0) + 1
+        decision = interpreter.decide_after_success(definition, step_name, step, iterations)
         await append_event(
             db_session,
             instance.id,
             EventType.STEP_COMPLETED,
             {"step": step_name, "output": outcome.output, "next": decision.step_name},
         )
+        if decision.kind == "stop":
+            # Шаг успешен, но продолжать нельзя: счётчик цикла исчерпан.
+            # Событие идёт после STEP_COMPLETED, иначе replay не знал бы, что
+            # шаг выполнен, — а компенсировать его надо.
+            await append_event(
+                db_session,
+                instance.id,
+                EventType.LOOP_EXHAUSTED,
+                {
+                    "step": step_name,
+                    "iterations": iterations,
+                    "max_iterations": step.max_iterations,
+                    "reason": decision.reason,
+                },
+            )
         step_run.status = StepRunStatus.COMPLETED
         step_run.output = outcome.output
         step_run.finished_at = datetime.now(UTC)

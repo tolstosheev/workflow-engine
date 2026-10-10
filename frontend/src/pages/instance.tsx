@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 
-import { instances as instancesApi } from '@/api/client'
+import { instances as instancesApi, definitions as definitionsApi } from '@/api/client'
+import { useEventStream } from '@/api/stream'
+import { DefinitionGraph } from '@/components/DefinitionGraph'
+import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { eventLabel, formatDuration, formatDateTime, statusLabel, statusTone, stepTone } from '@/lib/status'
-import type { InstanceState, StepRun, TimelineEntry, WorkflowInstance } from '@/types/api'
+import type { InstanceState, StepRun, TimelineEntry, WorkflowDefinition, WorkflowInstance } from '@/types/api'
 
 export default function InstancePage() {
   const { id } = useParams<{ id: string }>()
@@ -12,6 +15,7 @@ export default function InstancePage() {
   const [state, setState] = useState<InstanceState | null>(null)
   const [steps, setSteps] = useState<StepRun[]>([])
   const [timeline, setTimeline] = useState<TimelineEntry[]>([])
+  const [definition, setDefinition] = useState<WorkflowDefinition | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -29,6 +33,14 @@ export default function InstancePage() {
       setSteps(runs.items)
       setTimeline(flow.items)
       setError(null)
+
+      // Определение нужно для схемы графа. Ошибка не должна ронять страницу:
+      // журнал и таймлайн показывают суть процесса и без схемы.
+      try {
+        setDefinition(await definitionsApi.get(one.definition.id))
+      } catch {
+        setDefinition(null)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось загрузить инстанс')
     }
@@ -41,6 +53,14 @@ export default function InstancePage() {
     const timer = setInterval(() => void load(), 1500)
     return () => clearInterval(timer)
   }, [load])
+
+  // События открытого инстанса применяются сразу: перечитывание раз в полторы
+  // секунды оставляло бы заметную задержку между действием движка и экраном.
+  useEventStream({
+    onEvent: (event) => {
+      if (event.instance_id === id) void load()
+    },
+  })
 
   if (!id) return <EmptyState message="Идентификатор инстанса не указан" />
   if (error && !instance) return <ErrorState message={error} onRetry={() => void load()} />
@@ -74,6 +94,25 @@ export default function InstancePage() {
               <Row label="Выполнено" value={state.completed_steps.join(' → ') || '—'} />
               <Row label="К откату" value={state.pending_compensations.join(' → ') || '—'} />
               <Row label="Аренда" value={instance.lease_owner ?? 'свободна'} />
+              <Row
+                label="Ожидание"
+                value={
+                  instance.status === 'WAITING' ? (
+                    <TimerCountdown timeline={timeline} waiting />
+                  ) : (
+                    '—'
+                  )
+                }
+              />
+              <Row
+                label="Цикл"
+                value={
+                  Object.entries(state.step_iterations ?? {})
+                    .filter(([, count]) => count > 1)
+                    .map(([name, count]) => `${name}: ${count}`)
+                    .join(', ') || '—'
+                }
+              />
               <Row label="Создан" value={formatDateTime(instance.created_at)} />
             </dl>
           ) : (
@@ -91,6 +130,14 @@ export default function InstancePage() {
           )}
         </Card>
       </div>
+
+      {definition && (
+        <Card title="Граф шагов">
+          <DefinitionGraph definition={definition.definition} steps={steps} instance={state} />
+        </Card>
+      )}
+
+      <RollbackLane instance={state} steps={steps} />
 
       <Card title="Шаги">
         {steps.length === 0 ? (
@@ -131,19 +178,33 @@ export default function InstancePage() {
         ) : (
           <ol className="space-y-2">
             {timeline.map((entry, index) => (
-              <li key={`${entry.kind}-${entry.seq ?? entry.step_name}-${index}`} className="flex gap-3 text-sm">
+              <li
+                key={`${entry.kind}-${entry.seq ?? entry.step_name}-${index}`}
+                className={`flex gap-3 text-sm ${entry.kind === 'step' ? 'pl-4' : ''}`}
+              >
                 <span className="w-24 shrink-0 text-white/40">
                   {formatDateTime(entry.created_at ?? entry.started_at)}
                 </span>
                 {entry.kind === 'event' ? (
                   <>
-                    <span className="w-20 text-white/30">#{entry.seq}</span>
-                    <span>{eventLabel((entry.type ?? 'INSTANCE_CREATED') as never)}</span>
+                    <span className="w-20 shrink-0 text-white/30">#{entry.seq}</span>
+                    <span className="min-w-0">
+                      <span className="block">{eventLabel((entry.type ?? 'INSTANCE_CREATED') as never)}</span>
+                      {/* payload — то, чем журнал доказывает: без него видно
+                          «шаг выполнен», но не видно, каким был переход. */}
+                      <EventPayload payload={entry.payload} />
+                    </span>
                   </>
                 ) : (
                   <>
-                    <span className="w-20 text-white/30">шаг</span>
-                    <span>{entry.step_name}</span>
+                    <span className="w-20 shrink-0 text-white/30">шаг</span>
+                    <span className="min-w-0">
+                      <span className="block">{entry.step_name}</span>
+                      <span className="text-xs text-white/40">
+                        {entry.status?.toLowerCase()}
+                        {entry.compensated ? ', компенсация выполнена' : ''}
+                      </span>
+                    </span>
                   </>
                 )}
               </li>
@@ -155,12 +216,36 @@ export default function InstancePage() {
   )
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-3">
       <dt className="text-white/50">{label}</dt>
       <dd className="text-right">{value}</dd>
     </div>
+  )
+}
+
+/** Содержимое события: показывается по требованию, чтобы не шуметь. */
+function EventPayload({ payload }: { payload: Record<string, unknown> | null | undefined }) {
+  const [open, setOpen] = useState(false)
+  const entries = Object.entries(payload ?? {})
+  if (entries.length === 0) return null
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="mt-0.5 text-[11px] text-accent/80 hover:text-accent"
+      >
+        {open ? 'скрыть' : `данные события (${entries.length})`}
+      </button>
+      {open && (
+        <pre className="mt-1 overflow-auto rounded bg-surface p-2 text-[11px] text-white/60">
+          {JSON.stringify(Object.fromEntries(entries), null, 2)}
+        </pre>
+      )}
+    </>
   )
 }
 

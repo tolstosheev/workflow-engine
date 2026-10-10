@@ -10,7 +10,7 @@ import { useInstancesStore } from '@/store/instances'
  * пропусков: поток не гарантирует доставку, а пропущенное событие не вернётся.
  */
 export function useInstancesFeed() {
-  const { items, loading, error, connected, load, handleEvent, setConnected, statusFilter } =
+  const { items, loading, error, connected, lastEventAt, load, handleEvent, setConnected, statusFilter } =
     useInstancesStore()
 
   useEventStream({ onEvent: handleEvent, onStatusChange: setConnected })
@@ -26,5 +26,5 @@ export function useInstancesFeed() {
   const visible =
     statusFilter === 'ALL' ? items : items.filter((item) => item.status === statusFilter)
 
-  return { items: visible, loading, error, connected, load }
+  return { items: visible, all: items, loading, error, connected, lastEventAt, load }
 }

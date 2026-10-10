@@ -202,28 +202,61 @@ def test_wait_before_is_durable_delay() -> None:
 # --- ??????? ?????????????? -------------------------------------------------
 
 
-def test_fork_is_accepted_by_schema_but_not_executed() -> None:
-    """????????? ?????????? ???????????, ? ?? ???????? ?????????.
+def test_fork_returns_branches() -> None:
+    """Интерпретатор различает fork, но определение с ним не доходит до сюда.
 
-    ????? ????????? fork ? join, ? ????????? ????????? ?? ????????????, ??
-    ????????????? ????? ?? ?????????: ????? fork-???? ??????? ???????????.
-    ???? ????????? ????????, ???? ?????? ?????? ? ? ??? ?????????? ??????.
+    Валидатор отвергает параллельные ветки при сохранении, поэтому решение
+    ниже — описание намерения, а не рабочий путь. Проверка отказа —
+    в тестах валидатора.
     """
     definition = _definition(
         split={"action": f"{DEMO}:validate_cart", "fork": {"x": ["a"]}},
         a={"action": f"{DEMO}:reserve_inventory"},
-        j={"action": f"{DEMO}:confirm_delivery", "join": ["a"], "next": None},
     )
 
     decision = decide_after_success(definition, "split", _step(definition, "split"))
 
     assert decision.kind == "fork"
     assert decision.branches == {"x": ["a"]}
-    # ???, ??????? ????????? ??????, ?? ????????: ????? ?? ???????????.
+    # Исполнить ветви нечем: решение не называет следующего шага.
     assert decision.step_name is None
 
 
+# --- Предел числа проходов цикла ------------------------------------------
+
+
+def test_loop_runs_until_limit_is_reached() -> None:
+    definition = _definition(
+        a={"action": f"{DEMO}:reserve_inventory", "next": "a", "loop": True, "max_iterations": 3},
+    )
+    step = _step(definition, "a")
+
+    assert decide_after_success(definition, "a", step, iterations=1).kind == "run"
+    assert decide_after_success(definition, "a", step, iterations=2).kind == "run"
+    final = decide_after_success(definition, "a", step, iterations=3)
+
+    # Предел достигается, а не превышается: три прохода при max_iterations: 3.
+    assert final.kind == "stop"
+    assert final.step_name is None
+    assert "3 из 3" in final.reason
+
+
+def test_loop_without_iterations_keeps_going() -> None:
+    """Шаг вне цикла ограничением проходов не связан."""
+    definition = _definition(
+        a={"action": f"{DEMO}:reserve_inventory", "next": "b"},
+        b={"action": f"{DEMO}:confirm_delivery"},
+    )
+
+    assert decide_after_success(definition, "a", _step(definition, "a"), 999).kind == "run"
+
+
 def test_join_step_has_no_successor() -> None:
+    """Слияние не объявляет продолжения — но и до исполнения не дойдёт.
+
+    Валидатор отвергает join, так что это факт об интерпретаторе, а не о
+    работающем пути.
+    """
     definition = _definition(
         a={"action": f"{DEMO}:reserve_inventory", "next": "j"},
         j={"action": f"{DEMO}:confirm_delivery", "join": ["a"]},

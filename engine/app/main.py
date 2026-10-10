@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     application = FastAPI(
         title="Workflow Engine",
-        version="1.0.1",
+        version="1.1.0",
         description=(
             "Распределённый движок выполнения workflow с поддержкой долгих "
             "транзакций и компенсаций (Saga)."
