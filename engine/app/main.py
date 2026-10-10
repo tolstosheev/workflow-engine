@@ -1,4 +1,4 @@
-﻿"""Точка входа HTTP-сервиса (API)."""
+"""Точка входа HTTP-сервиса (API)."""
 
 from __future__ import annotations
 
