@@ -38,11 +38,16 @@ NOTIFIABLE = frozenset(
         EventType.INSTANCE_COMPENSATED,
         EventType.INSTANCE_CANCEL_REQUESTED,
         EventType.INSTANCE_CANCELLED,
+        EventType.INSTANCE_FAILED,
         EventType.STEP_COMPLETED,
         EventType.STEP_FAILED,
         EventType.COMPENSATION_STARTED,
         EventType.COMPENSATION_COMPLETED,
         EventType.COMPENSATION_FAILED,
+        # Истеранение цикла выводит инстанс в откат. Без этого события в
+        # потоке статус в списке до пересбора бы дождалось влет у статус
+        # RUNNING и лишь запускал отката, который не виден.
+        EventType.LOOP_EXHAUSTED,
     }
 )
 
