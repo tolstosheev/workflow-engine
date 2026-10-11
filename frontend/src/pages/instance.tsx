@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 
 import { instances as instancesApi, definitions as definitionsApi } from '@/api/client'
@@ -19,6 +19,11 @@ export default function InstancePage() {
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
+  // Определение дождаться отдельно: следиющий ответ не меняется на время
+  // жизни инстанса, а не каждые 1500 мс для схемы и на каждое
+  // событие события.
+  const loadedDefinition = useRef<string | null>(null)
+
   const load = useCallback(async () => {
     if (!id) return
     try {
@@ -34,12 +39,15 @@ export default function InstancePage() {
       setTimeline(flow.items)
       setError(null)
 
-      // Определение нужно для схемы графа. Ошибка не должна ронять страницу:
-      // журнал и таймлайн показывают суть процесса и без схемы.
-      try {
-        setDefinition(await definitionsApi.get(one.definition.id))
-      } catch {
-        setDefinition(null)
+      // Определение — единственная строка. Один запрос на каждый цикл инстанса — это
+      // лишний зааский запрос, который раньше ровно дроблоское дехотай на всы сами шаги.
+      if (loadedDefinition.current !== one.definition.id) {
+        try {
+          setDefinition(await definitionsApi.get(one.definition.id))
+          loadedDefinition.current = one.definition.id
+        } catch {
+          setDefinition(null)
+        }
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось загрузить инстанс')
@@ -49,18 +57,37 @@ export default function InstancePage() {
   useEffect(() => {
     void load()
     // Перечитывание страхует от пропущенных событий SSE: поток не гарантирует
-    // доставку, а журнал на сервере остаётся полным.
+    // доставку, а журнал на сервере остаётся полном.
     const timer = setInterval(() => void load(), 1500)
     return () => clearInterval(timer)
   }, [load])
 
-  // События открытого инстанса применяются сразу: перечитывание раз в полторы
-  // секунды оставляло бы заметную задержку между действием движка и экраном.
+  // Приведение события запускает запрос, а не каждое событие: шаги идут через дважки, и без
+  // общедия страница бы загрузилась четыре данных.
+  // Сборка затем, но последние из любого события.
+  const refreshAt = useRef(0)
+  const scheduled = useRef<number | null>(null)
+
   useEventStream({
     onEvent: (event) => {
-      if (event.instance_id === id) void load()
+      if (event.instance_id !== id) return
+      const now = Date.now()
+      if (now - refreshAt.current < 400) return
+      refreshAt.current = now
+      if (scheduled.current !== null) return
+      scheduled.current = window.setTimeout(() => {
+        scheduled.current = null
+        void load()
+      }, 400)
     },
   })
+
+  useEffect(
+    () => () => {
+      if (scheduled.current !== null) window.clearTimeout(scheduled.current)
+    },
+    [],
+  )
 
   if (!id) return <EmptyState message="Идентификатор инстанса не указан" />
   if (error && !instance) return <ErrorState message={error} onRetry={() => void load()} />
