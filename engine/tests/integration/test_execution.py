@@ -225,6 +225,35 @@ async def test_step_runs_record_timings(db_session: AsyncSession) -> None:
         assert run.status == StepRunStatus.COMPLETED
 
 
+async def test_step_duration_is_observed(db_session: AsyncSession) -> None:
+    # Длительность шага — разгуд по всем шагам, а не по одному
+    # имену: вызов — только часть шага, а метрика собрана всего
+    # работеого инстанса, внешний в длительность шага не попала бы.
+    from app.metrics import STEP_DURATION
+
+    instance_id, _ = await _create_instance(db_session, ORDER_FLOW)
+    await _seed_journal(db_session, instance_id, ORDER_FLOW)
+    await db_session.commit()
+    before = STEP_DURATION.labels(step="reserve_inventory")._sum.get()
+
+    await _run_cycles("w-metrics")
+
+    assert STEP_DURATION.labels(step="reserve_inventory")._sum.get() > before
+
+
+async def test_lease_acquisition_is_counted(db_session: AsyncSession) -> None:
+    from app.metrics import LEASE_ACQUIRED
+
+    instance_id, _ = await _create_instance(db_session, ORDER_FLOW)
+    await _seed_journal(db_session, instance_id, ORDER_FLOW)
+    await db_session.commit()
+    before = LEASE_ACQUIRED._value.get()
+
+    await _run_cycles("w-metrics", count=2)
+
+    assert LEASE_ACQUIRED._value.get() == before + 2
+
+
 async def test_lease_is_released_after_completion(db_session: AsyncSession) -> None:
     # Удержанная аренда оставила бы инстанс занятым до истечения TTL.
     instance_id, _ = await _create_instance(db_session, ORDER_FLOW)

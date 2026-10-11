@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.engine import lease
+from app.engine.executor import _heartbeat_loop
 from app.models.enums import EventType, InstanceStatus
 from app.models.workflow import WorkflowDefinition, WorkflowInstance
 
@@ -288,6 +289,21 @@ async def test_heartbeat_fails_for_foreign_worker(db_session: AsyncSession) -> N
     await lease.acquire(db_session, "w1", instance_id)
 
     assert await lease.heartbeat(db_session, instance_id, "w2") is False
+
+
+async def test_heartbeat_refusal_is_counted_as_lease_lost(db_session: AsyncSession) -> None:
+    # Отказ продлить аренду — признак, что инстанс ушёл к другому
+    # воркеру. Цикл обязан выйти из петли, и метрика потеря аренды
+    # была бы самым важным случаем.
+    from app.metrics import LEASE_LOST
+
+    before = LEASE_LOST._value.get()
+    instance_id = await _new_instance(db_session)
+    await lease.acquire(db_session, "w1", instance_id)
+
+    await _heartbeat_loop(instance_id, "w2", asyncio.Event())
+
+    assert LEASE_LOST._value.get() == before + 1
 
 
 async def test_heartbeat_fails_on_free_instance(db_session: AsyncSession) -> None:

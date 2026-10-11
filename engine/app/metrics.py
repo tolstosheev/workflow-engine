@@ -7,8 +7,8 @@ Gauge'ы читаются из БД при каждом сборе, а не ве
 
 from __future__ import annotations
 
+from prometheus_client import CONTENT_TYPE_LATEST as _PROM_CONTENT_TYPE
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
-from prometheus_client.openmetrics.exposition import CONTENT_TYPE_LATEST as _OM_CONTENT_TYPE
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -127,5 +127,10 @@ def _compensation_result(status: str) -> str:
 
 
 def render() -> tuple[bytes, str]:
-    """Текст метрик в формате OpenMetrics."""
-    return generate_latest(REGISTRY), _OM_CONTENT_TYPE
+    """Текст метрик в экспозиционном формате Prometheus.
+
+    Формат и заголовок должны совпадать: `generate_latest` пишет
+    классический текст (`text/plain; version=0.0.4`), а не OpenMetrics. Раньше здесь объявлялся
+    тип содержимый правильной только, и скрайер, дайт это разбирая парсень, ошибка ли неверный.
+    """
+    return generate_latest(REGISTRY), _PROM_CONTENT_TYPE

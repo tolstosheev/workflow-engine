@@ -371,6 +371,45 @@ async def test_metrics_report_zero_for_absent_statuses(client: httpx.AsyncClient
     assert 'workflow_instances{status="COMPENSATED"} 0.0' in response.text
 
 
+async def test_created_instance_is_counted(client: httpx.AsyncClient) -> None:
+    # Объявленная сама себя счётчик обязана прописывается,
+    # но никто не меняется: счётчик выглядел бы работающий, и метрика
+    # показывала бы обязывалась только для себя.
+    from app.metrics import INSTANCES_TOTAL
+
+    before = INSTANCES_TOTAL._value.get()
+    definition = await _active_definition(client)
+
+    response = await client.post("/api/instances", json={"definition_id": definition["id"]})
+
+    assert response.status_code == 201
+    assert INSTANCES_TOTAL._value.get() == before + 1
+
+
+async def test_failed_creation_is_not_counted(client: httpx.AsyncClient) -> None:
+    # Счётчик растёт после коммита: откат не создаёт инстанса, и считать
+    # его было бы не когда.
+    from app.metrics import INSTANCES_TOTAL
+
+    before = INSTANCES_TOTAL._value.get()
+
+    response = await client.post("/api/instances", json={"definition_id": str(uuid.uuid4())})
+
+    assert response.status_code == 404
+    assert INSTANCES_TOTAL._value.get() == before
+
+
+async def test_metrics_content_type_matches_body_format() -> None:
+    # Тело отдаётся в экспозиционном формате Prometheus, а заголовок объявлял
+    # OpenMetrics: строгий скрайпер отвергал бы весь ответ.
+    from app.metrics import render
+
+    _, content_type = render()
+
+    assert content_type.startswith("text/plain")
+    assert "openmetrics" not in content_type
+
+
 async def test_metrics_report_steps_and_compensations(client: httpx.AsyncClient) -> None:
     definition = await _active_definition(client)
     created = await client.post("/api/instances", json={"definition_id": definition["id"]})

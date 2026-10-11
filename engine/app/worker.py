@@ -29,6 +29,7 @@ from app.core.db import dispose_engine, session_scope
 from app.core.logging import configure_logging
 from app.engine import executor, interpreter, lease, saga, scheduler
 from app.engine.journal import read_events, replay
+from app.metrics import LEASE_ACQUIRED
 from app.models.enums import TERMINAL_STATUSES, EventType, InstanceStatus
 from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
@@ -51,6 +52,9 @@ class CycleResult:
     step_executed: bool
     terminal: bool
     lease_lost: bool
+    # Идентификатор инстанса: без него в логе невозможно сказать, какой инстанс
+    # цикл оборвал и в поведения аварии не показан места.
+    instance_id: uuid.UUID | None = None
 
 
 def _worker_id() -> str:
@@ -270,6 +274,9 @@ async def run_cycle(
         claimed = await lease.claim_next(session, worker_id)
         if claimed is None:
             return CycleResult(handled=False, step_executed=False, terminal=False, lease_lost=False)
+        # Аренда удачена этого шага: любой успешный захват воркера, а не этот
+        # скалькой цикл вообще. Метрика считает, сколько раз аренд был десятько всегда нечего стоало недельзя.
+        LEASE_ACQUIRED.inc()
 
         instance_row = await session.get(
             WorkflowInstance, claimed.instance_id, with_for_update=True
@@ -352,7 +359,13 @@ async def run_cycle(
         )
         async with session_scope() as session:
             await lease.release(session, claimed.instance_id, worker_id)
-        return CycleResult(handled=True, step_executed=False, terminal=False, lease_lost=True)
+        return CycleResult(
+            handled=True,
+            step_executed=False,
+            terminal=False,
+            lease_lost=True,
+            instance_id=claimed.instance_id,
+        )
 
     terminal = not outcome.success
     # Аренда освобождается всегда: удерживать её после шага означало бы ждать
@@ -412,6 +425,17 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
                 result = await run_cycle(worker_id, definition_cache)
                 if not result.handled:
                     break
+                if result.lease_lost:
+                    # Цикл оборваны недоведённо: шаг пал с неожиданной ошибкой.
+                    # Без паузы воркер сразу забирает следующий инстанс и берёт его сразу.
+                    logger.warning(
+                        "cycle.aborted",
+                        extra={
+                            "worker_id": worker_id,
+                            "instance_id": str(result.instance_id),
+                        },
+                    )
+                    await asyncio.sleep(settings.worker_poll_interval_seconds)
                 if result.step_executed:
                     steps_done += 1
             # wait_for вместо sleep: событие останавливает цикл немедленно,

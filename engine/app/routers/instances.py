@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.core.errors import NotFoundError
+from app.metrics import INSTANCES_TOTAL
 from app.models.enums import InstanceStatus
 from app.models.workflow import WorkflowDefinition, WorkflowInstance
 from app.schemas.api import (
@@ -66,6 +67,9 @@ async def create_instance(
 ) -> InstanceCreated:
     instance = await service.create_instance(db_session, payload.definition_id, payload.input)
     await db_session.commit()
+    # Счётчик растёт после коммита: откат не создаёт инстанса,
+    # и считать его бы некому — загрузка считала бы считала больше созданённых.
+    INSTANCES_TOTAL.inc()
 
     definition = await _definition_of(db_session, instance)
     return InstanceCreated(

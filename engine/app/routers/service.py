@@ -32,7 +32,7 @@ router = APIRouter(tags=["service"])
 
 @router.get("/metrics")
 async def prometheus_metrics(db_session: AsyncSession = Depends(get_db)) -> Response:
-    """Метрики в формате OpenMetrics."""
+    """Метрики в экспозиционном формате Prometheus."""
     await metrics.collect_from_db(db_session)
     body, content_type = metrics.render()
     return Response(content=body, media_type=content_type)
