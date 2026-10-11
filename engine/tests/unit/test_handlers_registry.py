@@ -128,3 +128,45 @@ def test_context_defaults_are_not_shared() -> None:
     first.input["key"] = "value"
 
     assert second.input == {}
+
+
+async def test_handler_outside_allowed_roots_is_refused() -> None:
+    # Определение сохраняется через HTTP, и строка `os:system` импортировалась бы
+    # в адрес воркера как свой собственный модуль (ADR-0013).
+    from app.core.errors import HandlerNotFoundError
+    from app.handlers.registry import resolve_handler
+
+    clear_handler_cache()
+    try:
+        with pytest.raises(HandlerNotFoundError) as caught:
+            resolve_handler("os:system")
+        assert "вне разрешённых" in str(caught.value)
+    finally:
+        clear_handler_cache()
+
+
+def test_handler_of_allowed_package_still_resolves() -> None:
+    from app.handlers.registry import resolve_handler
+
+    clear_handler_cache()
+    try:
+        handler = resolve_handler("app.demo.handlers:validate_cart")
+        assert callable(handler)
+    finally:
+        clear_handler_cache()
+
+
+def test_allowed_roots_may_be_widened_by_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Расширение обязано своимкой в одном месте: если привется такая граница, то ею можно легко пристроить.
+    from app.core import config as config_module
+    from app.handlers.registry import _allowed_roots
+
+    original = config_module.get_settings()
+    widened = original.model_copy(update={"handler_module_allowlist": "app, mydomain"})
+    monkeypatch.setattr("app.handlers.registry.get_settings", lambda: widened)
+
+    clear_handler_cache()
+    try:
+        assert _allowed_roots() == frozenset({"app", "mydomain"})
+    finally:
+        clear_handler_cache()

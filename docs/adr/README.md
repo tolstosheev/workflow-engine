@@ -34,6 +34,7 @@ Neutral) / Alternatives considered / References. Раздел **Negative** об�
 | [0010](0010-dva-sloya-idempotentnosti.md) | Два слоя идемпотентности: обработчик и движок | Accepted |
 | [0011](0011-otkaz-ne-raven-otmene.md) | Отказ без компенсации отличается от отмены | Accepted |
 | [0012](0012-metriki-v-multiprocess-rezhime.md) | Метрики в multiprocess-режиме Prometheus | Accepted |
+| [0013](0013-belyy-spisok-obrabotchikov.md) | Обработчики ограничены белым списком модулей | Accepted |
 
 Реализация: ADR-0001 — в Фазе 0, ADR-0002…0006 — в Фазе 1 (схема данных и
 валидация дефинишена), ADR-0002…0005 в объёме ядра — в Фазе 2, ADR-0007 — в
