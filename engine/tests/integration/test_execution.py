@@ -1040,6 +1040,13 @@ async def test_compensation_retries_after_failure(
 
     assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATION_FAILED
 
+    # Время до срока пропускаем: пауза между попытками не берёт
+    # обращение, и в тесте одного вызова не должно быть.
+    instance_row = await db_session.get(WorkflowInstance, instance_id)
+    assert instance_row is not None
+    instance_row.compensation_not_before = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+
     await _run_cycles("w3")
 
     assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
@@ -1089,3 +1096,58 @@ async def _compensation_plan(db_session: AsyncSession, instance_id: uuid.UUID) -
     state = replay(await read_events(db_session, instance_id))
     items = await saga.plan(db_session, instance_id, refs, executed_steps=state.completed_steps)
     return [item.step_name for item in items]
+
+
+async def test_compensation_retry_waits_before_the_next_attempt(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Провал компенсации обычно недоступен: пауза понадолжна, иначе воркер
+    # бьёт по недоступному сервису раз в секунду на каждый процесс.
+    import app.demo.handlers as demo
+
+    calls = {"count": 0}
+
+    async def failing_release(ctx: object) -> dict:
+        calls["count"] += 1
+        raise RuntimeError("склад недоступен")
+
+    monkeypatch.setattr(demo, "release_inventory", failing_release)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+    await _run_cycles("w2", count=1)
+
+    assert calls["count"] == 1
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATION_FAILED
+
+    db_session.expire_all()
+    instance_row = await db_session.get(WorkflowInstance, instance_id)
+    assert instance_row is not None
+    not_before = instance_row.compensation_not_before
+    assert not_before is not None, "пауза не записала"
+    assert not_before > datetime.now(UTC)
+
+    # Инстанс не берётся воркером до срока: опрос отката уверен в записке.
+    await _run_cycles("w3", count=3)
+    assert calls["count"] == 1
+
+
+async def test_backoff_grows_with_failures_and_is_capped() -> None:
+    from app.core.config import get_settings
+    from app.worker import _next_compensation_attempt_at
+
+    settings = get_settings()
+    first = _next_compensation_attempt_at(1)
+    second = _next_compensation_attempt_at(2)
+
+    assert second > first
+
+    # Потолок существует: бесконечный следотель доводит в десять минут,
+    # а если недоступен сотни месяцев, откат не лучше того.
+    huge = _next_compensation_attempt_at(50)
+    assert (huge - datetime.now(UTC)).total_seconds() <= settings.compensation_retry_max_seconds + 1

@@ -626,7 +626,7 @@ stateDiagram-v2
 
     COMPENSATING --> COMPENSATING: COMPENSATION_STARTED / COMPLETED
     COMPENSATING --> COMPENSATION_FAILED: компенсация провалена, попытки исчерпаны
-    COMPENSATION_FAILED --> COMPENSATING: автоматический повтор компенсации
+    COMPENSATION_FAILED --> COMPENSATING: повтор компенсации после паузы и выбора
 
     COMPENSATING --> COMPENSATED: все компенсации выполнены
     CANCELLING --> CANCELLED: компенсировать нечего

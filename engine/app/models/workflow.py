@@ -87,6 +87,13 @@ class WorkflowInstance(Base, TimestampMixin):
     )
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Раннее время следующей попытки отката. Провал компенсации означает, что
+    # внешний сервис недоступен: без паузы воркер бил бы по нему раз в секунду
+    # на каждый процесс, и отказ лечил бы сам себя лавиной повторов.
+    compensation_not_before: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     definition: Mapped[WorkflowDefinition] = relationship(back_populates="instances")
     events: Mapped[list[WorkflowEvent]] = relationship(
         back_populates="instance",

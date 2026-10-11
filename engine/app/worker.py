@@ -21,6 +21,7 @@ import signal
 import socket
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from prometheus_client import multiprocess
 from sqlalchemy import select
@@ -94,6 +95,22 @@ async def _load_definition(
     return parsed
 
 
+def _next_compensation_attempt_at(failed_attempts: int) -> datetime:
+    """Когда брать следующую попытку отката.
+
+    Задержка растёт по числу неудач и упирается в потолок: недоступный сервис
+    не станет доступнее от того, что по нему бьют чаще. Первая пауза короткая —
+    сбой мог быть разовым, и ждать пять минут ради этого незачем.
+    """
+    settings = get_settings()
+    exponent = max(0, failed_attempts - 1)
+    delay = min(
+        settings.compensation_retry_base_seconds * (2**exponent),
+        settings.compensation_retry_max_seconds,
+    )
+    return datetime.now(UTC) + timedelta(seconds=delay)
+
+
 async def _compensate(
     instance_id: uuid.UUID,
     definition: WorkflowDefinitionSchema,
@@ -165,12 +182,18 @@ async def _compensate(
                 instance_row = await session.get(WorkflowInstance, instance_id)
                 if instance_row is not None:
                     instance_row.status = InstanceStatus.COMPENSATION_FAILED
+                    instance_row.compensation_not_before = _next_compensation_attempt_at(
+                        await saga.failed_count(session, instance_id)
+                    )
                     await session.commit()
             return False
 
     async with session_scope() as session:
         instance_row = await session.get(WorkflowInstance, instance_id)
         if instance_row is not None:
+            # Пауза отката снимается вместе с успехом: процесс терминален, и
+            # оставшееся поле только сбивало бы с толку при разборе.
+            instance_row.compensation_not_before = None
             await executor.finish(session, instance_row, InstanceStatus.COMPENSATED)
     return True
 

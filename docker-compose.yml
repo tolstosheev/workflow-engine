@@ -67,6 +67,8 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://workflow:workflow@db:5432/workflow_engine}
       LEASE_TTL_SECONDS: ${LEASE_TTL_SECONDS:-30}
       HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS:-5}
+      COMPENSATION_RETRY_BASE_SECONDS: ${COMPENSATION_RETRY_BASE_SECONDS:-5}
+      COMPENSATION_RETRY_MAX_SECONDS: ${COMPENSATION_RETRY_MAX_SECONDS:-300}
       PROMETHEUS_MULTIPROC_DIR: /var/prometheus-shared
     volumes:
       - prometheus_shared:/var/prometheus-shared
@@ -85,6 +87,8 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://workflow:workflow@db:5432/workflow_engine}
       LEASE_TTL_SECONDS: ${LEASE_TTL_SECONDS:-30}
       HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS:-5}
+      COMPENSATION_RETRY_BASE_SECONDS: ${COMPENSATION_RETRY_BASE_SECONDS:-5}
+      COMPENSATION_RETRY_MAX_SECONDS: ${COMPENSATION_RETRY_MAX_SECONDS:-300}
       PROMETHEUS_MULTIPROC_DIR: /var/prometheus-shared
     volumes:
       - prometheus_shared:/var/prometheus-shared

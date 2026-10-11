@@ -46,6 +46,17 @@ def _lease_free(now: datetime) -> ColumnElement[bool]:
     return (WorkflowInstance.lease_expires_at.is_(None)) | (WorkflowInstance.lease_expires_at < now)
 
 
+def _compensation_ready(now: datetime) -> ColumnElement[bool]:
+    """Пора ли брать откат, который уже откладывали.
+
+    Пауза нужна после провала компенсации: она означает, что внешний сервис
+    недоступен, и повтор без задержки бьёт по нему раз в секунду.
+    """
+    return (WorkflowInstance.compensation_not_before.is_(None)) | (
+        WorkflowInstance.compensation_not_before <= now
+    )
+
+
 async def _update_lease(
     db_session: AsyncSession,
     instance_id: uuid.UUID,
@@ -125,6 +136,7 @@ async def claim_next(
         .where(
             WorkflowInstance.status.in_(ready_values),
             _lease_free(now),
+            _compensation_ready(now),
         )
         .order_by(WorkflowInstance.created_at)
         .limit(1)

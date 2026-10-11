@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     worker_max_steps_per_cycle: int = 100
     worker_poll_interval_seconds: float = 1.0
     step_max_attempts: int = 3
+    # Пауза перед повтором отката. Провал компенсации означает недоступность
+    # внешнего сервиса, и повтор без задержки бьёт по нему раз в секунду на
+    # каждый процесс. Задержка растёт по попыткам и ограничена потолком.
+    compensation_retry_base_seconds: float = 5.0
+    compensation_retry_max_seconds: float = 300.0
     sse_heartbeat_seconds: int = 15
     # Опрос журнала строики событий: латентность обязана дожжна событием отдаваться
     # быть на всю время heartbeat. Раньше идёт веком раз в секунду.
