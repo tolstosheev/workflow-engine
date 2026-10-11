@@ -626,7 +626,7 @@ stateDiagram-v2
 
     COMPENSATING --> COMPENSATING: COMPENSATION_STARTED / COMPLETED
     COMPENSATING --> COMPENSATION_FAILED: компенсация провалена, попытки исчерпаны
-    COMPENSATION_FAILED --> COMPENSATING: ручной перезапуск компенсации
+    COMPENSATION_FAILED --> COMPENSATING: автоматический повтор компенсации
 
     COMPENSATING --> COMPENSATED: все компенсации выполнены
     CANCELLING --> CANCELLED: компенсировать нечего
@@ -640,11 +640,11 @@ stateDiagram-v2
     FAILED --> [*]
 
     note right of COMPENSATION_FAILED
-        Ручное разбирательство.
-        Эффекты выполненных шагов
-        остаются в силе: компенсация
-        не сработала, а откатывать
-        откат нельзя.
+        Провал — не конец процесса:
+        повтор отката воркер берёт сам,
+        пока служба доступна. Эффекты
+        выполненных шагов остаются
+        в силе до успешного отката.
     end note
 
     note right of WAITING
@@ -696,6 +696,8 @@ stateDiagram-v2
 | Сбой шага приводит к откату | `::test_failed_step_triggers_compensation` |
 | Откат идёт в обратном порядке | `::test_compensation_covers_only_completed_steps` |
 | Провал компенсации виден как `COMPENSATION_FAILED` | `::test_failed_compensation_is_visible` |
+| Провал компенсации повторяется без исполнения упавшего шага | `::test_compensation_retries_after_failure` |
+| Повтор отката не откатывает уже сделанный шаг | `::test_retry_does_not_repeat_finished_compensation` |
 | После перехвата нет дублей шагов | `::test_resumed_worker_does_not_duplicate_steps` |
 | Replay после паузы совпадает с непрерывным проходом | `::test_replay_after_pause_matches_continuous_run` |
 | Два воркера не выполняют один шаг | `::test_two_workers_do_not_execute_same_step` |

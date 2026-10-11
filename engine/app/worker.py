@@ -297,7 +297,14 @@ async def run_cycle(
 
     # Отмена и провал шага приводят в одну точку: выполненные шаги надо
     # вернуть. Различаются они только тем, как процесс сюда попал.
-    if state.status in (InstanceStatus.COMPENSATING, InstanceStatus.CANCELLING):
+    if state.status in (
+        InstanceStatus.COMPENSATING,
+        InstanceStatus.CANCELLING,
+        # Провал компенсации не конец процесса: он уже в очереди на повтор
+        # по §3.5. Раньше инстанс падал в обход отката и доводил упавший шаг
+        # до конца, а брал его уже другой воркер.
+        InstanceStatus.COMPENSATION_FAILED,
+    ):
         done = await _compensate(claimed.instance_id, definition, worker_id)
         async with session_scope() as session:
             await lease.release(session, claimed.instance_id, worker_id)

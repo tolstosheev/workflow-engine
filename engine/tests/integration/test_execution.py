@@ -1005,3 +1005,87 @@ async def test_failed_without_completed_steps_ends_as_failed(
     assert EventType.INSTANCE_FAILED in types
     assert EventType.INSTANCE_COMPENSATED not in types
     assert replay(events).status is InstanceStatus.FAILED
+
+
+async def test_compensation_retries_after_failure(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Провал компенсации не конец процесса: он уходит в очередь повторов
+    # отката (§3.5). Раньше инстанс в COMPENSATION_FAILED попадал в ветку
+    # обычного шага — воркер возвращался к упавшему шагу и доводил процесс
+    # до конца вместо повторного отката.
+    import app.demo.handlers as demo
+
+    original = demo.release_inventory
+    attempts = {"count": 0}
+
+    async def flaky_release(ctx: object) -> dict:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("склад недоступен")
+        return await original(ctx)
+
+    monkeypatch.setattr(demo, "release_inventory", flaky_release)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+    # Отдельно один цикл: иначе повтор отката случился бы в той же пачке
+    # и состояние после провала нельзя было бы увидеть.
+    await _run_cycles("w2", count=1)
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATION_FAILED
+
+    await _run_cycles("w3")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+    assert attempts["count"] == 2
+
+
+async def test_retry_does_not_repeat_finished_compensation(db_session: AsyncSession) -> None:
+    # План отката не должен возвращать шаг, который уже откатан: порядок
+    # берётся из журнала, где выполненный шаг остаётся навсегда, а новый
+    # проход откатывал бы его повторно — под новым ключом идемпотентности.
+    from app.models.enums import CompensationStatus
+    from app.models.workflow import CompensationLog
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+    await _run_cycles("w2", count=1)
+
+    # Откат состоялся: попытка закрыта успешно, резерв освобождён.
+    finished = (
+        await db_session.scalars(
+            select(CompensationLog).where(
+                CompensationLog.instance_id == instance_id,
+                CompensationLog.status == CompensationStatus.COMPLETED,
+            )
+        )
+    ).all()
+    assert len(finished) == 1
+
+    assert await _compensation_plan(db_session, instance_id) == []
+
+
+async def _compensation_plan(db_session: AsyncSession, instance_id: uuid.UUID) -> list[str]:
+    """План отката, построенный так же, как его строит воркер."""
+    from app.engine import saga
+    from app.engine.journal import read_events, replay
+
+    instance_row = await db_session.get(WorkflowInstance, instance_id)
+    assert instance_row is not None
+    definition_row = await db_session.get(WorkflowDefinition, instance_row.definition_id)
+    assert definition_row is not None
+    definition = WorkflowDefinitionSchema.model_validate(definition_row.definition)
+    refs = {name: step.compensation for name, step in definition.steps.items()}
+    state = replay(await read_events(db_session, instance_id))
+    items = await saga.plan(db_session, instance_id, refs, executed_steps=state.completed_steps)
+    return [item.step_name for item in items]
