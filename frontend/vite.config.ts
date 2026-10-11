@@ -30,5 +30,19 @@ export default defineConfig({
     // чистая логика раскладки, для неё достаточно node.
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      // Порог считает только то, что можно проверить без DOM: страницы и
+      // компоненты без jsdom не исполняются вовсе, и включение их в отчёт
+      // дало бы «100% покрытие» на невыполненном коде.
+      include: ['src/lib/**', 'src/store/**', 'src/api/client.ts'],
+      reporter: ['text'],
+      thresholds: {
+        statements: 80,
+        branches: 80,
+        functions: 80,
+        lines: 80,
+      },
+    },
   },
 })
