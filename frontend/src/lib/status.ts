@@ -89,13 +89,32 @@ export function stepTone(status: StepRunStatus): string {
 }
 
 export function formatTime(value: string | null | undefined): string {
-  if (!value) return '—'
-  return new Date(value).toLocaleTimeString('ru-RU', { hour12: false })
+  return format(value, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 export function formatDateTime(value: string | null | undefined): string {
+  return format(value, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+/**
+ * Подпись момента времени.
+ *
+ * Неразбираная дата показывается прочерком: строка «Invalid Date» в журнале
+ * выглядит как сбой интерфейса, а не как отсутствие данных, и отвлекает от
+ * того, что смотрели.
+ */
+function format(value: string | null | undefined, options: Intl.DateTimeFormatOptions): string {
   if (!value) return '—'
-  return new Date(value).toLocaleString('ru-RU', { hour12: false })
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString('ru-RU', { ...options, hour12: false })
 }
 
 export function formatDuration(from: string, to: string | null): string {
