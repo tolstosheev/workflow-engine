@@ -368,3 +368,54 @@ async def test_retry_compensation_is_visible_to_replay(
         EventType.COMPENSATION_FAILED,
         EventType.COMPENSATION_STARTED,
     ]
+
+
+async def test_event_page_is_limited_by_query_not_by_reading_everything(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Предел должен применяться в запросе, а не после чтения:
+    # чтобы показать первые двадцать страницу, журнал надо бы только прочитать всю историю инстанса.
+    instance = await _instance(db_session)
+    for index in range(30):
+        await append_event(db_session, instance.id, EventType.STEP_COMPLETED, {"step": f"s{index}"})
+    await db_session.commit()
+
+    calls: list[int] = []
+    from app.engine import journal
+
+    original = journal.read_events
+
+    async def spy(*args: object, **kwargs: object) -> object:
+        # Полный читающий журнал — это то само по дефекту, который падает из чего тянуть столько.
+        calls.append(1)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(journal, "read_events", spy)
+    monkeypatch.setattr(service, "read_events", spy)
+
+    events, total = await service.get_events(db_session, instance.id, from_seq=0, limit=5)
+
+    assert len(events) == 5
+    assert total == 31
+    assert calls == [], "журнал прочитан целиком"
+
+
+async def test_steps_and_timeline_respect_the_limit(db_session: AsyncSession) -> None:
+    instance = await _instance(db_session)
+    for index in range(12):
+        db_session.add(
+            StepRun(
+                instance_id=instance.id,
+                step_name=f"step-{index}",
+                attempt=1,
+                status=StepRunStatus.COMPLETED,
+                started_at=datetime.now(UTC),
+            )
+        )
+    await db_session.commit()
+
+    steps = await service.get_steps(db_session, instance.id, limit=4)
+    timeline = await service.get_timeline(db_session, instance.id, limit=4)
+
+    assert len(steps) == 4
+    assert len(timeline) == 4

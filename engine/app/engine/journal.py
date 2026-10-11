@@ -129,6 +129,43 @@ async def read_events(
     ]
 
 
+async def read_events_page(
+    db_session: AsyncSession, instance_id: uuid.UUID, from_seq: int = 0, limit: int = 0
+) -> tuple[list[RecordedEvent], int]:
+    """Читает страницу журнала и общее число событий инстанса.
+
+    Страница, а не весь журнал: у долгого процесса события копятся месяцами, и
+    выборка для экрана не должна тянуть в память всю историю. `limit` ноль
+    означает «без предела» — так ведёт себя и сам `read_events`.
+    """
+    rows_query = (
+        select(WorkflowEvent)
+        .where(WorkflowEvent.instance_id == instance_id, WorkflowEvent.seq >= from_seq)
+        .order_by(WorkflowEvent.seq)
+    )
+    total_query = (
+        select(func.count())
+        .select_from(WorkflowEvent)
+        .where(WorkflowEvent.instance_id == instance_id)
+    )
+
+    if limit > 0:
+        rows_query = rows_query.limit(limit)
+
+    rows = await db_session.scalars(rows_query)
+    total = await db_session.scalar(total_query)
+    events = [
+        RecordedEvent(
+            seq=row.seq,
+            type=EventType(row.type),
+            payload=row.payload,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+    return events, total or len(events)
+
+
 def _apply(state: InstanceState, event: RecordedEvent) -> None:
     """Применяет одно событие к состоянию.
 

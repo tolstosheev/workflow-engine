@@ -130,9 +130,11 @@ async def get_events(
 
 @router.get("/{instance_id}/steps", response_model=StepListOut)
 async def get_steps(
-    instance_id: uuid.UUID, db_session: AsyncSession = Depends(get_db)
+    instance_id: uuid.UUID,
+    limit: int = Query(default=500, ge=1, le=2000),
+    db_session: AsyncSession = Depends(get_db),
 ) -> StepListOut:
-    runs = await service.get_steps(db_session, instance_id)
+    runs = await service.get_steps(db_session, instance_id, limit)
     return StepListOut(items=[StepRunOut.model_validate(run) for run in runs])
 
 

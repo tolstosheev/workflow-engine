@@ -15,9 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
 from app.engine import scheduler
-from app.engine.journal import RecordedEvent, append_event, read_events, replay, steps_to_compensate
+from app.engine.journal import (
+    RecordedEvent,
+    append_event,
+    read_events,
+    read_events_page,
+    replay,
+    steps_to_compensate,
+)
 from app.models.enums import ACTIVE_STATUSES, TERMINAL_STATUSES, EventType, InstanceStatus
-from app.models.workflow import StepRun, WorkflowDefinition, WorkflowEvent, WorkflowInstance
+from app.models.workflow import StepRun, WorkflowDefinition, WorkflowInstance
 
 _EPOCH = datetime.min.replace(tzinfo=UTC)
 
@@ -98,35 +105,47 @@ async def get_events(
 
     Второе значение — общее число событий инстанса, а не число от смещения:
     клиенту нужен размер выборки для догрузки по `from_seq`.
+
+    Предел применяется в запросе, а не после чтения. Читать весь журнал ради
+    первых двадцати строк — значит держать в памяти всю историю процесса,
+    которая у долгого инстанса растёт месяцами.
     """
     await get_instance(db_session, instance_id)
-    events = await read_events(db_session, instance_id)
-
-    total = await db_session.scalar(
-        select(func.count())
-        .select_from(WorkflowEvent)
-        .where(WorkflowEvent.instance_id == instance_id)
-    )
-    return [e for e in events if e.seq >= from_seq][:limit], total or len(events)
+    events, total = await read_events_page(db_session, instance_id, from_seq=from_seq, limit=limit)
+    return events, total
 
 
-async def get_steps(db_session: AsyncSession, instance_id: uuid.UUID) -> list[StepRun]:
+async def get_steps(
+    db_session: AsyncSession, instance_id: uuid.UUID, limit: int = 500
+) -> list[StepRun]:
+    """Прогоны шагов инстанса, не больше `limit` записей.
+
+    Предел по умолчанию тот же, что у таймлайна: без него выборка у процесса
+    с циклом на сотни проходов растила бы ответ без нужды.
+    """
     await get_instance(db_session, instance_id)
     rows = await db_session.scalars(
         select(StepRun)
         .where(StepRun.instance_id == instance_id)
         .order_by(StepRun.started_at, StepRun.attempt)
+        .limit(limit)
     )
     return list(rows)
 
 
 async def get_timeline(db_session: AsyncSession, instance_id: uuid.UUID, limit: int) -> list[dict]:
-    """Единый поток для интерфейса: шаги, события и компенсации по времени."""
+    """Единый поток для интерфейса: шаги, события и компенсации по времени.
+
+    Каждая выборка ограничена: лента показывает последние записи, а читать
+    ради них весь журнал процесса незачем. Мержится по времени, поэтому
+    ограничение каждой части даёт корректный результат — часть, отрезанная по
+    времени, всё равно не могла бы попасть в начало ленты.
+    """
     await get_instance(db_session, instance_id)
 
     entries: list[dict] = []
 
-    for run in await get_steps(db_session, instance_id):
+    for run in await get_steps(db_session, instance_id, limit):
         entries.append(
             {
                 "kind": "step",
@@ -140,7 +159,8 @@ async def get_timeline(db_session: AsyncSession, instance_id: uuid.UUID, limit: 
             }
         )
 
-    for event in await read_events(db_session, instance_id):
+    page, _ = await read_events_page(db_session, instance_id, from_seq=0, limit=limit)
+    for event in page:
         entries.append(
             {
                 "kind": "event",
