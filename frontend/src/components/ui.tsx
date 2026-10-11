@@ -67,7 +67,12 @@ interface ErrorStateProps {
 
 export function ErrorState({ message, onRetry }: ErrorStateProps) {
   return (
-    <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+    // role=alert: без него скринридер не объявит об ошибке — текст в разметке
+    // не прерывает чтение, и пользователь узнает о сбое только случайно.
+    <div
+      role="alert"
+      className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger"
+    >
       <p>{message}</p>
       {onRetry && (
         <Button className="mt-2" onClick={onRetry}>

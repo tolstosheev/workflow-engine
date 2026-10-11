@@ -194,6 +194,7 @@ export default function DefinitionsPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Редактор определения">
           <textarea
+            aria-label="Определение workflow в формате JSON"
             value={source}
             onChange={(event) => setSource(event.target.value)}
             spellCheck={false}
@@ -236,6 +237,7 @@ export default function DefinitionsPage() {
               что проверяет дефинишен.
             </p>
             <textarea
+              aria-label="Входные данные инстанса в формате JSON"
               value={startInput}
               onChange={(event) => setStartInput(event.target.value)}
               spellCheck={false}
@@ -256,14 +258,14 @@ export default function DefinitionsPage() {
         {list.length === 0 ? (
           <EmptyState message="Определений пока нет" />
         ) : (
-          <table className="w-full text-left text-sm">
+          <table aria-label="Определения workflow" className="w-full text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-white/40">
               <tr>
-                <th className="pb-2">Имя</th>
-                <th className="pb-2">Версия</th>
-                <th className="pb-2">Состояние</th>
-                <th className="pb-2">Создано</th>
-                <th className="pb-2">Действия</th>
+                <th scope="col" className="pb-2">Имя</th>
+                <th scope="col" className="pb-2">Версия</th>
+                <th scope="col" className="pb-2">Состояние</th>
+                <th scope="col" className="pb-2">Создано</th>
+                <th scope="col" className="pb-2">Действия</th>
               </tr>
             </thead>
             <tbody>

@@ -170,15 +170,15 @@ export default function InstancePage() {
         {steps.length === 0 ? (
           <EmptyState message="Шаги ещё не выполнялись" />
         ) : (
-          <table className="w-full text-left text-sm">
+          <table aria-label="Прогоны шагов" className="w-full text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-white/40">
               <tr>
-                <th className="pb-2">Шаг</th>
-                <th className="pb-2">Попытка</th>
-                <th className="pb-2">Статус</th>
-                <th className="pb-2">Длительность</th>
-                <th className="pb-2">Компенсация</th>
-                <th className="pb-2">Ошибка</th>
+                <th scope="col" className="pb-2">Шаг</th>
+                <th scope="col" className="pb-2">Попытка</th>
+                <th scope="col" className="pb-2">Статус</th>
+                <th scope="col" className="pb-2">Длительность</th>
+                <th scope="col" className="pb-2">Компенсация</th>
+                <th scope="col" className="pb-2">Ошибка</th>
               </tr>
             </thead>
             <tbody>

@@ -50,6 +50,7 @@ export default function InstancesPage() {
           <Button
             key={filter.value}
             variant={statusFilter === filter.value ? 'primary' : 'secondary'}
+            aria-pressed={statusFilter === filter.value}
             onClick={() => setStatusFilter(filter.value)}
           >
             {filter.label}
@@ -57,6 +58,8 @@ export default function InstancesPage() {
         ))}
 
         <input
+          id="instance-search"
+          aria-label="Поиск инстанса по имени"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Поиск по процессу"
@@ -83,14 +86,14 @@ export default function InstancesPage() {
         ) : items.length === 0 ? (
           <EmptyState message="Инстансов пока нет. Запустите процесс на странице определений." />
         ) : (
-          <table className="w-full text-left text-sm">
+          <table aria-label="Инстансы workflow" className="w-full text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-white/40">
               <tr>
-                <th className="pb-2">Процесс</th>
-                <th className="pb-2">Статус</th>
-                <th className="pb-2">Текущий шаг</th>
-                <th className="pb-2">Воркер</th>
-                <th className="pb-2">Создан</th>
+                <th scope="col" className="pb-2">Процесс</th>
+                <th scope="col" className="pb-2">Статус</th>
+                <th scope="col" className="pb-2">Текущий шаг</th>
+                <th scope="col" className="pb-2">Воркер</th>
+                <th scope="col" className="pb-2">Создан</th>
               </tr>
             </thead>
             <tbody>

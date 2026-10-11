@@ -83,6 +83,7 @@ export default function ChaosPage() {
               <Button
                 key={preset}
                 variant="secondary"
+                aria-pressed={step === preset}
                 onClick={() => setStep(preset)}
                 className="font-mono"
               >
@@ -91,23 +92,25 @@ export default function ChaosPage() {
             ))}
           </div>
 
-          <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">
+          <label htmlFor="chaos-step" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
             Шаг
           </label>
           <input
+            id="chaos-step"
             value={step}
             onChange={(event) => setStep(event.target.value)}
             className="mb-3 w-full rounded-md border border-surface-border bg-surface px-3 py-1.5 font-mono text-sm"
           />
 
-          <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">
+          <div className="mb-1 text-xs uppercase tracking-wide text-white/40" id="chaos-mode-label">
             Режим
-          </label>
-          <div className="mb-3 flex gap-2">
+          </div>
+          <div role="group" aria-labelledby="chaos-mode-label" className="mb-3 flex gap-2">
             {MODES.map((option) => (
               <Button
                 key={option.value}
                 variant={mode === option.value ? 'primary' : 'secondary'}
+                aria-pressed={mode === option.value}
                 onClick={() => setMode(option.value)}
               >
                 {option.label}
@@ -115,10 +118,11 @@ export default function ChaosPage() {
             ))}
           </div>
 
-          <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">
+          <label htmlFor="chaos-instance-fail" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
             Инстанс (необязательно)
           </label>
           <input
+            id="chaos-instance-fail"
             value={instanceId}
             onChange={(event) => setInstanceId(event.target.value)}
             placeholder="любой инстанс"
@@ -165,10 +169,11 @@ export default function ChaosPage() {
             Продление аренды прекращается, инстанс освобождается по TTL, и его
             подхватывает другой воркер — это и есть проверка восстановления.
           </p>
-          <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">
+          <label htmlFor="chaos-instance-lease" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
             Инстанс
           </label>
           <input
+            id="chaos-instance-lease"
             value={instanceId}
             onChange={(event) => setInstanceId(event.target.value)}
             placeholder="идентификатор инстанса"

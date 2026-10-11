@@ -35,7 +35,10 @@ export class ErrorBoundary extends Component<Props, State> {
     if (!error) return this.props.children
 
     return (
-      <section className="rounded-lg border border-danger/40 bg-danger/10 p-6">
+      <section
+        role="alert"
+        className="rounded-lg border border-danger/40 bg-danger/10 p-6"
+      >
         <h1 className="text-lg font-semibold text-danger">Интерфейс не смог отобразить страницу</h1>
         <p className="mt-2 text-sm text-white/70">
           Данные при этом на месте: процессы продолжают исполняться, а журнал событий доступен на

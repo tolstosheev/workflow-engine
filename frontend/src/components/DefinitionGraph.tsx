@@ -190,7 +190,18 @@ function Node({ node, state, iterations, active, onHover, onSelect }: NodeProps)
       onMouseEnter={() => onHover(node.name)}
       onMouseLeave={() => onHover(null)}
       onClick={() => onSelect?.(node.name)}
-      className={onSelect ? 'cursor-pointer' : ''}
+      // Узел выбирается и с клавиатуры: иначе карта шагов недоступна тому,
+      // кто не держит мышь, а состояние шага — единственное, ради чего
+      // карта и рисуется.
+      role={onSelect ? 'button' : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      aria-label={`Шаг ${node.name}: ${style.label}`}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        onSelect?.(node.name)
+      }}
+      className={onSelect ? 'cursor-pointer focus:outline-none focus-visible:stroke-accent' : ''}
     >
       <rect
         width={node.width}

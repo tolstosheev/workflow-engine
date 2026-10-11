@@ -121,7 +121,7 @@ export function MetricsPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Инстансы по состояниям">
-          <table className="w-full text-left text-sm">
+          <table aria-label="Инстансы по состояниям" className="w-full text-left text-sm">
             <tbody>
               {STATUSES.map((status) => (
                 <tr key={status} className="border-t border-surface-border/60">
@@ -139,12 +139,12 @@ export function MetricsPage() {
           {steps.length === 0 ? (
             <EmptyState message="Шаги ещё не выполнялись" />
           ) : (
-            <table className="w-full text-left text-sm">
+            <table aria-label="Шаги: успех и провал" className="w-full text-left text-sm">
               <thead className="text-xs uppercase tracking-wide text-white/40">
                 <tr>
-                  <th className="pb-2">Шаг</th>
-                  <th className="pb-2 text-right">успех</th>
-                  <th className="pb-2 text-right">провал</th>
+                  <th scope="col" className="pb-2">Шаг</th>
+                  <th scope="col" className="pb-2 text-right">успех</th>
+                  <th scope="col" className="pb-2 text-right">провал</th>
                 </tr>
               </thead>
               <tbody>
