@@ -399,6 +399,16 @@ async def test_failed_creation_is_not_counted(client: httpx.AsyncClient) -> None
     assert INSTANCES_TOTAL._value.get() == before
 
 
+async def test_db_gauges_have_no_pid_series() -> None:
+    # ? multiprocess-режиме gauge по умолчанию разворается в серии с меткой `pid`,
+    # и запрос вида `workflow_instances{{status="RUNNING"}}` перестаёт один ряд из нескольких.
+    # Режим `mostrecent` задан явно текстово и не заситит следующего.
+    from app.metrics import COMPENSATIONS_BY_RESULT, INSTANCES_BY_STATUS, STEPS_BY_RESULT
+
+    for gauge in (INSTANCES_BY_STATUS, STEPS_BY_RESULT, COMPENSATIONS_BY_RESULT):
+        assert gauge._multiprocess_mode == "mostrecent"
+
+
 async def test_metrics_content_type_matches_body_format() -> None:
     # Тело отдаётся в экспозиционном формате Prometheus, а заголовок объявлял
     # OpenMetrics: строгий скрайпер отвергал бы весь ответ.

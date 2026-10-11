@@ -39,6 +39,11 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://workflow:workflow@db:5432/workflow_engine}
       DEBUG: ${DEBUG:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      # Общий каталог метрик: API собирает счётчики и воркеров из своих
+      # процессов из общего каталога (ADR-0012). Без него счётчики воркера не попадут в /metrics.
+      PROMETHEUS_MULTIPROC_DIR: /var/prometheus-shared
+    volumes:
+      - prometheus_shared:/var/prometheus-shared
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -55,10 +60,16 @@ services:
     build:
       context: ./engine
     command: ["python", "-m", "app.worker"]
+    # Уникальные pid в разных контейнерах: файлы метрик называются по pid,
+    # и два воркера с pid 1 записывали бы в один файл и счётчики терялись.
+    pid: host
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://workflow:workflow@db:5432/workflow_engine}
       LEASE_TTL_SECONDS: ${LEASE_TTL_SECONDS:-30}
       HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS:-5}
+      PROMETHEUS_MULTIPROC_DIR: /var/prometheus-shared
+    volumes:
+      - prometheus_shared:/var/prometheus-shared
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -67,10 +78,16 @@ services:
     build:
       context: ./engine
     command: ["python", "-m", "app.worker"]
+    # Уникальные pid в разных контейнерах: файлы метрик называются по pid,
+    # и два воркера с pid 1 записывали бы в один файл и счётчики терялись.
+    pid: host
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://workflow:workflow@db:5432/workflow_engine}
       LEASE_TTL_SECONDS: ${LEASE_TTL_SECONDS:-30}
       HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS:-5}
+      PROMETHEUS_MULTIPROC_DIR: /var/prometheus-shared
+    volumes:
+      - prometheus_shared:/var/prometheus-shared
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -93,3 +110,6 @@ services:
 volumes:
   postgres_data:
   frontend_node_modules:
+  # Каталог метрик: общий для всех процессов, иначе запускается
+  # со своей стране не следут не в каталоге.
+  prometheus_shared:

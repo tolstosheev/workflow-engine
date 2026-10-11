@@ -22,6 +22,7 @@ import socket
 import uuid
 from dataclasses import dataclass
 
+from prometheus_client import multiprocess
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -29,7 +30,7 @@ from app.core.db import dispose_engine, session_scope
 from app.core.logging import configure_logging
 from app.engine import executor, interpreter, lease, saga, scheduler
 from app.engine.journal import read_events, replay
-from app.metrics import LEASE_ACQUIRED
+from app.metrics import IS_MULTIPROCESS, LEASE_ACQUIRED
 from app.models.enums import TERMINAL_STATUSES, EventType, InstanceStatus
 from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
@@ -446,6 +447,11 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
                 )
     finally:
         await dispose_engine()
+        # Файлы метрик умершего воркера остаются в общем
+        # каталоге: иначе счётчики падавшего воркера продолжали бы давать
+        # весь снимок выбранных инстансов (ADR-0012).
+        if IS_MULTIPROCESS:
+            multiprocess.mark_process_dead(os.getpid())
         logger.info("worker.stopped", extra={"worker_id": worker_id})
 
 
