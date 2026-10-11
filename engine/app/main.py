@@ -39,11 +39,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("api.stopped")
 
 
+def api_version() -> str:
+    """Версия из метаданных данных.
+
+    Обязаться со списка пакетов, а не копировать: версия в документации расходилась на
+    полверу внеш, и в `package.json` она отставался бы на два релиза.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("workflow-engine")
+    except PackageNotFoundError:  # pragma: no cover - запуск без установки
+        return "0.0.0"
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     application = FastAPI(
         title="Workflow Engine",
-        version="1.2.0",
+        version=api_version(),
         description=(
             "Распределённый движок выполнения workflow с поддержкой долгих "
             "транзакций и компенсаций (Saga)."

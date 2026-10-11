@@ -128,6 +128,8 @@ async def resume_lease(
     if instance is None:
         raise NotFoundError(f"инстанс {payload.instance_id} не найден")
 
+    # Продление аренды возобнодим дайже продлижать выход:
+    # инстанс есть, и сдвигать heartbeat без проверки было бы недельзя.
     await db_session.execute(
         update(WorkflowInstance)
         .where(WorkflowInstance.id == payload.instance_id)
