@@ -103,26 +103,33 @@ export const definitions = {
 // --- Инстансы -------------------------------------------------------------
 
 export const instances = {
-  list: (params: { limit?: number; offset?: number; status?: string; definition_id?: string } = {}) => {
+  list: (
+    params: { limit?: number; offset?: number; status?: string; definition_id?: string } = {},
+    signal?: AbortSignal,
+  ) => {
     const query = new URLSearchParams()
     if (params.limit !== undefined) query.set('limit', String(params.limit))
     if (params.offset !== undefined) query.set('offset', String(params.offset))
     if (params.status) query.set('status', params.status)
     if (params.definition_id) query.set('definition_id', params.definition_id)
     const suffix = query.toString() ? `?${query}` : ''
-    return request<Paginated<WorkflowInstance>>(`/api/instances${suffix}`)
+    return request<Paginated<WorkflowInstance>>(`/api/instances${suffix}`, { signal })
   },
 
-  get: (id: string) => request<WorkflowInstance>(`/api/instances/${id}`),
+  get: (id: string, signal?: AbortSignal) =>
+    request<WorkflowInstance>(`/api/instances/${id}`, { signal }),
 
   events: (id: string, fromSeq = 0) =>
     request<{ items: WorkflowEvent[]; total: number }>(`/api/instances/${id}/events?from_seq=${fromSeq}`),
 
-  steps: (id: string) => request<{ items: StepRun[] }>(`/api/instances/${id}/steps`),
+  steps: (id: string, signal?: AbortSignal) =>
+    request<{ items: StepRun[] }>(`/api/instances/${id}/steps`, { signal }),
 
-  timeline: (id: string) => request<{ items: TimelineEntry[] }>(`/api/instances/${id}/timeline`),
+  timeline: (id: string, signal?: AbortSignal) =>
+    request<{ items: TimelineEntry[] }>(`/api/instances/${id}/timeline`, { signal }),
 
-  state: (id: string) => request<InstanceState>(`/api/instances/${id}/state`),
+  state: (id: string, signal?: AbortSignal) =>
+    request<InstanceState>(`/api/instances/${id}/state`, { signal }),
 
   start: (definitionId: string, input: Record<string, unknown>) =>
     request<WorkflowInstance>('/api/instances', {

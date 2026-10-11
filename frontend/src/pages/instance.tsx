@@ -6,6 +6,7 @@ import { useEventStream } from '@/api/stream'
 import { DefinitionGraph } from '@/components/DefinitionGraph'
 import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
+import { pollingIntervalMs } from '@/lib/polling'
 import { eventLabel, formatDuration, formatDateTime, statusLabel, statusTone, stepTone } from '@/lib/status'
 import type { InstanceState, StepRun, TimelineEntry, WorkflowDefinition, WorkflowInstance } from '@/types/api'
 
@@ -18,29 +19,43 @@ export default function InstancePage() {
   const [definition, setDefinition] = useState<WorkflowDefinition | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [connected, setConnected] = useState(false)
 
   // Определение дождаться отдельно: следиющий ответ не меняется на время
   // жизни инстанса, а не каждые 1500 мс для схемы и на каждое
   // событие события.
+  // Определение перечитывается только при смене инстанса: это единственная
+  // строка без изменений, и запрос на каждый цикл повторялся бы десятки раз.
   const loadedDefinition = useRef<string | null>(null)
+
+  // Текущий запрос: без ссылки на него нечем отменить предыдущий.
+  const inflight = useRef<AbortController | null>(null)
 
   const load = useCallback(async () => {
     if (!id) return
+    // Ответ предыдущей загрузки мог прийти позже текущего и откатить экран на
+    // шаг назад, а после ухода со страницы он писал бы в состояние уже не
+    // существующего компонента. Оба запроса отменяются одним сигналом.
+    const controller = new AbortController()
+    inflight.current?.abort()
+    inflight.current = controller
     try {
       const [one, rebuilt, runs, flow] = await Promise.all([
-        instancesApi.get(id),
-        instancesApi.state(id),
-        instancesApi.steps(id),
-        instancesApi.timeline(id),
+        instancesApi.get(id, controller.signal),
+        instancesApi.state(id, controller.signal),
+        instancesApi.steps(id, controller.signal),
+        instancesApi.timeline(id, controller.signal),
       ])
+      if (controller.signal.aborted) return
       setInstance(one)
       setState(rebuilt)
       setSteps(runs.items)
       setTimeline(flow.items)
       setError(null)
 
-      // Определение — единственная строка. Один запрос на каждый цикл инстанса — это
-      // лишний зааский запрос, который раньше ровно дроблоское дехотай на всы сами шаги.
+      // Определение — единственная строка без изменений. Запрашивать его на
+      // каждый цикл значило бы лишний запрос, который на длинном процессе
+      // повторялся бы десятки раз.
       if (loadedDefinition.current !== one.definition.id) {
         try {
           setDefinition(await definitionsApi.get(one.definition.id))
@@ -50,25 +65,39 @@ export default function InstancePage() {
         }
       }
     } catch (cause) {
+      // Отменённый запрос — не ошибка: он отменён намеренно, следующий
+      // запустится по своему расписанию.
+      if (controller.signal.aborted) return
       setError(cause instanceof Error ? cause.message : 'Не удалось загрузить инстанс')
+    } finally {
+      if (inflight.current === controller) inflight.current = null
     }
   }, [id])
 
   useEffect(() => {
     void load()
-    // Перечитывание страхует от пропущенных событий SSE: поток не гарантирует
-    // доставку, а журнал на сервере остаётся полном.
-    const timer = setInterval(() => void load(), 1500)
-    return () => clearInterval(timer)
-  }, [load])
+    // Страховка на потерянные события: поток не гарантирует доставку, а журнал
+    // на сервере остаётся полным. Завершённый процесс не опрашивается вовсе,
+    // а при живом потоке интервал редкий — события и так приносят изменения.
+    const delay = pollingIntervalMs(instance?.status ?? null, connected)
+    if (delay === 0) return
+    const timer = window.setInterval(() => void load(), delay)
+    return () => {
+      window.clearInterval(timer)
+      inflight.current?.abort()
+    }
+  }, [load, instance?.status, connected])
 
-  // Приведение события запускает запрос, а не каждое событие: шаги идут через дважки, и без
-  // общедия страница бы загрузилась четыре данных.
-  // Сборка затем, но последние из любого события.
+  // Приведение экрана запускает запрос, а не каждое событие: шаги идут пачками,
+  // и без общего счётчика страница запрашивала бы данные на каждый шаг.
+  // Сборка затем, но последнее из любого события.
   const refreshAt = useRef(0)
   const scheduled = useRef<number | null>(null)
 
   useEventStream({
+    // Состояние потока определяет частоту опроса: пока поток жив, события
+    // приносят изменения сами и подстраховка может быть редкой.
+    onStatusChange: setConnected,
     onEvent: (event) => {
       if (event.instance_id !== id) return
       const now = Date.now()

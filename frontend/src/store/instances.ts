@@ -14,13 +14,13 @@ interface InstancesState {
   connected: boolean
   lastEventAt: string | null
   statusFilter: InstanceStatus | 'ALL'
-  load: () => Promise<void>
+  load: (signal?: AbortSignal) => Promise<void>
   setStatusFilter: (status: InstanceStatus | 'ALL') => void
   handleEvent: (event: StreamEvent) => void
   setConnected: (connected: boolean) => void
 }
 
-export const useInstancesStore = create<InstancesState>((set, get) => ({
+export const useInstancesStore = create<InstancesState>((set) => ({
   items: [],
   loading: false,
   error: null,
@@ -28,31 +28,49 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
   lastEventAt: null,
   statusFilter: 'ALL',
 
-  load: async () => {
-    set({ loading: true, error: null })
+  load: async (signal) => {
+    // Ошибку не стираем до попытки: фоновая подстраховка мигает на экране,
+    // а прежнее сообщение ещё верно и полезнее молчания.
+    set({ loading: true })
     try {
-      const page = await instancesApi.list({ limit: 100 })
-      set({ items: page.items, loading: false })
+      const page = await instancesApi.list({ limit: 100 }, signal)
+      // Отменённый запрос не пишет в состояние: его отменили намеренно, и
+      // вернувшийся позже список затёр бы более новый.
+      if (signal?.aborted) {
+        set({ loading: false })
+        return
+      }
+      set({ items: page.items, loading: false, error: null })
     } catch (error) {
-      set({ loading: false, error: error instanceof Error ? error.message : 'Не удалось загрузить инстансы' })
+      if (signal?.aborted) {
+        // Отмена — не ошибка: ответит следующая загрузка, а сообщение об
+        // ошибке остаётся: без него экран молчал бы о проблеме.
+        set({ loading: false })
+        return
+      }
+      set({
+        loading: false,
+        error: error instanceof Error ? error.message : 'Не удалось загрузить инстансы',
+      })
     }
   },
 
   setStatusFilter: (statusFilter) => {
+    // Фильтр применяется на клиенте, а не на сервере: список уже загружен,
+    // и повторный запрос вернул бы те же строки.
     set({ statusFilter })
-    void get().load()
   },
 
-  // Событие меняет только то, чему что его касается: полная перезагрузка списка
-  // на каждом шаге превращала бы в мигание.
-  // `set` принимает функцию: читает и пишет в одном атоматном влете без промежуточки.
-  // Раздельно `get()` и `set()`: между ними вклиниться load(), и список, собранный до
-  // ответа, затерет статус вовращаться на два секунды назад.
+  // Событие меняет только то, к чему относится: полная перезагрузка списка на
+  // каждом шаге превращала бы страницу в мигание.
+  // `set` принимает функцию: чтение и запись происходят в одном атомарном
+  // влёте. Раздельно `get()` и `set()`: между ними вклинилась бы загрузка, и
+  // список, собранный до ответа, вернул бы статус на два шага назад.
   handleEvent: (event) =>
     set((state) => {
       const index = state.items.findIndex((item) => item.id === event.instance_id)
       if (index === -1) {
-        // Новый инстанс или шаг уже удалённого: список доберём на ближайшем цикле.
+        // Новый инстанс или шаг удалённого: список доберёт ближайший опрос.
         return { lastEventAt: event.created_at }
       }
 
@@ -74,10 +92,11 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
           next.status = 'COMPENSATING'
           break
         case 'COMPENSATION_COMPLETED':
-          // Откат шага проверён, но процесс ещё идёт в откате.
+          // Откат шага прошёл, но процесс ещё идёт в откате.
           next.status = 'COMPENSATING'
           break
         case 'COMPENSATION_FAILED':
+          // Откат не удался: воркер повторит его сам, когда служба оживёт.
           next.status = 'COMPENSATION_FAILED'
           break
         case 'INSTANCE_COMPLETED':
@@ -97,7 +116,7 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
           next.status = 'CANCELLED'
           break
         case 'INSTANCE_FAILED':
-          // Отказ без компенсации: упавший шаг, откатывать нечему.
+          // Отказ без компенсации: упал первый шаг, откатывать нечего.
           next.status = 'FAILED'
           next.current_step = null
           break
@@ -107,8 +126,8 @@ export const useInstancesStore = create<InstancesState>((set, get) => ({
           break
         case 'TIMER_SCHEDULED':
         case 'TIMER_FIRED':
-          // Инстанс отельнён в ожидании и пробудился после сробота: без этих событий
-          // статус они до 2 секунд показывал бы уставшена.
+          // Инстанс встал на ожидание и проснулся после таймера: без этих
+          // событий статус показывал бы устаревшее состояние до двух секунд.
           next.status = 'WAITING'
           next.current_step = String(event.payload.step ?? next.current_step)
           break

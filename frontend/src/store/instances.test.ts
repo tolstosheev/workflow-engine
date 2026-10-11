@@ -85,4 +85,24 @@ describe('handleEvent', () => {
     expect(useInstancesStore.getState().lastEventAt).toBe('2026-10-10T00:01:00Z')
     expect(useInstancesStore.getState().items).toHaveLength(2)
   })
+
+  it('отменённый запрос не пишет в состояние', async () => {
+    // Отменённый запрос — разовязанная возвратная загрузка, а не ошибка: если бы он
+    // записался бы, список подстаневшего уходящего вокна был бы старым.
+    const { instances } = await import('@/api/client')
+    vi.mocked(instances.list).mockResolvedValue({
+      items: [STUB('старый')],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    } as never)
+    useInstancesStore.setState({ items: [STUB('прежний')], error: 'сбой', loading: false })
+
+    const controller = new AbortController()
+    controller.abort()
+    await useInstancesStore.getState().load(controller.signal)
+
+    expect(useInstancesStore.getState().items.map((item) => item.id)).toEqual(['прежний'])
+    expect(useInstancesStore.getState().error).toBe('сбой')
+  })
 })
