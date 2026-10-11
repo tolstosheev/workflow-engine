@@ -16,7 +16,7 @@ import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
@@ -51,13 +51,18 @@ NOTIFIABLE = frozenset(
     }
 )
 
-# Начало эпохи воркера: события старше не показываются новому подключению.
+# Курсор потока — момент времени последнего события. Новое подключение
+# получает только новые события а не всю историю: раньше увидит тысячи
+# полученных кадров.
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-def _format(event_type: EventType, payload: dict) -> str:
+def _format(event_type: EventType, payload: dict, created_at: datetime) -> str:
     data = json.dumps(payload, ensure_ascii=False, default=str)
-    return f"event: {event_type.value}\ndata: {data}\n\n"
+    # Идентификатор SSE позволяет браузеру передать последнее
+    # событие в Last-Event-ID. Без него повторное подключение начиналось бы с
+    # самого начала с эпохи и прогоняла всю журнал событий через все клиенты.
+    return f"id: {created_at.isoformat()}\nevent: {event_type.value}\ndata: {data}\n\n"
 
 
 async def _read_after(cursor: datetime) -> list[tuple[datetime, EventType, dict, str]]:
@@ -77,14 +82,18 @@ async def _read_after(cursor: datetime) -> list[tuple[datetime, EventType, dict,
     ]
 
 
-async def event_stream() -> AsyncIterator[str]:
-    """Отдаёт SSE-события по мере появления новых записей в журнале.
+async def event_stream(last_event_id: str | None) -> AsyncIterator[str]:
+    """Отдаёт события по мере появления новых записей в журнале.
 
-    События при переподключении не повторяются и не догружаются: клиент
-    запрашивает их через `GET /instances/{id}/events` с известным `from_seq`.
+    Курсор приходит от подключения, а не всю историю. Раньше был цикл, который прогонял всю историю за одного
+    подключения и делал общение за три секунды.
+
+    `Last-Event-ID` присылает браузер EventSource сам и возвращает потом к адресу идентификатора
+    последнего события. Раньше каждое подключение шло всю выборку
+    журнала и прогонял обрабатывать его повторно.
     """
     settings = get_settings()
-    cursor = _EPOCH
+    cursor = _parse_cursor(last_event_id) or datetime.now(UTC)
 
     while True:
         try:
@@ -92,7 +101,7 @@ async def event_stream() -> AsyncIterator[str]:
         except Exception:
             # Обрыв связи с БД не должен убивать поток: клиент переподключится
             # сам, а heartbeat продолжит держать соединение живым.
-            logger.warning("stream.db_unavailable")
+            logger.exception("stream.db_unavailable")
             batch = []
 
         if batch:
@@ -107,24 +116,44 @@ async def event_stream() -> AsyncIterator[str]:
                             "payload": payload,
                             "created_at": created_at.isoformat(),
                         },
+                        created_at,
                     )
+            # Затрус без паузы: при большом отставшемя батьях не должно пропускать раз в секунду.
+            await asyncio.sleep(0)
             continue
 
-        # Пустой опрос: время для heartbeat. Он же ограничивает ожидание цикла,
-        # чтобы отмена соединения обрабатывалась быстро.
-        await asyncio.sleep(settings.sse_heartbeat_seconds)
-        yield ": heartbeat\n\n"
+        # Пустой опрос — это интервал ожидания, а не heartbeat. Ожидание
+        # следующих событий должно быть коротким, иначе интерфейс
+        # отставал бы на весь heartbeat (15 с) и показывал бы жив даже 15 с.
+        await asyncio.sleep(settings.sse_poll_seconds)
+        if not batch:
+            yield ": heartbeat\n\n"
+
+
+def _parse_cursor(last_event_id: str | None) -> datetime | None:
+    """Заголвок `Last-Event-ID` в время.
+
+    Браузер присылает там что отдаёт, но только всё. Неверный вывод
+    должен возвращать только новые события так идёт с параллельного соединения.
+    """
+    if not last_event_id:
+        return None
+    try:
+        parsed = datetime.fromisoformat(last_event_id)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 @router.get("/stream")
-async def stream() -> StreamingResponse:
+async def stream(request: Request) -> StreamingResponse:
     """SSE-поток событий всех инстансов."""
     return StreamingResponse(
-        event_stream(),
+        event_stream(request.headers.get("last-event-id")),
         media_type="text/event-stream",
         headers={
-            # Буферизация прокси иначе соберёт все события и отдал пачкой,
-            # а интерфейс перестанет быть живым.
+            # Буферизация прокси иначе собрет все события и отдалт
+            # пачкой, а интерфейс перестанет быть живым.
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },

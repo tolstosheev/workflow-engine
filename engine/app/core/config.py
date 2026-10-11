@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     worker_poll_interval_seconds: float = 1.0
     step_max_attempts: int = 3
     sse_heartbeat_seconds: int = 15
+    # Опрос журнала строики событий: латентность обязана дожжна событием отдаваться
+    # быть на всю время heartbeat. Раньше идёт веком раз в секунду.
+    sse_poll_seconds: float = 1.0
 
     log_level: str = "INFO"
     log_json: bool = False

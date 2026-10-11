@@ -346,12 +346,15 @@ curl -N http://localhost:8000/api/stream
 ```
 
 ```
-event: instance_status
-data: {"instance_id":"b2c3d4e5-...","status":"RUNNING","current_step":"charge_payment"}
-
-event: step_event
-data: {"instance_id":"b2c3d4e5-...","seq":7,"type":"STEP_COMPLETED","payload":{"step":"charge_payment"}}
+id: 2026-10-10T12:00:03.145+00:00
+event: STEP_COMPLETED
+data: {"instance_id":"b2c3d4e5-...","type":"STEP_COMPLETED","payload":{"step":"charge_payment","next":"create_shipment","output":{}},"created_at":"2026-10-10T12:00:03.145+00:00"}
 ```
+
+Поля `id` — это время последнего события, и браузер передает его в
+`Last-Event-ID` при переподключении. Поток продолжается с момента
+подключения, а не с эпохи: раньше новое подключение проверяло бы
+всю историю журнала.
 
 | Тип события | Когда |
 |---|---|
@@ -374,9 +377,8 @@ data: {"instance_id":"b2c3d4e5-...","type":"STEP_COMPLETED","payload":{"step":"r
 `COMPENSATION_FAILED`. `LEASE_EXPIRED` не публикуется: на экране он ничего
 не меняет и только увеличивает поток.
 
-Курсор — время последнего прочитанного события (`seq` уникален только внутри
-инстанса и для глобального потока не годится). Пропущенные события клиент
-догружает через `GET /instances/{id}/events` с известным `from_seq`.
+Пользователь теперь опроса через `sse_poll_seconds` (по умолчанию 1 с), а heartbeat шётся отдельно в
+`sse_heartbeat_seconds` (15 с) и независит от опроса на саму явные события.
 
 Heartbeat нужен, чтобы прокси и балансировщики не закрывали соединение по
 таймауту простоя. Заголовки ответа: `Cache-Control: no-cache` и
