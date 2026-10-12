@@ -20,7 +20,7 @@ import contextlib
 import inspect
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -110,8 +110,13 @@ async def build_compensation_context(
     Ключ операции здесь компенсационный, а не шаговый: отмена возвращает
     средства один раз, и повтор шага не должен выглядеть как повтор отмены.
     Разные префиксы — потому что это разные операции.
+
+    Номер попытки в ключ не входит: компенсация — одна и та же операция, пока
+    её не отменили. С растущим ключом падение воркера между эффектом и отметкой
+    привело бы к тому, что повтор не узнает свою отметку и вернёт средства
+    второй раз (§3.4).
     """
-    operation_id = str(idempotency.make_key(instance_id, f"compensate:{step_name}", attempt))
+    operation_id = str(idempotency.make_key(instance_id, f"compensate:{step_name}", attempt=0))
     return await _build_context(
         definition, state_variables, instance_input, instance_id, step_name, attempt, operation_id
     )
@@ -150,11 +155,15 @@ async def _build_context(
     )
 
 
-async def _heartbeat_loop(instance_id: uuid.UUID, worker_id: str, stop: asyncio.Event) -> None:
-    """Продлевает аренду во время долгого шага.
+async def heartbeat_loop(instance_id: uuid.UUID, worker_id: str, stop: asyncio.Event) -> None:
+    """Продлевает аренду во время долгой работы.
 
-    Без этого шаг длиннее TTL признаётся брошенным, и его начнёт другой воркер
-    — то есть работа выполнится дважды.
+    Без этого шаг или откат длиннее TTL признаётся брошенным, и его начнёт
+    другой воркер — то есть работа выполнится дважды.
+
+    Продление продолжается до `stop` и молча заканчивается, когда аренда ушла
+    к другому воркеру: решение принимает проверка перед записью результата,
+    где оно учитывается ровно один раз.
     """
     settings = get_settings()
     from app.core.db import session_scope
@@ -164,17 +173,32 @@ async def _heartbeat_loop(instance_id: uuid.UUID, worker_id: str, stop: asyncio.
             async with session_scope() as session:
                 renewed = await lease.heartbeat(session, instance_id, worker_id)
             if not renewed:
-                # Аренду уступила кому-то: срок истёк или работается на другом
-                # воркере, а наш шаг всё ещё выполняется. Счётчик сводит это в одно место наверно.
-                LEASE_LOST.inc()
                 return
         except Exception:
-            # Потерянный lease обнаружится при следующей записи; молчаливый
+            # Потерянная аренда обнаружится при следующей записи; молчаливый
             # проглатывание здесь недопустимо, но и падать нельзя — цикл
             # обязан завершиться.
             logger.warning("heartbeat.failed", extra={"instance_id": str(instance_id)})
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=settings.heartbeat_interval_seconds)
+
+
+@contextlib.asynccontextmanager
+async def keep_lease_alive(instance_id: uuid.UUID, worker_id: str) -> AsyncIterator[None]:
+    """Держит аренду живой, пока идёт внешний вызов.
+
+    Обёртка нужна и шагу, и компенсации: обе работы идут вне транзакции и могут
+    занять больше срока аренды. Продление обрывается на выходе из блока, а
+    потерянная аренда обнаруживается проверкой перед записью результата.
+    """
+    stop = asyncio.Event()
+    task = asyncio.create_task(heartbeat_loop(instance_id, worker_id, stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        with contextlib.suppress(Exception):
+            await task
 
 
 def _observe_duration(step_name: str, started_at: datetime, finished_at: datetime) -> None:
@@ -231,33 +255,34 @@ async def execute_step(
     await db_session.commit()
 
     # --- Транзакция закрыта. Внешний вызов ниже --------------------------
-    stop_heartbeat = asyncio.Event()
-    heartbeat_task = asyncio.create_task(_heartbeat_loop(instance_id, worker_id, stop_heartbeat))
     try:
-        outcome = await _invoke(
-            db_session,
-            definition,
-            state.variables,
-            instance_input,
-            instance_id,
-            step_name,
-            attempt,
-            step.timeout_seconds,
-        )
+        async with keep_lease_alive(instance_id, worker_id):
+            outcome = await _invoke(
+                db_session,
+                definition,
+                state.variables,
+                instance_input,
+                instance_id,
+                step_name,
+                attempt,
+                step.timeout_seconds,
+            )
     except Exception as exc:
-        if isinstance(exc, LeaseLostError):
-            # Аренду потерял чужой воркер: этот шаг исполняет другой,
-            # и запись его вернулась нельзя — передача его снова (§3.3).
-            LEASE_LOST.inc()
         outcome = interpreter.StepOutcome(
             success=False,
             output={},
             retryable=isinstance(exc, LeaseLostError) is False and _declared_retryable(exc),
         )
         error_message = str(exc)
-    finally:
-        stop_heartbeat.set()
-        await heartbeat_task
+
+    # --- Аренда могла уйти другому воркеру, пока шаг выполнялся --------------
+    # Записывать результат тогда нельзя: шаг уже исполняет другой воркер, и
+    # второй STEP_COMPLETED разошёлся бы с его журналом и счётчиком цикла
+    # (§3.3). Продление аренды здесь ещё и проверяет владение ею.
+    if not await lease.heartbeat(db_session, instance_id, worker_id):
+        LEASE_LOST.inc()
+        await db_session.rollback()
+        raise LeaseLostError(f"аренда инстанса {instance_id} утрачена: её забрал другой воркер")
 
     # --- Транзакция 2: результат шага ---------------------------------------
     if outcome.success:
@@ -448,5 +473,6 @@ __all__ = [
     "build_context",
     "execute_step",
     "finish",
+    "keep_lease_alive",
     "load_state",
 ]

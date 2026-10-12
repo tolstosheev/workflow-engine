@@ -255,14 +255,17 @@ async def mark_skipped(db_session: AsyncSession, instance_id: uuid.UUID, step_na
     await append_event(db_session, instance_id, EventType.COMPENSATION_SKIPPED, {"step": step_name})
 
 
-def operation_key(instance_id: uuid.UUID, item: CompensationItem, attempt: int) -> OperationKey:
+def operation_key(instance_id: uuid.UUID, item: CompensationItem) -> OperationKey:
     """Ключ идемпотентности для компенсации.
 
-    Компенсация необратима, но повтор после сбоя обязан быть безопасным — ключ
-    строится по той же схеме, что и для основного шага.
+    Компенсация необратима, но повтор после сбоя обязан быть безопасным, и
+    повтор обязан узнать свою отметку. Поэтому ключ строится по шагу, а не по
+    номеру попытки: попытки — это попытки, а операция одна. С ключом, растущим
+    вместе с попыткой, падение воркера между эффектом и отметкой привело бы к
+    повторному возврату средств.
     """
     return OperationKey(
-        instance_id=instance_id, step_name=f"compensate:{item.step_name}", attempt=attempt
+        instance_id=instance_id, step_name=f"compensate:{item.step_name}", attempt=0
     )
 
 

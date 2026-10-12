@@ -222,7 +222,11 @@ async def force_complete(
 
 
 async def retry_compensation(db_session: AsyncSession, instance_id: uuid.UUID) -> WorkflowInstance:
-    """Перезапускает откат после `COMPENSATION_FAILED`."""
+    """Перезапускает откат после `COMPENSATION_FAILED`.
+
+    Пауза перед повтором снимается: человек решил, что служба ожила, и ждать
+    остаток автоматической паузы незачем — решение оператора побеждает таймер.
+    """
     instance = await get_instance(db_session, instance_id)
     if InstanceStatus(instance.status) is not InstanceStatus.COMPENSATION_FAILED:
         raise ConflictError(f"откат не требовался: статус {instance.status}")
@@ -233,6 +237,7 @@ async def retry_compensation(db_session: AsyncSession, instance_id: uuid.UUID) -
     # повторять компенсацию.
     await append_event(db_session, instance_id, EventType.COMPENSATION_STARTED, {"retried": True})
     instance.status = InstanceStatus.COMPENSATING
+    instance.compensation_not_before = None
     instance.error = None
     await db_session.flush()
     return instance

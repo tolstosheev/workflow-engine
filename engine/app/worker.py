@@ -28,6 +28,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.db import dispose_engine, session_scope
+from app.core.errors import LeaseLostError
 from app.core.logging import configure_logging
 from app.engine import executor, interpreter, lease, saga, scheduler
 from app.engine.journal import read_events, replay
@@ -75,23 +76,26 @@ def _install_stop_handlers(stop_event: asyncio.Event) -> None:
 
 
 async def _load_definition(
-    definition_id: uuid.UUID, cache: dict[uuid.UUID, WorkflowDefinitionSchema]
+    definition_id: uuid.UUID, cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]]
 ) -> WorkflowDefinitionSchema | None:
     """Читает определение, кэшируя разобранную схему.
 
-    Кэш только по id: версия дефинишена неизменяема, а инстанс всегда ссылается
-    на конкретную версию.
+    Кэш хранит вместе со схемой время последней правки: определение
+    перезаписывается на месте, и кэш без проверки свежести держал бы прежний
+    граф до перезапуска воркера — правка в редакторе не дошла бы до процесса,
+    который её исполняет. Дешёвое чтение строки остаётся, дорогая проверка
+    схемы выполняется только при изменении.
     """
-    if definition_id in cache:
-        return cache[definition_id]
-
     async with session_scope() as session:
         row = await session.get(WorkflowDefinition, definition_id)
         if row is None:
             return None
+        cached = cache.get(definition_id)
+        if cached is not None and cached[0] == row.updated_at:
+            return cached[1]
         parsed = WorkflowDefinitionSchema.model_validate(row.definition)
 
-    cache[definition_id] = parsed
+    cache[definition_id] = (row.updated_at, parsed)
     return parsed
 
 
@@ -161,14 +165,18 @@ async def _compensate(
             )
             await session.commit()
 
-        succeeded, error = await _invoke_compensation(
-            instance_id,
-            item,
-            attempt=item.attempts_made + 1,
-            definition=definition,
-            instance_input=instance_input,
-            variables=variables,
-        )
+        # Откат идёт вне транзакции и занимает столько же времени, сколько
+        # шаги: без продления аренда истекает, и второй воркер начинает тот же
+        # откат, удвоив возврат средств (§3.3).
+        async with executor.keep_lease_alive(instance_id, worker_id):
+            succeeded, error = await _invoke_compensation(
+                instance_id,
+                item,
+                attempt=item.attempts_made + 1,
+                definition=definition,
+                instance_input=instance_input,
+                variables=variables,
+            )
 
         async with session_scope() as session:
             log_row = await session.get(CompensationLog, log.id, with_for_update=True)
@@ -222,7 +230,7 @@ async def _invoke_compensation(
     from app.engine.executor import build_compensation_context
     from app.handlers.registry import resolve_handler
 
-    key = saga.operation_key(instance_id, item, attempt)
+    key = saga.operation_key(instance_id, item)
 
     async with session_scope() as session:
         if await idempotency.already_applied(session, key):
@@ -285,7 +293,7 @@ async def _fire_due_timers() -> int:
 
 
 async def run_cycle(
-    worker_id: str, cache: dict[uuid.UUID, WorkflowDefinitionSchema]
+    worker_id: str, cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]]
 ) -> CycleResult:
     """Один цикл: подбор инстанса и исполнение одного шага.
 
@@ -384,6 +392,22 @@ async def run_cycle(
             )
             instance_row.error = None if outcome.success else "шаг не выполнен"
             await session.commit()
+    except LeaseLostError:
+        # Аренда ушла другому воркеру во время шага: результат не записан, и
+        # записывать его было бы уже нельзя (§3.3).
+        logger.warning(
+            "step.lease_lost",
+            extra={"step": state.current_step, "worker_id": worker_id},
+        )
+        async with session_scope() as session:
+            await lease.release(session, claimed.instance_id, worker_id)
+        return CycleResult(
+            handled=True,
+            step_executed=False,
+            terminal=False,
+            lease_lost=True,
+            instance_id=claimed.instance_id,
+        )
     except Exception:
         logger.exception(
             "step.failed_unexpected", extra={"step": state.current_step, "worker_id": worker_id}
@@ -448,7 +472,7 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         },
     )
 
-    definition_cache: dict[uuid.UUID, WorkflowDefinitionSchema] = {}
+    definition_cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]] = {}
     try:
         while not stop_event.is_set():
             steps_done = 0

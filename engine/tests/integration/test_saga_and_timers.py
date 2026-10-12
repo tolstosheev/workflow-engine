@@ -321,17 +321,18 @@ async def test_attempts_counted_from_log(db_session: AsyncSession) -> None:
 
 async def test_operation_key_is_namespaced_by_compensation(db_session: AsyncSession) -> None:
     # Ключ компенсации не должен совпадать с ключом основного шага: иначе
-    # откат был бы признан уже применённым.
+    # откат был бы признан уже применённым. И он не зависит от номера попытки:
+    # компенсация — одна операция, и повтор обязан узнать свою отметку.
     instance_id = await _new_instance(db_session)
     await _completed_step(db_session, instance_id, "reserve")
     item = (
         await saga.plan(db_session, instance_id, {"reserve": "app.demo.handlers:release_inventory"})
     )[0]
 
-    key = saga.operation_key(instance_id, item, 1)
+    key = saga.operation_key(instance_id, item)
 
     assert key.step_name == "compensate:reserve"
-    assert str(key) == f"{instance_id}:compensate:reserve:1"
+    assert str(key) == f"{instance_id}:compensate:reserve:0"
 
 
 async def test_stream_pending_steps_yields_uncompensated(db_session: AsyncSession) -> None:
