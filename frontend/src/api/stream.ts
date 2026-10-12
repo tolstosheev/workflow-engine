@@ -30,6 +30,8 @@ export interface StreamOptions {
  */
 export const SUBSCRIBED_EVENT_TYPES: StreamEvent['type'][] = [
   'INSTANCE_CREATED',
+  'INSTANCE_PAUSED',
+  'INSTANCE_RESUMED',
   'INSTANCE_COMPLETED',
   'INSTANCE_COMPENSATED',
   'INSTANCE_FAILED',

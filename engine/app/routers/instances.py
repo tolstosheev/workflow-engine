@@ -183,6 +183,15 @@ async def force_complete(
     )
 
 
+@router.post("/{instance_id}/resume", response_model=ActionResult)
+async def resume_instance(
+    instance_id: uuid.UUID, db_session: AsyncSession = Depends(get_db)
+) -> ActionResult:
+    instance = await service.resume_instance(db_session, instance_id)
+    await db_session.commit()
+    return ActionResult(status=InstanceStatus(instance.status), message="процесс продолжен")
+
+
 @router.post("/{instance_id}/compensation/retry", response_model=ActionResult)
 async def retry_compensation(
     instance_id: uuid.UUID, db_session: AsyncSession = Depends(get_db)

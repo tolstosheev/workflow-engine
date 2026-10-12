@@ -31,9 +31,9 @@ from app.core.db import dispose_engine, session_scope
 from app.core.errors import LeaseLostError
 from app.core.logging import configure_logging
 from app.engine import executor, interpreter, lease, saga, scheduler
-from app.engine.journal import read_events, replay
+from app.engine.journal import append_event, read_events, replay
 from app.metrics import IS_MULTIPROCESS, LEASE_ACQUIRED
-from app.models.enums import TERMINAL_STATUSES, InstanceStatus
+from app.models.enums import TERMINAL_STATUSES, EventType, InstanceStatus
 from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
 
@@ -347,6 +347,23 @@ async def run_cycle(
             await lease.release(session, claimed.instance_id, worker_id)
         return CycleResult(handled=True, step_executed=False, terminal=True, lease_lost=False)
 
+    # Пауза ждёт человека: шаг не исполняется, пока не придёт команда
+    # возобновления (ADR-0014).
+    step = definition.steps[state.current_step]
+    if interpreter.waits_for_person(step) and state.resumed_step != state.current_step:
+        async with session_scope() as session:
+            await append_event(
+                session,
+                claimed.instance_id,
+                EventType.INSTANCE_PAUSED,
+                {"step": state.current_step},
+            )
+            instance_row = await session.get(WorkflowInstance, claimed.instance_id)
+            if instance_row is not None:
+                instance_row.status = InstanceStatus.PAUSED
+            await lease.release(session, claimed.instance_id, worker_id)
+        return CycleResult(handled=True, step_executed=False, terminal=False, lease_lost=False)
+
     # Ожидание с таймером не требует исполнения: таймер сам разбудит инстанс.
     if state.status is InstanceStatus.WAITING:
         async with session_scope() as session:
@@ -355,7 +372,6 @@ async def run_cycle(
     # Ожидание, объявленное в дефинишене, планируется здесь, а не внутри шага:
     # это позволяет отдать транзакцию до внешнего вызова (§3.2) и сделать паузу
     # переживающей рестарт — таймер лежит в БД, а не в памяти процесса.
-    step = definition.steps[state.current_step]
     delay = interpreter.wait_before(step)
     if delay > 0:
         async with session_scope() as session:

@@ -4,6 +4,7 @@ export type InstanceStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'WAITING'
+  | 'PAUSED'
   | 'CANCELLING'
   | 'COMPENSATING'
   | 'COMPENSATION_FAILED'
@@ -16,6 +17,8 @@ export type StepRunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CO
 
 export type EventType =
   | 'INSTANCE_CREATED'
+  | 'INSTANCE_PAUSED'
+  | 'INSTANCE_RESUMED'
   | 'STEP_STARTED'
   | 'STEP_COMPLETED'
   | 'STEP_FAILED'

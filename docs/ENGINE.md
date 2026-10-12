@@ -619,6 +619,10 @@ stateDiagram-v2
     RUNNING --> WAITING: таймер ожидания создан
     WAITING --> RUNNING: таймер сработал
 
+    RUNNING --> PAUSED: шаг ждёт решения человека (wait_for: manual)
+    PAUSED --> RUNNING: INSTANCE_RESUMED
+    PAUSED --> CANCELLING: INSTANCE_CANCEL_REQUESTED
+
     RUNNING --> COMPENSATING: STEP_FAILED и попытки исчерпаны
     RUNNING --> CANCELLING: INSTANCE_CANCEL_REQUESTED
     WAITING --> CANCELLING: INSTANCE_CANCEL_REQUESTED
@@ -627,6 +631,7 @@ stateDiagram-v2
     COMPENSATING --> COMPENSATING: COMPENSATION_STARTED / COMPLETED
     COMPENSATING --> COMPENSATION_FAILED: компенсация провалена, попытки исчерпаны
     COMPENSATION_FAILED --> COMPENSATING: повтор компенсации после паузы и выбора
+
 
     COMPENSATING --> COMPENSATED: все компенсации выполнены
     CANCELLING --> CANCELLED: компенсировать нечего

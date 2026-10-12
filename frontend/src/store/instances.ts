@@ -91,6 +91,14 @@ export const useInstancesStore = create<InstancesState>((set) => ({
       const next: WorkflowInstance = { ...state.items[index] }
 
       switch (event.type) {
+        case 'INSTANCE_PAUSED':
+          // Процесс встал и ждёт человека: строка должна показать это сразу,
+          // иначе кнопка «продолжить» появится лишь после следующего опроса.
+          next.status = 'PAUSED'
+          break
+        case 'INSTANCE_RESUMED':
+          next.status = 'RUNNING'
+          break
         case 'STEP_STARTED':
           next.current_step = String(event.payload.step ?? next.current_step)
           next.status = 'RUNNING'

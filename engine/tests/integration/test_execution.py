@@ -1381,3 +1381,96 @@ async def test_manual_retry_ignores_the_backoff(
     await _run_cycles("w3")
     assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
     assert attempts["count"] == 2
+
+
+PAUSE_FLOW = {
+    "start": "validate_cart",
+    "steps": {
+        "validate_cart": {
+            "action": f"{DEMO}:validate_cart",
+            "next": {"on_success": "approve_order"},
+        },
+        "approve_order": {
+            "action": f"{DEMO}:validate_cart",
+            "compensation": f"{DEMO}:release_inventory",
+            "wait_for": "manual",
+            "next": "finish",
+        },
+        "finish": {"action": f"{DEMO}:confirm_delivery"},
+    },
+}
+
+
+async def test_process_stops_and_waits_for_a_person(
+    db_session: AsyncSession,
+) -> None:
+    # Шаг с `wait_for: manual` не исполняется: процесс встаёт и ждёт решения
+    # человека. Срок такого ожидания неизвестен заранее, и выдумывать его
+    # числом нельзя (ADR-0014).
+    instance_id, _ = await _create_instance(db_session, PAUSE_FLOW)
+    await _seed_journal(db_session, instance_id, PAUSE_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.PAUSED
+    events = await read_events(db_session, instance_id)
+    types = [event.type for event in events]
+    assert EventType.INSTANCE_PAUSED in types
+    assert EventType.STEP_STARTED not in [
+        event.type for event in events if event.payload.get("step") == "approve_order"
+    ]
+
+
+async def test_paused_process_is_not_taken_by_a_worker(
+    db_session: AsyncSession,
+) -> None:
+    # Иначе воркер забирал бы стоящий процесс по кругу и вся очередь стояла
+    # бы за ним — ровно то, из-за чего `WAITING` исключён из подбора.
+    instance_id, _ = await _create_instance(db_session, PAUSE_FLOW)
+    await _seed_journal(db_session, instance_id, PAUSE_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    assert await _status(db_session, instance_id) == InstanceStatus.PAUSED
+
+    await _run_cycles("w2", count=5)
+
+    assert await _status(db_session, instance_id) == InstanceStatus.PAUSED
+
+
+async def test_resume_continues_from_the_same_step(db_session: AsyncSession) -> None:
+    # Возобновление обязано продолжить процесс с того же шага: он не
+    # начинал��я, эффекта не было, и повторно спрашивать перед ним не нужно.
+    from app.services import instances as instance_service
+
+    instance_id, _ = await _create_instance(db_session, PAUSE_FLOW)
+    await _seed_journal(db_session, instance_id, PAUSE_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    assert await _status(db_session, instance_id) == InstanceStatus.PAUSED
+
+    await instance_service.resume_instance(db_session, instance_id)
+    await db_session.commit()
+    await _run_cycles("w2")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPLETED
+    events = await read_events(db_session, instance_id)
+    pauses = [event for event in events if event.type is EventType.INSTANCE_PAUSED]
+    assert len(pauses) == 1
+
+
+async def test_resume_of_a_running_process_is_refused(db_session: AsyncSession) -> None:
+    # Возобновление не того процесса — ошибка вызывающего, а не тихий
+    # переход в состояние, которого не было.
+    from app.core.errors import ConflictError
+    from app.services import instances as instance_service
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+
+    with pytest.raises(ConflictError):
+        await instance_service.resume_instance(db_session, instance_id)

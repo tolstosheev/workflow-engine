@@ -243,6 +243,25 @@ async def retry_compensation(db_session: AsyncSession, instance_id: uuid.UUID) -
     return instance
 
 
+async def resume_instance(db_session: AsyncSession, instance_id: uuid.UUID) -> WorkflowInstance:
+    """Снимает паузу: человек решил, что процесс можно продолжать.
+
+    Пауза записывается событием, и снимать её надо так же: `status` меняется
+    только через журнал (§3.1), иначе подхват воркера после перезапуска не
+    увидел бы решения человека и вернул бы процесс к ожиданию.
+    """
+    instance = await get_instance(db_session, instance_id)
+    if InstanceStatus(instance.status) is not InstanceStatus.PAUSED:
+        raise ConflictError(f"инстанс не на паузе: статус {instance.status}")
+
+    await append_event(
+        db_session, instance_id, EventType.INSTANCE_RESUMED, {"step": instance.current_step}
+    )
+    instance.status = InstanceStatus.RUNNING
+    await db_session.flush()
+    return instance
+
+
 async def rebuild_state(db_session: AsyncSession, instance_id: uuid.UUID) -> dict:
     """Состояние инстанса по журналу — то, что увидит воркер после подхвата.
 

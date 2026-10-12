@@ -139,6 +139,8 @@ export const instances = {
 
   cancel: (id: string) => request<ActionResult>(`/api/instances/${id}/cancel`, { method: 'POST' }),
 
+  resume: (id: string) => request<ActionResult>(`/api/instances/${id}/resume`, { method: 'POST' }),
+
   forceComplete: (id: string, reason: string) =>
     request<ActionResult>(`/api/instances/${id}/complete`, {
       method: 'POST',

@@ -16,6 +16,9 @@ const STATUS_TONES: Record<InstanceStatus, Tone> = {
   PENDING: 'neutral',
   RUNNING: 'active',
   WAITING: 'warning',
+  // Пауза ждёт человека: тон предупреждения тот же, что у таймера, но
+  // подпись отличается — ждать время и ждать решения это разное.
+  PAUSED: 'warning',
   CANCELLING: 'warning',
   COMPENSATING: 'warning',
   COMPENSATION_FAILED: 'danger',
@@ -33,6 +36,7 @@ export const STATUS_LABELS: Record<InstanceStatus, string> = {
   PENDING: 'В очереди',
   RUNNING: 'Выполняется',
   WAITING: 'Ожидание',
+  PAUSED: 'Ждёт решения',
   CANCELLING: 'Отменяется',
   COMPENSATING: 'Откат',
   COMPENSATION_FAILED: 'Откат не удался',
@@ -53,6 +57,8 @@ export function statusLabel(status: InstanceStatus): string {
 const EVENT_LABELS: Record<EventType, string> = {
   INSTANCE_CREATED: 'Инстанс создан',
 
+  INSTANCE_PAUSED: 'Процесс ждёт решения',
+  INSTANCE_RESUMED: 'Процесс продолжен',
   STEP_STARTED: 'Шаг начат',
   STEP_COMPLETED: 'Шаг выполнен',
   STEP_FAILED: 'Шаг провален',

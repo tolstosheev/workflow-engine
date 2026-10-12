@@ -18,6 +18,9 @@ class InstanceStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     WAITING = "WAITING"
+    # Процесс встал и ждёт решения человека: активен, но не берётся в работу,
+    # пока не придёт команда возобновления (ADR-0014).
+    PAUSED = "PAUSED"
     CANCELLING = "CANCELLING"
     COMPENSATING = "COMPENSATING"
     COMPENSATION_FAILED = "COMPENSATION_FAILED"
@@ -32,6 +35,7 @@ ACTIVE_STATUSES: frozenset[InstanceStatus] = frozenset(
         InstanceStatus.PENDING,
         InstanceStatus.RUNNING,
         InstanceStatus.WAITING,
+        InstanceStatus.PAUSED,
         InstanceStatus.CANCELLING,
         InstanceStatus.COMPENSATING,
         InstanceStatus.COMPENSATION_FAILED,
@@ -74,6 +78,11 @@ class EventType(StrEnum):
     """
 
     INSTANCE_CREATED = "INSTANCE_CREATED"
+    # Процесс встал на паузу и ждёт человека. Отдельное событие, а не флаг:
+    # состояние обязано выводиться из журнала, иначе подхват воркера после
+    # перезапуска дал бы другое поведение, чем до него (ADR-0014).
+    INSTANCE_PAUSED = "INSTANCE_PAUSED"
+    INSTANCE_RESUMED = "INSTANCE_RESUMED"
     STEP_STARTED = "STEP_STARTED"
     STEP_COMPLETED = "STEP_COMPLETED"
     STEP_FAILED = "STEP_FAILED"

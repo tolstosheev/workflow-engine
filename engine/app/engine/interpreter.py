@@ -140,6 +140,16 @@ def backoff_for(step: Step, attempt: int, fallback_max: int) -> float:
     return min(delay, policy.max_backoff_seconds)
 
 
+def waits_for_person(step: Step) -> bool:
+    """Шаг требует решения человека перед своим началом.
+
+    Отдельная проверка, а не сравнение с `wait_before_seconds`: у таймера есть
+    срок, у решения человека — нет, и смешивать их в одном числе значило бы
+    терять различие.
+    """
+    return step.wait_for == "manual"
+
+
 def wait_before(step: Step) -> float:
     """Задержка перед шагом. Ожидание — durable-объект, не sleep в памяти."""
     return step.wait_before_seconds

@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -48,6 +48,10 @@ class Step(BaseModel):
     next: StepName | dict[str, StepName] | None = None
     retry: RetryPolicy | None = None
     wait_before_seconds: float = Field(default=0, ge=0, le=86_400)
+    # `manual` — шаг ждёт решения человека: процесс встаёт и возобновляется
+    # командой оператора (ADR-0014). Срок такого ожидания неизвестен заранее,
+    # и выражать его числом означало бы выдумывать длительность.
+    wait_for: Literal["manual"] | None = None
     timeout_seconds: float = Field(default=30, ge=0.1, le=86_400)
     loop: bool = False
     max_iterations: int | None = Field(default=None, ge=1, le=10_000)

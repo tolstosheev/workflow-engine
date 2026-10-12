@@ -315,6 +315,13 @@ function Actions({ instance, onDone, onError }: ActionsProps) {
 
   return (
     <>
+      {instance.status === 'PAUSED' && (
+        // Процесс стоит и ждёт именно этого решения: без кнопки снять паузу
+        // можно было бы только из консоли.
+        <Button variant="primary" onClick={() => void run(() => instancesApi.resume(instance.id), 'Не удалось продолжить процесс')}>
+          Продолжить
+        </Button>
+      )}
       {instance.status === 'COMPENSATION_FAILED' && (
         <Button
           variant="primary"
@@ -324,6 +331,8 @@ function Actions({ instance, onDone, onError }: ActionsProps) {
         </Button>
       )}
       {!terminal && (
+        // Отмена работает и из паузы: компенсировать выполненные шаги нужно
+        // независимо от того, чем процесс занимался.
         <Button onClick={() => void run(() => instancesApi.cancel(instance.id), 'Не удалось отменить')}>
           Отменить
         </Button>

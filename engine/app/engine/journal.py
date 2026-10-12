@@ -46,6 +46,11 @@ class InstanceState:
     `ready_step` — шаг, готовый к исполнению. `None` означает, что процесс либо
     завершён, либо ждёт таймера, либо откатывается.
 
+    `resumed_step` — шаг, ожидание которого уже снято человеком. Существует,
+    чтобы воркер, дойдя до того же шага снова, не встал в ту же паузу: без него
+    возобновление превращалось бы в бесконечный цикл «пауза — возобновление».
+    Обнуляется, когда шаг начинается: возобновление относится к одному проходу.
+
     `step_iterations` — сколько раз шаг успешно завершился. Отдельный от
     `completed_steps`: тот хранит порядок для компенсации и уникален по имени,
     а циклу нужен именно счётчик. Живёт здесь, а не в `step_runs`, потому что
@@ -58,6 +63,7 @@ class InstanceState:
     variables: dict[str, Any] = field(default_factory=dict)
     completed_steps: list[str] = field(default_factory=list)
     failed_step: str | None = None
+    resumed_step: str | None = None
     compensation_for: str | None = None
     step_iterations: dict[str, int] = field(default_factory=dict)
     cancel_requested: bool = False
@@ -182,6 +188,9 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
         case EventType.STEP_STARTED:
             state.status = InstanceStatus.RUNNING
             state.current_step = payload.get("step")
+            # Возобновление израсходовано: шаг начат, и повторно спрашивать
+            # перед ним не нужно.
+            state.resumed_step = None
 
         case EventType.STEP_COMPLETED:
             state.variables.update(payload.get("output") or {})
@@ -222,6 +231,16 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
         case EventType.STEP_RETRY_SCHEDULED:
             state.status = InstanceStatus.RUNNING
             state.current_step = payload.get("step")
+
+        case EventType.INSTANCE_PAUSED:
+            # Процесс встал и ждёт человека. Шаг не начат: `STEP_STARTED` не
+            # написан, эффекта не было, откатывать нечего.
+            state.status = InstanceStatus.PAUSED
+            state.current_step = payload.get("step")
+
+        case EventType.INSTANCE_RESUMED:
+            state.status = InstanceStatus.RUNNING
+            state.resumed_step = payload.get("step")
 
         case EventType.TIMER_SCHEDULED:
             state.status = InstanceStatus.WAITING

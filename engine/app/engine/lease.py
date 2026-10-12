@@ -128,7 +128,12 @@ async def claim_next(
     # попадал в выборку, воркер брал бы один и тот же спящий инстанс, пока тот
     # не проснётся, и вся очередь за ним стояла бы.
     ready_values = sorted(
-        value for value in _ACTIVE_STATUS_VALUES if value != str(InstanceStatus.WAITING)
+        value
+        for value in _ACTIVE_STATUS_VALUES
+        # Оба состояния — не берутся воркером:
+        # спящий инстанс обрабатывает по-настоящему таймер, а пауза — пока придёт
+        # человек, и воркер брал бы её за себя не имело стопов (ADR-0014).
+        if value not in {str(InstanceStatus.WAITING), str(InstanceStatus.PAUSED)}
     )
 
     candidates = (
