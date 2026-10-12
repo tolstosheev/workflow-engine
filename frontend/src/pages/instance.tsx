@@ -27,7 +27,6 @@ export default function InstancePage() {
   const loadedDefinition = useRef<string | null>(null)
 
   // Текущий запрос: без ссылки на него нечем отменить предыдущий.
-  // Текущий запрос: без ссылки на него нечем отменить предыдущий.
   const { next: beginRequest, abort } = useAbortable()
 
   const load = useCallback(async () => {
@@ -300,9 +299,18 @@ interface ActionsProps {
   onError: (message: string) => void
 }
 
-/** Действия доступны не во всех состояниях: отменять завершённый процесс бессмысленно. */
+/**
+ * Действия доступны не во всех состояниях: отменять завершённый процесс
+ * бессмысленно.
+ *
+ * У процесса, застрявшего на откате, остаётся только повтор: отмена привела бы
+ * его туда же, только другим путём и в обход паузы, которую движок накопи�� по
+ * неудачным попыткам. Две кнопки в одно состояние — значит оператор выберет
+ * ту, что не сработает.
+ */
 function Actions({ instance, onDone, onError }: ActionsProps) {
   const terminal = ['COMPLETED', 'COMPENSATED', 'CANCELLED', 'FAILED'].includes(instance.status)
+  const stuck = instance.status === 'COMPENSATION_FAILED'
 
   const run = async (action: () => Promise<unknown>, fallback: string) => {
     try {
@@ -331,7 +339,7 @@ function Actions({ instance, onDone, onError }: ActionsProps) {
           Повторить откат
         </Button>
       )}
-      {!terminal && (
+      {!terminal && !stuck && (
         // Отмена работает и из паузы: компенсировать выполненные шаги нужно
         // независимо от того, чем процесс занимался.
         <Button onClick={() => void run(() => instancesApi.cancel(instance.id), 'Не удалось отменить')}>

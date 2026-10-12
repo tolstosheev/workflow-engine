@@ -1,0 +1,272 @@
+// @vitest-environment jsdom
+/**
+ * Страница инстанса: кнопки решения и разбор журнала.
+ *
+ * Страница отвечает на два вопроса оператора: что сейчас происходит и что с
+ * этим можно сделать. Ошибка в первом вопросе стоит дороже всего — процесс
+ * ждёт человека, а кнопки нет, и снять паузу можно было бы только из консоли.
+ *
+ * Закреплено:
+ *
+ * - «Продолжить» есть только у паузы, и нажатие действительно её снимает;
+ * - отмена работает и из паузы: компенсировать выполненное нужно независимо от
+ *   того, чем процесс занимался, когда остановился;
+ * - необратимые действия исчезают у завершённого процесса;
+ * - у процесса, застрявшего на откате, остаётся только повтор отката: «закрыть»
+ *   его здесь означало бы забыть о неоткатанном резерве;
+ * - определение перечитывается один раз, а не на каждый цикл опроса.
+ */
+
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import InstancePage from '@/pages/instance'
+import type { WorkflowInstance } from '@/types/api'
+
+vi.mock('@/api/stream', () => ({ useEventStream: () => undefined }))
+
+const get = vi.fn()
+const state = vi.fn()
+const steps = vi.fn()
+const timeline = vi.fn()
+const definitionGet = vi.fn()
+const cancel = vi.fn()
+const resume = vi.fn()
+const forceComplete = vi.fn()
+const retryCompensation = vi.fn()
+
+vi.mock('@/api/client', () => ({
+  instances: {
+    get: (...args: unknown[]) => get(...args),
+    state: (...args: unknown[]) => state(...args),
+    steps: (...args: unknown[]) => steps(...args),
+    timeline: (...args: unknown[]) => timeline(...args),
+    cancel: (...args: unknown[]) => cancel(...args),
+    resume: (...args: unknown[]) => resume(...args),
+    forceComplete: (...args: unknown[]) => forceComplete(...args),
+    retryCompensation: (...args: unknown[]) => retryCompensation(...args),
+  },
+  definitions: { get: (...args: unknown[]) => definitionGet(...args) },
+}))
+
+function instance(status: WorkflowInstance['status']): WorkflowInstance {
+  return {
+    id: 'i-1',
+    definition: { id: 'd1', name: 'order_demo', version: 2 },
+    status,
+    current_step: 'approve_order',
+    variables: {},
+    lease_owner: 'w1',
+    lease_expires_at: null,
+    heartbeat_at: null,
+    created_at: '2026-03-01T10:00:00Z',
+    updated_at: '2026-03-01T10:00:00Z',
+  } as unknown as WorkflowInstance
+}
+
+const REBUILT = {
+  status: 'RUNNING',
+  current_step: 'approve_order',
+  variables: {},
+  completed_steps: ['validate_cart'],
+  pending_compensations: ['validate_cart'],
+  is_terminal: false,
+  step_iterations: {},
+}
+
+const DEFINITION = {
+  id: 'd1',
+  name: 'order_demo',
+  version: 2,
+  is_active: true,
+  created_at: '2026-03-01T09:00:00Z',
+  updated_at: '2026-03-01T09:00:00Z',
+  definition: {
+    start: 'validate_cart',
+    steps: {
+      validate_cart: {
+        action: 'app.demo.handlers:validate_cart',
+        compensation: 'app.demo.handlers:release_inventory',
+        next: 'approve_order',
+      },
+      approve_order: { action: 'app.demo.handlers:charge_payment', next: 'finish' },
+      finish: { action: 'app.demo.handlers:confirm_delivery' },
+    },
+  },
+}
+
+/** Единственный смонтированный экземпляр на тест: два рендера искали бы кнопки друг друга. */
+async function open(status: WorkflowInstance['status'] = 'RUNNING'): Promise<void> {
+  get.mockResolvedValue(instance(status))
+  render(
+    <MemoryRouter initialEntries={['/instances/i-1']}>
+      <Routes>
+        <Route path="/instances/:id" element={<InstancePage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  await screen.findByRole('heading', { name: 'order_demo' })
+}
+
+beforeEach(() => {
+  // Счётчики запросов копятся между тестами, если их не обнулять: проверка
+  // «определение прочитано один раз» видела бы вызовы предыдущих тестов.
+  for (const spy of [
+    get,
+    state,
+    steps,
+    timeline,
+    definitionGet,
+    cancel,
+    resume,
+    forceComplete,
+    retryCompensation,
+  ]) {
+    spy.mockReset()
+  }
+  state.mockResolvedValue(REBUILT)
+  steps.mockResolvedValue({ items: [] })
+  timeline.mockResolvedValue({ items: [] })
+  definitionGet.mockResolvedValue(DEFINITION)
+  cancel.mockResolvedValue({ status: 'CANCELLING' })
+  resume.mockResolvedValue({ status: 'RUNNING' })
+  forceComplete.mockResolvedValue({ status: 'COMPLETED' })
+  retryCompensation.mockResolvedValue({ status: 'COMPENSATING' })
+})
+
+afterEach(cleanup)
+
+describe('кнопки решения', () => {
+  it('не показывает «Продолжить» у идущего процесса', async () => {
+    await open('RUNNING')
+
+    expect(screen.queryByRole('button', { name: 'Продолжить' })).toBeNull()
+  })
+
+  it('снимает паузу по нажатию', async () => {
+    await open('PAUSED')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }))
+
+    expect(resume).toHaveBeenCalledOnce()
+    expect(resume.mock.calls[0][0]).toBe('i-1')
+  })
+
+  it('показывает причину, если возобновить не удалось', async () => {
+    resume.mockRejectedValue(new Error('инстанс не на паузе'))
+    await open('PAUSED')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }))
+
+    // Молчаливый отказ хуже отказа с текстом: оператор решил бы, что нажал
+    // мимо, и стал бы искать, где ещё можно снять паузу.
+    expect(await screen.findByText('инстанс не на паузе')).toBeTruthy()
+  })
+
+  it('доступна отмена из паузы', async () => {
+    await open('PAUSED')
+
+    // Выполненные шаги нужно откатить независимо от того, что процесс ждал:
+    // резерв остался бы в силе навсегда.
+    expect(screen.getByRole('button', { name: 'Отменить' })).toBeTruthy()
+  })
+
+  it('прячет необратимые действия у завершённого процесса', async () => {
+    await open('COMPLETED')
+
+    expect(screen.queryByRole('button', { name: 'Отменить' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Завершить без компенсаций/ })).toBeNull()
+  })
+
+  it('предлагает повтор отката там, где он провалился', async () => {
+    await open('COMPENSATION_FAILED')
+
+    expect(screen.getByRole('button', { name: 'Повторить откат' })).toBeTruthy()
+  })
+
+  it('не смешивает повтор отката с обычными действиями', async () => {
+    await open('COMPENSATION_FAILED')
+
+    // У процесса, который застрял на откате, есть только повтор: отмена и
+    // «завершить» здесь предложили бы забыть о неоткатанном резерве.
+    expect(screen.queryByRole('button', { name: 'Отменить' })).toBeNull()
+  })
+})
+
+describe('разбор журнала', () => {
+  it('показывает выполненные шаги из состояния, а не из колонки', async () => {
+    state.mockResolvedValue({
+      ...REBUILT,
+      completed_steps: ['validate_cart', 'reserve_inventory'],
+    })
+
+    await open('RUNNING')
+
+    expect(await screen.findByText('validate_cart → reserve_inventory')).toBeTruthy()
+  })
+
+  it('раскрывает данные события по требованию', async () => {
+    timeline.mockResolvedValue({
+      items: [
+        {
+          kind: 'event',
+          seq: 3,
+          type: 'STEP_COMPLETED',
+          payload: { step: 'reserve_inventory' },
+          created_at: '2026-03-01T10:00:01Z',
+        },
+      ],
+    })
+
+    await open('RUNNING')
+
+    const toggle = await screen.findByRole('button', { name: /данные события/ })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+
+    await fireEvent.click(toggle)
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('перечитывает определение один раз, а не на каждый цикл опроса', async () => {
+    // Опрос страницы повторяется каждые две секунды; определение — единственная
+    // строка, которая не меняется, и запрос на каждый цикл на длинном процессе
+    // давал бы десятки одинаковых ответов впустую.
+    await open('RUNNING')
+    await new Promise((resolve) => setTimeout(resolve, 2100))
+
+    expect(definitionGet).toHaveBeenCalledTimes(1)
+    // Опрос при этом продолжает работать: иначе «одна загрузка» означала бы
+    // «страница не обновляется», и тест проходил бы по неверной причине.
+    expect(get.mock.calls.length).toBeGreaterThan(1)
+  })
+})
+
+describe('сбой загрузки', () => {
+  it('отличает «нет данных» от «загрузка идёт»', async () => {
+    get.mockRejectedValue(new Error('инстанс не найден'))
+    render(
+      <MemoryRouter initialEntries={['/instances/i-1']}>
+        <Routes>
+          <Route path="/instances/:id" element={<InstancePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('инстанс не найден')).toBeTruthy()
+    expect(screen.queryByText('Загрузка…')).toBeNull()
+  })
+
+  it('объясняет отсутствие идентификатора', () => {
+    render(
+      <MemoryRouter initialEntries={['/instances']}>
+        <Routes>
+          <Route path="/instances" element={<InstancePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('Идентификатор инстанса не указан')).toBeTruthy()
+  })
+})
