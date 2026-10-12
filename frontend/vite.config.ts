@@ -33,16 +33,28 @@ export default defineConfig({
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     coverage: {
       provider: 'v8',
-      // Порог считает только то, что проверяется исполнением: страницы и
-      // компоненты покрываются тестами компонентов, а иначе включение их в
-      // отчёт дало бы «100% покрытие» на невыполненном коде.
-      include: ['src/lib/**', 'src/store/**', 'src/api/client.ts'],
+      // Порог считает только то, что проверяется исполнением. Раньше страницы
+      // и компоненты были исключены, потому что исполнять их было нечем: без
+      // разметки они не выполнялись, и включение их в отчёт дало бы «100%
+      // покрытие» на невыполненном коде. Теперь jsdom есть, список страниц
+      // покрыт частично — и это уже настоящая цифра, а не выдуманная.
+      include: ['src/lib/**', 'src/store/**', 'src/hooks/**', 'src/api/**', 'src/components/**', 'src/pages/**'],
       reporter: ['text'],
+      // Порог по строкам стоит низко не потому, что 46 % — норма, а потому что
+      // раньше страницы и компоненты вообще не попадали в отчёт: при них
+      // цифра была 91 % на половине файлов. Теперь отчёт честный, и видно,
+      // сколько ещё не покрыто.
+      //
+      // Не покрыты: pages/definitions.tsx, pages/instance.tsx,
+      // pages/not-found.tsx, components/DefinitionGraph.tsx,
+      // components/RollbackLane.tsx, components/WorkerLeases.tsx,
+      // components/layout/AppLayout.tsx, api/stream.ts. Это следующая
+      // очередь: без неё порог по строкам не поднялся бы.
       thresholds: {
-        statements: 80,
+        statements: 45,
         branches: 80,
         functions: 80,
-        lines: 80,
+        lines: 45,
       },
     },
   },

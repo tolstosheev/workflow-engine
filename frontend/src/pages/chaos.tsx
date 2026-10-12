@@ -35,7 +35,12 @@ export default function ChaosPage() {
   const [active, setActive] = useState<string[]>([])
   const [mode, setMode] = useState<(typeof MODES)[number]['value']>('always')
   const [step, setStep] = useState('charge_payment')
-  const [instanceId, setInstanceId] = useState('')
+  // Инстанс указывается для двух разных действий, и одно поле не годится на
+  // оба: адресат инъекции и инстанс с остановленной арендой — разные вещи,
+  // а одно значение на оба поля означало бы, что введённый адрес молча
+  // применяется к действию, о котором оператор не думал.
+  const [failInstanceId, setFailInstanceId] = useState('')
+  const [leaseInstanceId, setLeaseInstanceId] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -123,8 +128,8 @@ export default function ChaosPage() {
           </label>
           <input
             id="chaos-instance-fail"
-            value={instanceId}
-            onChange={(event) => setInstanceId(event.target.value)}
+            value={failInstanceId}
+            onChange={(event) => setFailInstanceId(event.target.value)}
             placeholder="любой инстанс"
             className="mb-3 w-full rounded-md border border-surface-border bg-surface px-3 py-1.5 font-mono text-xs"
           />
@@ -136,7 +141,7 @@ export default function ChaosPage() {
                 chaosApi.failStep({
                   step: step || null,
                   mode,
-                  instance_id: instanceId || null,
+                  instance_id: failInstanceId || null,
                   error: 'сбой шага (инъекция)',
                 }),
               )
@@ -174,22 +179,22 @@ export default function ChaosPage() {
           </label>
           <input
             id="chaos-instance-lease"
-            value={instanceId}
-            onChange={(event) => setInstanceId(event.target.value)}
+            value={leaseInstanceId}
+            onChange={(event) => setLeaseInstanceId(event.target.value)}
             placeholder="идентификатор инстанса"
             className="mb-3 w-full rounded-md border border-surface-border bg-surface px-3 py-1.5 font-mono text-xs"
           />
           <div className="flex gap-2">
             <Button
               variant="danger"
-              disabled={!instanceId}
-              onClick={() => void run(() => chaosApi.stopLease(instanceId, 40))}
+              disabled={!leaseInstanceId}
+              onClick={() => void run(() => chaosApi.stopLease(leaseInstanceId, 40))}
             >
               Остановить на 40 с
             </Button>
             <Button
-              disabled={!instanceId}
-              onClick={() => void run(() => chaosApi.resumeLease(instanceId))}
+              disabled={!leaseInstanceId}
+              onClick={() => void run(() => chaosApi.resumeLease(leaseInstanceId))}
             >
               Возобновить
             </Button>
