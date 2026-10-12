@@ -188,12 +188,18 @@ function Node({ node, state, iterations, active, onHover, onSelect }: NodeProps)
       transform={`translate(${node.x} ${node.y})`}
       onMouseEnter={() => onHover(node.name)}
       onMouseLeave={() => onHover(null)}
+      onFocus={() => onHover(node.name)}
+      onBlur={() => onHover(null)}
       onClick={() => onSelect?.(node.name)}
       // Узел выбирается и с клавиатуры: иначе карта шагов недоступна тому,
       // кто не держит мышь, а состояние шага — единственное, ради чего
       // карта и рисуется.
+      //
+      // Фокус открывает ту же подпись, что и наведение: раньше она была
+      // только по мыши, и человек с клавиатуры видел голые прямоугольники без
+      // действия, компенсации и правил повтора.
       role={onSelect ? 'button' : undefined}
-      tabIndex={onSelect ? 0 : undefined}
+      tabIndex={0}
       aria-label={`Шаг ${node.name}: ${style.label}`}
       onKeyDown={(event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return

@@ -52,7 +52,11 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
       </p>
 
       <ol className="space-y-1.5">
-        {done.map((name, index) => {
+        {/* Список показывается в том порядке, в котором откат пойдёт, а не в том,
+            в котором шаги выполнялись. Порядок выполнения приходилось читать
+            снизу вверх: нумерация была правильной, а строки шли прямые, и
+            верхняя строка — первый выполненный — читалась как первый к откату. */}
+        {[...done].reverse().map((name, index) => {
           const already = compensatedOf(name)
           const planned = pending.includes(name)
           const marker: Marker = already ? 'compensated' : planned ? 'planned' : 'kept'
@@ -60,7 +64,7 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
 
           return (
             <li key={name} className="flex items-center gap-2 text-xs">
-              <span className="w-5 shrink-0 text-right text-white/30">{done.length - index}</span>
+              <span className="w-5 shrink-0 text-right text-white/30">{index + 1}</span>
               <span
                 className={`w-24 shrink-0 rounded border px-2 py-0.5 text-center ${MARKER_STYLES[marker]}`}
               >
