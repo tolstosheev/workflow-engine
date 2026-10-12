@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect } from 'react'
 
 import { useEventStream } from '@/api/stream'
+import { useAbortable } from '@/hooks/useAbortable'
+import { usePolling } from '@/hooks/usePolling'
 import { pollingIntervalMs } from '@/lib/polling'
 import { useInstancesStore } from '@/store/instances'
 
@@ -10,49 +12,47 @@ import { useInstancesStore } from '@/store/instances'
  * Пока поток жив, события приносят изменения сами и опрос остаётся редким.
  * Когда поток молчит, он становится единственным источником, и частота
  * возвращается прежней.
+ *
+ * Из стора берутся только нужные поля: подписка на весь стор перерисовывала
+ * бы страницу при каждой записи `loading` и `connected`.
  */
 export function useInstancesFeed() {
-  const {
-    items,
-    loading,
-    error,
-    connected,
-    lastEventAt,
-    load,
-    handleEvent,
-    setConnected,
-    statusFilter,
-  } = useInstancesStore()
+  const items = useInstancesStore((state) => state.items)
+  const loading = useInstancesStore((state) => state.loading)
+  const error = useInstancesStore((state) => state.error)
+  const connected = useInstancesStore((state) => state.connected)
+  const lastEventAt = useInstancesStore((state) => state.lastEventAt)
+  const statusFilter = useInstancesStore((state) => state.statusFilter)
+  const setStatusFilter = useInstancesStore((state) => state.setStatusFilter)
+  const handleEvent = useInstancesStore((state) => state.handleEvent)
+  const setConnected = useInstancesStore((state) => state.setConnected)
+  const loadList = useInstancesStore((state) => state.load)
 
   useEventStream({ onEvent: handleEvent, onStatusChange: setConnected })
 
   // Текущий запрос: без ссылки на него нечем отменить предыдущий, а он
   // нужен, чтобы уходящая со страницы вкладка не держала соединения.
-  const inflight = useRef<AbortController | null>(null)
+  const { next: beginRequest, abort } = useAbortable()
 
   const reload = useCallback(async () => {
-    const controller = new AbortController()
-    inflight.current?.abort()
-    inflight.current = controller
-    try {
-      await load(controller.signal)
-    } finally {
-      if (inflight.current === controller) inflight.current = null
-    }
-  }, [load])
+    await loadList(beginRequest().signal)
+  }, [beginRequest, loadList])
 
-  useEffect(() => {
-    void reload()
-    const delay = pollingIntervalMs(null, connected)
-    const timer = window.setInterval(() => void reload(), delay)
-    return () => {
-      window.clearInterval(timer)
-      inflight.current?.abort()
-    }
-  }, [reload, connected])
+  usePolling(reload, pollingIntervalMs(null, connected))
+  useEffect(() => abort, [abort])
 
   const visible =
     statusFilter === 'ALL' ? items : items.filter((item) => item.status === statusFilter)
 
-  return { items: visible, all: items, loading, error, connected, lastEventAt, load: reload }
+  return {
+    items: visible,
+    all: items,
+    loading,
+    error,
+    connected,
+    lastEventAt,
+    statusFilter,
+    setStatusFilter,
+    load: reload,
+  }
 }

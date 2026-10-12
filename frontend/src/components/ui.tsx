@@ -43,9 +43,18 @@ const BUTTON_VARIANTS: Record<NonNullable<ButtonProps['variant']>, string> = {
   danger: 'bg-danger/20 text-danger border-danger/40 hover:bg-danger/30',
 }
 
-export function Button({ variant = 'secondary', className = '', ...props }: ButtonProps) {
+export function Button({
+  variant = 'secondary',
+  className = '',
+  type = 'button',
+  ...props
+}: ButtonProps) {
   return (
     <button
+      // По умолчанию кнопка не отправляет форму: внутри любой формы
+      // `type` по умолчанию равен `submit`, и обычное нажатие на кнопку
+      // панели отправляло бы форму вместо своего действия.
+      type={type}
       {...props}
       className={`rounded-md border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${BUTTON_VARIANTS[variant]} ${className}`}
     />

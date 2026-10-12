@@ -57,7 +57,7 @@ const EVENT_LABELS: Record<EventType, string> = {
   STEP_COMPLETED: 'Шаг выполнен',
   STEP_FAILED: 'Шаг провален',
   STEP_RETRY_SCHEDULED: 'Шаг поставлен на повтор',
-  LOOP_EXHAUSTED: 'Исчерпани проходов цикла',
+  LOOP_EXHAUSTED: 'Исчерпаны проходы цикла',
   TIMER_SCHEDULED: 'Ожидание создано',
   TIMER_FIRED: 'Ожидание сработало',
   COMPENSATION_STARTED: 'Компенсация начата',

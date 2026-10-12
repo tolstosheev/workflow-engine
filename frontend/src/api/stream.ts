@@ -1,8 +1,10 @@
 /**
  * Подписка на поток событий.
  *
- * `EventSource` переподключается сам, но после обрыва он начинает с текущего
- * момента: пропущенные события догружаются запросом журнала по `fromSeq`.
+ * `EventSource` переподключается сам и присылает в `Last-Event-ID` последнее
+ * полученное событие, поэтому разрыв не приводит к потере: поток
+ * продолжается с него. Пока соединение живо, события — источник изменений;
+ * опрос страницы остаётся страховкой на молчание.
  */
 
 import { useEffect, useRef } from 'react'
@@ -17,6 +19,32 @@ export interface StreamOptions {
   /** Отмечает разрыв соединения, чтобы интерфейс показал «нет связи». */
   onStatusChange?: (connected: boolean) => void
 }
+
+/**
+ * Типы событий, на которые подписан поток.
+ *
+ * Список обязан совпадать с `NOTIFIABLE` в
+ * `engine/app/routers/stream.py`: событие, которого нет в потоке, экран не
+ * увидит, а его обработчик в редьюсере останется недостижимым. Расхождение
+ * ловит `engine/tests/unit/test_stream_contract.py`.
+ */
+export const SUBSCRIBED_EVENT_TYPES: StreamEvent['type'][] = [
+  'INSTANCE_CREATED',
+  'INSTANCE_COMPLETED',
+  'INSTANCE_COMPENSATED',
+  'INSTANCE_FAILED',
+  'INSTANCE_CANCEL_REQUESTED',
+  'INSTANCE_CANCELLED',
+  'LOOP_EXHAUSTED',
+  'STEP_STARTED',
+  'STEP_COMPLETED',
+  'STEP_FAILED',
+  'TIMER_SCHEDULED',
+  'TIMER_FIRED',
+  'COMPENSATION_STARTED',
+  'COMPENSATION_COMPLETED',
+  'COMPENSATION_FAILED',
+]
 
 export function useEventStream({ onEvent, onStatusChange }: StreamOptions): void {
   // Колбэк хранится в ref, чтобы переподключение не зависело от его
@@ -38,24 +66,7 @@ export function useEventStream({ onEvent, onStatusChange }: StreamOptions): void
       }
     }
 
-    // Список должен совпадать с бекендовым `NOTIFIABLE`
-    // в `engine/app/routers/stream.py`. Расхождение двух списков обязательно
-    // содержать: событие, раньше превращались было без подписки в потоке.
-    const types: StreamEvent['type'][] = [
-      'INSTANCE_CREATED',
-      'INSTANCE_COMPLETED',
-      'INSTANCE_COMPENSATED',
-      'INSTANCE_FAILED',
-      'INSTANCE_CANCEL_REQUESTED',
-      'INSTANCE_CANCELLED',
-      'LOOP_EXHAUSTED',
-      'STEP_COMPLETED',
-      'STEP_FAILED',
-      'COMPENSATION_STARTED',
-      'COMPENSATION_COMPLETED',
-      'COMPENSATION_FAILED',
-    ]
-    for (const type of types) {
+    for (const type of SUBSCRIBED_EVENT_TYPES) {
       source.addEventListener(type, forward as EventListener)
     }
 

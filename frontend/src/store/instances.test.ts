@@ -55,7 +55,7 @@ describe('handleEvent', () => {
   })
 
   it('advances status on compensation completion', () => {
-    // Раньше обрабатывал COMPENSATION_COMPLETED был нельзя, и строка зависала на недействующем статусе
+    // Раньше COMPENSATION_COMPLETED не обрабатывался, и строка зависала на старом статусе
     useInstancesStore.getState().handleEvent(event('COMPENSATION_COMPLETED', {}))
 
     expect(useInstancesStore.getState().items[0].status).toBe('COMPENSATING')
@@ -87,8 +87,8 @@ describe('handleEvent', () => {
   })
 
   it('отменённый запрос не пишет в состояние', async () => {
-    // Отменённый запрос — разовязанная возвратная загрузка, а не ошибка: если бы он
-    // записался бы, список подстаневшего уходящего вокна был бы старым.
+    // Отменённый запрос — разовая отменённая загрузка, а не ошибка: если бы он
+    // записался, список уходящей со страницы вкладки вернулся бы старым.
     const { instances } = await import('@/api/client')
     vi.mocked(instances.list).mockResolvedValue({
       items: [STUB('старый')],

@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { WorkerLeases, StreamStatus } from '@/components/WorkerLeases'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useInstancesFeed } from '@/hooks/useInstancesFeed'
+import { countRunning, selectInstances } from '@/lib/instanceList'
 import { formatDateTime, statusLabel, statusTone } from '@/lib/status'
 import { useInstancesStore } from '@/store/instances'
 import type { InstanceStatus } from '@/types/api'
@@ -25,18 +26,13 @@ export default function InstancesPage() {
   const [newestFirst, setNewestFirst] = useState(true)
 
   // Поиск и сортировка применяются к уже полученному списку: это то, что
-  // видно сейчас, без запроса на каждый ввод.
-  const matches = (name: string): boolean =>
-    query.trim() ? name.toLowerCase().includes(query.trim().toLowerCase()) : true
-
-  const visible = items
-    .filter((instance) => matches(instance.definition.name))
-    .sort((a, b) =>
-      newestFirst ? b.created_at.localeCompare(a.created_at) : a.created_at.localeCompare(b.created_at),
-    )
-
-  const runningCount = all.filter((item) => matches(item.definition.name) && item.status === 'RUNNING')
-    .length
+  // видно сейчас, без запроса на каждый ввод. Отбор и порядок считаются в
+  // чистой функции: правило проверяется тестом, а страница — отрисовать.
+  const visible = useMemo(
+    () => selectInstances(items, { search: query, newestFirst }),
+    [items, query, newestFirst],
+  )
+  const runningCount = useMemo(() => countRunning(visible), [visible])
 
   return (
     <section className="space-y-4">
@@ -71,7 +67,7 @@ export default function InstancesPage() {
       </div>
 
       {query.trim() && (
-        <p className="text-xs text-white/40">
+        <p aria-live="polite" className="text-xs text-white/40">
           По запросу «{query.trim()}» найдено {visible.length}, выполняется {runningCount}
         </p>
       )}
@@ -85,6 +81,8 @@ export default function InstancesPage() {
           <EmptyState message="Загрузка инстансов…" />
         ) : items.length === 0 ? (
           <EmptyState message="Инстансов пока нет. Запустите процесс на странице определений." />
+        ) : visible.length === 0 ? (
+          <EmptyState message={`По запросу «${query.trim()}» ничего не найдено`} />
         ) : (
           <table aria-label="Инстансы workflow" className="w-full text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-white/40">
@@ -97,7 +95,7 @@ export default function InstancesPage() {
               </tr>
             </thead>
             <tbody>
-              {items.map((instance) => (
+              {visible.map((instance) => (
                 <tr key={instance.id} className="border-t border-surface-border/60">
                   <td className="py-2">
                     <Link

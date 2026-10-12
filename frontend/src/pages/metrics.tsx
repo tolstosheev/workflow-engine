@@ -7,10 +7,11 @@
  * красным — это те два значения, которые в норме равны нулю.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { service } from '@/api/client'
 import { Card, EmptyState, ErrorState } from '@/components/ui'
+import { usePolling } from '@/hooks/usePolling'
 import { labelsOf, parseMetrics, sumBy, valueOf } from '@/lib/metrics'
 import type { Sample } from '@/lib/metrics'
 import type { InstanceStatus } from '@/types/api'
@@ -43,38 +44,32 @@ const STATUSES: InstanceStatus[] = [
   'FAILED',
 ]
 
+/**
+ * Частота опроса метрик. Значение короткое: метрики собираются из БД при
+ * каждом запросе, и редкий опрос показывал бы устаревшую картину.
+ */
+const METRICS_POLL_MS = 5000
+
 export function MetricsPage() {
   const [samples, setSamples] = useState<Sample[]>([])
   const [error, setError] = useState<string | null>(null)
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-
-    const poll = async () => {
-      try {
-        const text = await service.metrics()
-        if (!cancelled) {
-          setSamples(parseMetrics(text))
-          setError(null)
-          setUpdatedAt(new Date().toLocaleTimeString('ru-RU', { hour12: false }))
-        }
-      } catch (cause) {
-        if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : 'Метрики недоступны')
-        }
-      }
-    }
-
-    void poll()
-    // Метрики собираются из БД при каждом запросе, поэтому и опрос частый:
-    // редкий опрос показывал бы устаревшую картину.
-    const timer = setInterval(() => void poll(), 5000)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
+  // Метрики собираются из БД при каждом запросе, поэтому и опрос частый:
+  // редкий опрос показывал бы устаревшую картину. Следующий запуск
+  // планируется после ответа предыдущего — наложения запросов не будет.
+  const load = useCallback(async () => {
+    try {
+      const text = await service.metrics()
+      setSamples(parseMetrics(text))
+      setError(null)
+      setUpdatedAt(new Date().toLocaleTimeString('ru-RU', { hour12: false }))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Метрики недоступны')
     }
   }, [])
+
+  usePolling(load, METRICS_POLL_MS)
 
   const alarms = ALARMS.map((alarm) => ({ ...alarm, value: alarm.test(samples) })).filter(
     (alarm) => alarm.value > 0,
@@ -92,10 +87,13 @@ export function MetricsPage() {
       {error && <ErrorState message={error} />}
 
       <Card title="Тревоги">
+        {/* Панель появляется и меняется сама: без объявления скринридер
+            не узнает ни о появлении тревоги, ни о том, что она прошла. */}
+        <div aria-live="polite">
         {error ? (
-          // При ошибке запроса «метрики ещё не собраны» — поведает что именно
-          // вне во время приводки получилась пустый ответ и панель тревоги вродены в несе.
-          <p className="text-sm text-white/40">Показать нельзя сюже нет ни одного обрращения: алерта выше ошибка.</p>
+          // При ошибке запроса важно сказать, что именно не удалось: иначе пустой
+          // ответ панели тревоги читается как «инцидентов нет».
+          <p className="text-sm text-white/40">Тревоги показать нельзя: запрос метрик не удался, причина выше.</p>
         ) : samples.length === 0 ? (
           <EmptyState message="Метрики ещё не собраны" />
         ) : alarms.length === 0 ? (
@@ -114,6 +112,7 @@ export function MetricsPage() {
             ))}
           </ul>
         )}
+        </div>
         <p className="mt-3 text-[11px] text-white/30">
           Правила взяты из таблицы «что считать нормой» в docs/OPERATIONS.md §2.
         </p>

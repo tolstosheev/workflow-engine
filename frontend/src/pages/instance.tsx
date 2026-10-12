@@ -6,6 +6,8 @@ import { useEventStream } from '@/api/stream'
 import { DefinitionGraph } from '@/components/DefinitionGraph'
 import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
+import { useAbortable } from '@/hooks/useAbortable'
+import { usePolling } from '@/hooks/usePolling'
 import { pollingIntervalMs } from '@/lib/polling'
 import { eventLabel, formatDuration, formatDateTime, statusLabel, statusTone, stepTone } from '@/lib/status'
 import type { InstanceState, StepRun, TimelineEntry, WorkflowDefinition, WorkflowInstance } from '@/types/api'
@@ -20,25 +22,20 @@ export default function InstancePage() {
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
-
-  // Определение дождаться отдельно: следиющий ответ не меняется на время
-  // жизни инстанса, а не каждые 1500 мс для схемы и на каждое
-  // событие события.
   // Определение перечитывается только при смене инстанса: это единственная
   // строка без изменений, и запрос на каждый цикл повторялся бы десятки раз.
   const loadedDefinition = useRef<string | null>(null)
 
   // Текущий запрос: без ссылки на него нечем отменить предыдущий.
-  const inflight = useRef<AbortController | null>(null)
+  // Текущий запрос: без ссылки на него нечем отменить предыдущий.
+  const { next: beginRequest, abort } = useAbortable()
 
   const load = useCallback(async () => {
     if (!id) return
     // Ответ предыдущей загрузки мог прийти позже текущего и откатить экран на
     // шаг назад, а после ухода со страницы он писал бы в состояние уже не
     // существующего компонента. Оба запроса отменяются одним сигналом.
-    const controller = new AbortController()
-    inflight.current?.abort()
-    inflight.current = controller
+    const controller = beginRequest()
     try {
       const [one, rebuilt, runs, flow] = await Promise.all([
         instancesApi.get(id, controller.signal),
@@ -58,7 +55,9 @@ export default function InstancePage() {
       // повторялся бы десятки раз.
       if (loadedDefinition.current !== one.definition.id) {
         try {
-          setDefinition(await definitionsApi.get(one.definition.id))
+          const loaded = await definitionsApi.get(one.definition.id)
+          if (controller.signal.aborted) return
+          setDefinition(loaded)
           loadedDefinition.current = one.definition.id
         } catch {
           setDefinition(null)
@@ -69,25 +68,14 @@ export default function InstancePage() {
       // запустится по своему расписанию.
       if (controller.signal.aborted) return
       setError(cause instanceof Error ? cause.message : 'Не удалось загрузить инстанс')
-    } finally {
-      if (inflight.current === controller) inflight.current = null
     }
-  }, [id])
+  }, [beginRequest, id])
 
-  useEffect(() => {
-    void load()
-    // Страховка на потерянные события: поток не гарантирует доставку, а журнал
-    // на сервере остаётся полным. Завершённый процесс не опрашивается вовсе,
-    // а при живом потоке интервал редкий — события и так приносят изменения.
-    const delay = pollingIntervalMs(instance?.status ?? null, connected)
-    if (delay === 0) return
-    const timer = window.setInterval(() => void load(), delay)
-    return () => {
-      window.clearInterval(timer)
-      inflight.current?.abort()
-    }
-  }, [load, instance?.status, connected])
-
+  // Страховка на потерянные события: поток не гарантирует доставку, а журнал
+  // на сервере остаётся полным. Завершённый процесс не опрашивается вовсе,
+  // а при живом потоке интервал редкий — события и так приносят изменения.
+  usePolling(load, pollingIntervalMs(instance?.status ?? null, connected))
+  useEffect(() => abort, [abort])
   // Приведение экрана запускает запрос, а не каждое событие: шаги идут пачками,
   // и без общего счётчика страница запрашивала бы данные на каждый шаг.
   // Сборка затем, но последнее из любого события.

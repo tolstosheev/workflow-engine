@@ -5,8 +5,6 @@ import { create } from 'zustand'
 import { instances as instancesApi } from '@/api/client'
 import type { InstanceStatus, StreamEvent, WorkflowInstance } from '@/types/api'
 
-const REFRESH_INTERVAL_MS = 2000
-
 interface InstancesState {
   items: WorkflowInstance[]
   loading: boolean
@@ -14,6 +12,14 @@ interface InstancesState {
   connected: boolean
   lastEventAt: string | null
   statusFilter: InstanceStatus | 'ALL'
+  /**
+   * ????????? ??????????? ????? ??????? ?? ??????? ????????.
+   *
+   * ????? ?????????? ??????? ???????? ??? ???????????????, ? ??? ??????? ??
+   * ?????? ??????????? ???? ??????? ?? ?????? ????? ? ??????????? ???????
+   * ????? ???????? ?? ?????????????.
+   */
+  lastSeq: Record<string, number>
   load: (signal?: AbortSignal) => Promise<void>
   setStatusFilter: (status: InstanceStatus | 'ALL') => void
   handleEvent: (event: StreamEvent) => void
@@ -27,6 +33,7 @@ export const useInstancesStore = create<InstancesState>((set) => ({
   connected: false,
   lastEventAt: null,
   statusFilter: 'ALL',
+  lastSeq: {},
 
   load: async (signal) => {
     // Ошибку не стираем до попытки: фоновая подстраховка мигает на экране,
@@ -40,7 +47,9 @@ export const useInstancesStore = create<InstancesState>((set) => ({
         set({ loading: false })
         return
       }
-      set({ items: page.items, loading: false, error: null })
+      // ?????? ??????? ??????? ? ?? ????? ??????: ??????? ?? ??????? ???????
+      // ????????????, ????? ?????? ?? ???? ????? ???????????? ??? ?? ????????.
+      set({ items: page.items, loading: false, error: null, lastSeq: {} })
     } catch (error) {
       if (signal?.aborted) {
         // Отмена — не ошибка: ответит следующая загрузка, а сообщение об
@@ -64,14 +73,19 @@ export const useInstancesStore = create<InstancesState>((set) => ({
   // Событие меняет только то, к чему относится: полная перезагрузка списка на
   // каждом шаге превращала бы страницу в мигание.
   // `set` принимает функцию: чтение и запись происходят в одном атомарном
-  // влёте. Раздельно `get()` и `set()`: между ними вклинилась бы загрузка, и
-  // список, собранный до ответа, вернул бы статус на два шага назад.
+  // вылете. Раздельно `get()` и `set()`: между ними вклинилась бы загрузка,
+  // и список, собранный до ответа, вернул бы статус на два шага назад.
   handleEvent: (event) =>
     set((state) => {
+      const seen = state.lastSeq[event.instance_id] ?? -1
+      if (event.seq <= seen) {
+        // Повтор или запоздавший кадр: состояние уже новее этого события.
+        return { lastEventAt: event.created_at }
+      }
       const index = state.items.findIndex((item) => item.id === event.instance_id)
       if (index === -1) {
         // Новый инстанс или шаг удалённого: список доберёт ближайший опрос.
-        return { lastEventAt: event.created_at }
+        return { lastSeq: { ...state.lastSeq, [event.instance_id]: event.seq }, lastEventAt: event.created_at }
       }
 
       const next: WorkflowInstance = { ...state.items[index] }
@@ -132,15 +146,17 @@ export const useInstancesStore = create<InstancesState>((set) => ({
           next.current_step = String(event.payload.step ?? next.current_step)
           break
         default:
-          return { lastEventAt: event.created_at }
+          return { lastSeq: { ...state.lastSeq, [event.instance_id]: event.seq }, lastEventAt: event.created_at }
       }
 
       const items = [...state.items]
       items[index] = next
-      return { items, lastEventAt: event.created_at }
+      return {
+        items,
+        lastSeq: { ...state.lastSeq, [event.instance_id]: event.seq },
+        lastEventAt: event.created_at,
+      }
     }),
 
   setConnected: (connected) => set({ connected }),
 }))
-
-export { REFRESH_INTERVAL_MS }

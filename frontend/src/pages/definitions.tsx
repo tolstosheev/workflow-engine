@@ -66,8 +66,7 @@ export default function DefinitionsPage() {
   const dirty = source !== SAMPLE || startInput !== START_INPUT
 
   // Несохранённый JSON терялся бы молча: браузер или F5 уносят
-  // набытый жизный цикл. Без этого возвращение тоже найдёт
-  // несохранённый текст.
+  // набранный текст. Без этого возвращение нашло бы его снова.
   useEffect(() => {
     if (!dirty) return
     const warn = (event: BeforeUnloadEvent) => {
@@ -91,7 +90,7 @@ export default function DefinitionsPage() {
   }, [load])
 
   const save = async () => {
-    // Кнопка во время выполнения должна быть заблишена: save выполняет
+    // Кнопка во время выполнения должна быть заблокирована: save выполняет
     // три последовательных запроса, и второй клик создал бы
     // два одинаковых определения.
     if (busy) return
@@ -164,8 +163,8 @@ export default function DefinitionsPage() {
   }
 
   const start = async (definitionId: string) => {
-    // Без бюгаудя выключа двой клик создаст два инстанса: инстансы
-    // создаются неколькими разами, а пользователь видит только один.
+    // Без такой блокировки двойной клик создаст два инстанса: запросы уйдут
+    // почти одновременно, а пользователь увидит только один из них.
     if (busy) return
     setBusy(true)
     try {
