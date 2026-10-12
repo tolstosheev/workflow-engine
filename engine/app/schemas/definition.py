@@ -99,15 +99,6 @@ class WorkflowDefinitionSchema(BaseModel):
     description: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
 
-    @field_validator("steps")
-    @classmethod
-    def _key_matches_name(
-        cls, value: dict[str, ForkStep | JoinStep | Step]
-    ) -> dict[str, ForkStep | JoinStep | Step]:
-        # Ключ словаря — идентичность шага для переходов. Расхождение ключа и
-        # шага делало бы граф неоднозначным, и поиск переходов молчал бы.
-        return value
-
 
 class DefinitionCreate(BaseModel):
     """Тело запроса создания дефинишена."""

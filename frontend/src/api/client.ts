@@ -96,8 +96,7 @@ export const definitions = {
   activate: (id: string) =>
     request<WorkflowDefinition>(`/api/definitions/${id}/activate`, { method: 'POST' }),
 
-  deactivate: (id: string) =>
-    request<WorkflowDefinition>(`/api/definitions/${id}/deactivate`, { method: 'POST' }),
+
 }
 
 // --- Инстансы -------------------------------------------------------------
@@ -181,7 +180,6 @@ export const chaos = {
 }
 
 export const service = {
-  health: () => request<{ status: string }>('/health'),
   metrics: async () => {
     const response = await fetch(api('/metrics'))
     if (!response.ok) {

@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, definitions, instances } from '@/api/client'
+import { ApiError, definitions, instances, service } from '@/api/client'
 
 interface Call {
   url: string
@@ -22,6 +22,14 @@ function jsonResponse(body: unknown, status = 200): Response {
     ok: status >= 200 && status < 300,
     status,
     json: async () => body,
+  } as unknown as Response
+}
+
+function textResponse(text: string, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => text,
   } as unknown as Response
 }
 
@@ -111,5 +119,25 @@ describe('сборка запроса', () => {
     vi.stubGlobal('fetch', async () => jsonResponse(undefined, 204))
 
     await expect(instances.cancel('abc')).resolves.toBeUndefined()
+  })
+})
+
+describe('\u043c\u0435\u0442\u0440\u0438\u043a\u0438', () => {
+  it('\u043e\u0442\u0434\u0430\u0451\u0442 \u0442\u0435\u043a\u0441\u0442 \u043e\u0442\u0432\u0435\u0442\u0430, \u0430 \u043d\u0435 \u0440\u0430\u0437\u0431\u0438\u0440\u0430\u0435\u043c\u044b\u0439 \u0442\u0435\u043b\u043e', async () => {
+    vi.stubGlobal('fetch', async () => textResponse('workflow_up 1'))
+
+    await expect(service.metrics()).resolves.toBe('workflow_up 1')
+  })
+
+  it('\u0441\u043e\u043e\u0431\u0449\u0430\u0435\u0442 \u043a\u043e\u0434, \u0430 \u043d\u0435 \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u0435\u0442 \u043f\u0443\u0441\u0442\u043e\u0439 \u0441\u043f\u0438\u0441\u043e\u043a', async () => {
+    // \u041e\u0448\u0438\u0431\u043a\u0430 \u0431\u0435\u0437 \u0440\u0430\u0437\u0431\u043e\u0440\u0430 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u0442 \u043f\u0443\u0441\u0442\u043e\u0439 \u0441\u043f\u0438\u0441\u043e\u043a \u0432\u043c\u0435\u0441\u0442\u043e \u0437\u0430\u043f\u0440\u043e\u0441\u0430:
+    // \u044d\u0442\u043e \u0442\u043e \u0436\u0435, \u0447\u0442\u043e \u043f\u0440\u0438 \u0441\u0431\u043e\u0435 \u0434\u0430\u043d\u043d\u044b\u0445 \u043c\u0435\u0442\u0440\u0438\u043a \u0438\u043c\u0435\u043d\u043d\u043e \u043b\u0438 \u0441\u0447\u0438\u0442\u0430\u0435\u0442 \u043d\u0435\u0442.
+    vi.stubGlobal('fetch', async () => textResponse('', 503))
+
+    const error = await service.metrics().catch((cause: unknown) => cause)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(503)
+    expect((error as ApiError).message).toContain('503')
   })
 })

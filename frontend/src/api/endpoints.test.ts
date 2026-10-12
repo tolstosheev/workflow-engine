@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { chaos, definitions, instances, service } from '@/api/client'
+import { chaos, definitions, instances } from '@/api/client'
 
 interface Call {
   url: string
@@ -47,7 +47,6 @@ describe('определения', () => {
       '/api/definitions/validate',
     ],
     ['активация', () => definitions.activate('d1'), 'POST', '/api/definitions/d1/activate'],
-    ['деактивация', () => definitions.deactivate('d1'), 'POST', '/api/definitions/d1/deactivate'],
   ]
 
   it.each(cases)('%s: %s %s', async (_name, call, method, path) => {
@@ -137,13 +136,5 @@ describe('инъекции отказов', () => {
       step: 'charge_payment',
       instance_id: 'i1',
     })
-  })
-})
-
-describe('служебное', () => {
-  it('проверяет здоровье без префикса api', async () => {
-    await service.health()
-
-    expect(last().url).toMatch(/\/health$/)
   })
 })
