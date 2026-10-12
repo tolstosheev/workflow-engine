@@ -199,27 +199,8 @@ async def release(db_session: AsyncSession, instance_id: uuid.UUID, worker_id: s
     )
 
 
-async def find_expired(db_session: AsyncSession, batch_size: int = 10) -> list[uuid.UUID]:
-    """Инстансы с истёкшей арендой — кандидаты на перехват другим воркером."""
-    rows = await db_session.scalars(
-        select(WorkflowInstance.id)
-        .where(
-            WorkflowInstance.status.in_(_ACTIVE_STATUS_VALUES),
-            WorkflowInstance.lease_expires_at.is_not(None),
-            WorkflowInstance.lease_expires_at < _now(),
-        )
-        .order_by(WorkflowInstance.lease_expires_at)
-        .limit(batch_size)
-    )
-    return list(rows)
-
-
 async def current_owner(db_session: AsyncSession, instance_id: uuid.UUID) -> str | None:
     """Кто сейчас владеет арендой — для тестов и диагностики."""
     return await db_session.scalar(
         select(WorkflowInstance.lease_owner).where(WorkflowInstance.id == instance_id)
     )
-
-
-def is_active(status: InstanceStatus) -> bool:
-    return status in ACTIVE_STATUSES

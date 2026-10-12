@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -27,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.engine.idempotency import OperationKey
 from app.engine.journal import append_event
 from app.models.enums import CompensationStatus, EventType, StepRunStatus
-from app.models.workflow import CompensationLog, StepRun, WorkflowInstance
+from app.models.workflow import CompensationLog, StepRun
 
 logger = logging.getLogger(__name__)
 
@@ -260,28 +259,6 @@ def operation_key(instance_id: uuid.UUID, item: CompensationItem) -> OperationKe
     )
 
 
-async def stream_pending_steps(
-    db_session: AsyncSession, instance_id: uuid.UUID, batch_size: int = 10
-) -> AsyncIterator[StepRun]:
-    """Пошаговая выдача непокрытых шагов — для отката длинных процессов.
-
-    Потоковая выборка нужна, чтобы не держать в памяти тысячи строк `step_runs`
-    процесса, который живёт сутки.
-    """
-    result = await db_session.stream(
-        select(StepRun)
-        .where(
-            StepRun.instance_id == instance_id,
-            StepRun.status == StepRunStatus.COMPLETED,
-            StepRun.compensated.is_(False),
-        )
-        .order_by(StepRun.finished_at.desc())
-        .execution_options(yield_per=batch_size, stream_results=True)
-    )
-    async for step_run in result.scalars():
-        yield step_run
-
-
 async def failed_count(db_session: AsyncSession, instance_id: uuid.UUID) -> int:
     """Сколько компенсаций провалилось — признак ручного разбора."""
     from sqlalchemy import func
@@ -296,20 +273,3 @@ async def failed_count(db_session: AsyncSession, instance_id: uuid.UUID) -> int:
             )
         )
     ) or 0
-
-
-async def is_compensated(db_session: AsyncSession, instance_id: uuid.UUID) -> bool:
-    """Все ли выполненные шаги компенсированы."""
-    return (await completed_steps(db_session, instance_id)) == []
-
-
-async def set_instance_status(
-    db_session: AsyncSession, instance: WorkflowInstance, status: str
-) -> None:
-    """Обновляет статус инстанса. Только рядом с записью события журнала.
-
-    Прямое `UPDATE status` в обход журнала сделало бы состояние
-    невосстанавливаемым.
-    """
-    instance.status = status
-    await db_session.flush()

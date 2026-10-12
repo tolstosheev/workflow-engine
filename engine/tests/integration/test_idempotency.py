@@ -225,22 +225,6 @@ async def test_registration_is_rolled_back_with_transaction(db_session: AsyncSes
 # --- Диагностика -----------------------------------------------------------
 
 
-async def test_list_applied_returns_operations_in_order(db_session: AsyncSession) -> None:
-    instance_id = await _new_instance(db_session)
-    await idempotency.mark_applied(db_session, make_key(instance_id, "a", 1))
-    await idempotency.mark_applied(db_session, make_key(instance_id, "b", 1))
-
-    applied = await idempotency.list_applied(db_session, instance_id)
-
-    assert applied == [f"{instance_id}:a:1", f"{instance_id}:b:1"]
-
-
-async def test_list_applied_is_empty_for_new_instance(db_session: AsyncSession) -> None:
-    instance_id = await _new_instance(db_session)
-
-    assert await idempotency.list_applied(db_session, instance_id) == []
-
-
 async def test_mark_rejects_unknown_instance(db_session: AsyncSession) -> None:
     """Нарушение внешнего ключа — не гонка, а ошибка данных.
 

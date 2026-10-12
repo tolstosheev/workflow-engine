@@ -156,13 +156,3 @@ def _is_unique_violation(exc: IntegrityError) -> bool:
         return constraint == "uq_processed_operations_key"
     text = str(orig)
     return "uq_processed_operations_key" in text or "duplicate key" in text.lower()
-
-
-async def list_applied(db_session: AsyncSession, instance_id: uuid.UUID) -> list[str]:
-    """Список применённых операций инстанса — для диагностики и отладки."""
-    rows = await db_session.scalars(
-        select(ProcessedOperation.op_key)
-        .where(ProcessedOperation.instance_id == instance_id)
-        .order_by(ProcessedOperation.created_at)
-    )
-    return list(rows)

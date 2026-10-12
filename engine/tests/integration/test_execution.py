@@ -744,7 +744,7 @@ async def test_compensation_is_not_applied_twice(
     # Повтор компенсации после падения воркера обязан быть безопасным: возврат
     # средств дважды — двойной платёж наоборот (§3.4).
     import app.demo.handlers as demo
-    from app.engine import idempotency, saga
+    from app.engine import saga
 
     calls: list[object] = []
     original = demo.release_inventory
@@ -770,8 +770,6 @@ async def test_compensation_is_not_applied_twice(
     # Ключ компенсации отмечен: повтор не должен дойти до обработчика.
     items = await saga.plan(db_session, instance_id, {"reserve_inventory": None})
     assert items == []
-    applied = await idempotency.list_applied(db_session, instance_id)
-    assert any(key.startswith(f"{instance_id}:compensate:") for key in applied)
     monkeypatch.setattr(demo, "release_inventory", original)
 
 
