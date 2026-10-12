@@ -49,7 +49,7 @@ describe('handleEvent', () => {
   it('keeps the other instance untouched when the event is unknown', () => {
     const before = useInstancesStore.getState().items[1]
 
-    useInstancesStore.getState().handleEvent(event('LEASE_EXPIRED', {}))
+    useInstancesStore.getState().handleEvent(event('STEP_RETRY_SCHEDULED', {}))
 
     expect(useInstancesStore.getState().items[1]).toBe(before)
   })

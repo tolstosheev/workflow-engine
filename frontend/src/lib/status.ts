@@ -52,7 +52,7 @@ export function statusLabel(status: InstanceStatus): string {
 
 const EVENT_LABELS: Record<EventType, string> = {
   INSTANCE_CREATED: 'Инстанс создан',
-  INSTANCE_STARTED: 'Начато исполнение',
+
   STEP_STARTED: 'Шаг начат',
   STEP_COMPLETED: 'Шаг выполнен',
   STEP_FAILED: 'Шаг провален',
@@ -63,13 +63,12 @@ const EVENT_LABELS: Record<EventType, string> = {
   COMPENSATION_STARTED: 'Компенсация начата',
   COMPENSATION_COMPLETED: 'Компенсация выполнена',
   COMPENSATION_FAILED: 'Компенсация провалена',
-  COMPENSATION_SKIPPED: 'Компенсация не объявлена',
+
   INSTANCE_COMPLETED: 'Процесс завершён',
   INSTANCE_COMPENSATED: 'Процесс откатан',
   INSTANCE_FAILED: 'Процесс провален без отката',
   INSTANCE_CANCEL_REQUESTED: 'Запрошена отмена',
   INSTANCE_CANCELLED: 'Процесс отменён',
-  LEASE_EXPIRED: 'Аренда истекла',
 }
 
 export function eventLabel(type: EventType): string {

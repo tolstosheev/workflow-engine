@@ -24,7 +24,7 @@ from app.engine.journal import (
     steps_to_compensate,
 )
 from app.models.enums import ACTIVE_STATUSES, TERMINAL_STATUSES, EventType, InstanceStatus
-from app.models.workflow import StepRun, WorkflowDefinition, WorkflowInstance
+from app.models.workflow import StepRun, WorkflowDefinition, WorkflowEvent, WorkflowInstance
 
 _EPOCH = datetime.min.replace(tzinfo=UTC)
 
@@ -244,10 +244,25 @@ async def retry_compensation(db_session: AsyncSession, instance_id: uuid.UUID) -
 
 
 async def rebuild_state(db_session: AsyncSession, instance_id: uuid.UUID) -> dict:
-    """Состояние инстанса по журналу — то, что увидит воркер после подхвата."""
+    """Состояние инстанса по журналу — то, что увидит воркер после подхвата.
+
+    Разбор стоит работы, пропорциональной длине журнала, а страница опрашивает
+    состояние каждые секунды. Поэтому результат помнится в процессе API и
+    действителен, пока журнал не изменился: свежесть проверяется по головному
+    `seq`, который берётся индексом и стоит один запрос. Семантика не меняется —
+    кэш отдаёт ровно то, что дал бы повторный разбор того же журнала.
+    """
+    head = await db_session.scalar(
+        select(func.max(WorkflowEvent.seq)).where(WorkflowEvent.instance_id == instance_id)
+    )
+    head_seq = int(head if head is not None else -1)
+    cached = _STATE_CACHE.get(instance_id)
+    if cached is not None and cached[0] == head_seq:
+        return cached[1]
+
     events = await read_events(db_session, instance_id)
     state = replay(events)
-    return {
+    result = {
         "status": state.status,
         "current_step": state.current_step,
         "variables": state.variables,
@@ -256,6 +271,22 @@ async def rebuild_state(db_session: AsyncSession, instance_id: uuid.UUID) -> dic
         "is_terminal": state.is_terminal,
         "step_iterations": state.step_iterations,
     }
+    if len(_STATE_CACHE) >= _STATE_CACHE_SIZE:
+        _STATE_CACHE.clear()
+    _STATE_CACHE[instance_id] = (head_seq, result)
+    return result
+
+
+# Кэш состояния живёт в процессе API: инстансов на стенде десятки, а потеря
+# кэша стоит одного повторного разбора. Общая папка не нужна — состояние
+# выводится журналом, и кэш только избавляет от повторной работы.
+_STATE_CACHE_SIZE = 512
+_STATE_CACHE: dict[uuid.UUID, tuple[int, dict]] = {}
+
+
+def clear_state_cache() -> None:
+    """Сбрасывает кэш состояния — для тестов и диагностики."""
+    _STATE_CACHE.clear()
 
 
 def _terminal_statuses() -> frozenset[InstanceStatus]:

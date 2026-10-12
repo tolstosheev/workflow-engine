@@ -66,7 +66,7 @@ describe('подписи событий', () => {
   it('подписывает каждое событие, которое движок пишет в журнал', () => {
     const types: EventType[] = [
       'INSTANCE_CREATED',
-      'INSTANCE_STARTED',
+      'STEP_STARTED',
       'STEP_COMPLETED',
       'STEP_FAILED',
       'COMPENSATION_STARTED',

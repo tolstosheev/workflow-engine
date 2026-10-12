@@ -31,6 +31,13 @@ router = APIRouter(prefix="/api", tags=["stream"])
 
 # На экране интересуют только смена статуса, шаги и компенсации. LEASE_EXPIRED
 # не меняет картину и только увеличивает поток.
+# ?? ?????? ?????????? ???????? ????????: ????, ???????? ? ???????????.
+# LEASE_EXPIRED ?? ?????? ??????? ? ?????? ??????????? ?????.
+#
+# ?????? ?????? ????????? ? ????????? ??????? (`frontend/src/api/stream.ts`):
+# ???????, ???????? ??? ? ??????, ?? ??????? ?????, ? ??? ?????????? ?
+# ????????? ????????? ????????????. ??????????? ?????
+# `tests/unit/test_stream_contract.py`.
 NOTIFIABLE = frozenset(
     {
         EventType.INSTANCE_CREATED,
@@ -39,21 +46,36 @@ NOTIFIABLE = frozenset(
         EventType.INSTANCE_CANCEL_REQUESTED,
         EventType.INSTANCE_CANCELLED,
         EventType.INSTANCE_FAILED,
+        EventType.STEP_STARTED,
         EventType.STEP_COMPLETED,
         EventType.STEP_FAILED,
+        # ???????? ? ???? ???????? ????????: ??? ???? ??????? ????? ??????
+        # ????????? ?? ????????????? ?????? ?????????? ? ?? ????? ?? ????.
+        EventType.TIMER_SCHEDULED,
+        EventType.TIMER_FIRED,
         EventType.COMPENSATION_STARTED,
         EventType.COMPENSATION_COMPLETED,
         EventType.COMPENSATION_FAILED,
-        # Истеранение цикла выводит инстанс в откат. Без этого события в
-        # потоке статус в списке до пересбора бы дождалось влет у статус
-        # RUNNING и лишь запускал отката, который не виден.
+        # ?????????? ????? ??????? ??????? ? ?????. ??? ????? ??????? ?
+        # ?????? ?????? ? ?????? ??????? ?? `RUNNING`, ???? ????? ??? ????.
         EventType.LOOP_EXHAUSTED,
     }
 )
 
+# Намеренно молчащие события: они пишутся в журнал, но экран по ним не
+# меняется, и в поток их слать незачем.
+SILENT = frozenset(
+    {
+        # Повтор шага не меняет состояние процесса: он и так выполняется, и
+        # строка списка остаётся «выполняется» — как и до повтора. Подробности
+        # видны в журнале инстанса, который страница читает прямо.
+        EventType.STEP_RETRY_SCHEDULED,
+    }
+)
+
 # Курсор потока — момент времени последнего события. Новое подключение
-# получает только новые события а не всю историю: раньше увидит тысячи
-# полученных кадров.
+# получает только новые события, а не всю историю: иначе на каждое подключение
+# пришёлся бы весь журнал работы стенда.
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -65,7 +87,7 @@ def _format(event_type: EventType, payload: dict, created_at: datetime) -> str:
     return f"id: {created_at.isoformat()}\nevent: {event_type.value}\ndata: {data}\n\n"
 
 
-async def _read_after(cursor: datetime) -> list[tuple[datetime, EventType, dict, str]]:
+async def _read_after(cursor: datetime) -> list[tuple[datetime, EventType, dict, str, int]]:
     async with session_scope() as session:
         rows = (
             await session.scalars(
@@ -78,19 +100,20 @@ async def _read_after(cursor: datetime) -> list[tuple[datetime, EventType, dict,
     # instance_id берётся из колонки события, а не из payload: в payload его
     # нет, и клиент получал бы пустой идентификатор инстанса.
     return [
-        (row.created_at, EventType(row.type), row.payload, str(row.instance_id)) for row in rows
+        (row.created_at, EventType(row.type), row.payload, str(row.instance_id), row.seq)
+        for row in rows
     ]
 
 
 async def event_stream(last_event_id: str | None) -> AsyncIterator[str]:
     """Отдаёт события по мере появления новых записей в журнале.
 
-    Курсор приходит от подключения, а не всю историю. Раньше был цикл, который прогонял всю историю за одного
-    подключения и делал общение за три секунды.
+    Курсор приходит от подключения: новая подписка получает только новые
+    события, а не всю историю работы стенда. `Last-Event-ID` присылает браузер
+    сам, и `EventSource` переподключается без участия клиента.
 
-    `Last-Event-ID` присылает браузер EventSource сам и возвращает потом к адресу идентификатора
-    последнего события. Раньше каждое подключение шло всю выборку
-    журнала и прогонял обрабатывать его повторно.
+    В кадр входит `seq` события внутри инстанса: клиенту нужен порядок, иначе
+    повторный или запоздавший кадр откатил бы строку списка назад.
     """
     settings = get_settings()
     cursor = _parse_cursor(last_event_id) or datetime.now(UTC)
@@ -105,20 +128,21 @@ async def event_stream(last_event_id: str | None) -> AsyncIterator[str]:
             batch = []
 
         if batch:
-            for created_at, event_type, payload, instance_id in batch:
+            for created_at, event_type, payload, instance_id, seq in batch:
                 cursor = max(cursor, created_at)
                 if event_type in NOTIFIABLE:
                     yield _format(
                         event_type,
                         {
                             "instance_id": instance_id,
+                            "seq": seq,
                             "type": event_type.value,
                             "payload": payload,
                             "created_at": created_at.isoformat(),
                         },
                         created_at,
                     )
-            # Затрус без паузы: при большом отставшемя батьях не должно пропускать раз в секунду.
+            # Без паузы: накопившаяся очередь отдаётся вся сразу.
             await asyncio.sleep(0)
             continue
 
@@ -131,10 +155,11 @@ async def event_stream(last_event_id: str | None) -> AsyncIterator[str]:
 
 
 def _parse_cursor(last_event_id: str | None) -> datetime | None:
-    """Заголвок `Last-Event-ID` в время.
+    """Заголовок `Last-Event-ID` в время.
 
-    Браузер присылает там что отдаёт, но только всё. Неверный вывод
-    должен возвращать только новые события так идёт с параллельного соединения.
+    Браузер присылает там последнее полученное событие. Значение может оказаться
+    чем угодно, и неверный разбор обязан привести к началу с текущего момента,
+    а не к выдаче всей истории.
     """
     if not last_event_id:
         return None
@@ -152,8 +177,8 @@ async def stream(request: Request) -> StreamingResponse:
         event_stream(request.headers.get("last-event-id")),
         media_type="text/event-stream",
         headers={
-            # Буферизация прокси иначе собрет все события и отдалт
-            # пачкой, а интерфейс перестанет быть живым.
+            # Буферизация прокси иначе соберёт события и отдаст пачкой,
+            # а интерфейс перестанет быть живым.
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },

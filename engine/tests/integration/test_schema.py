@@ -102,7 +102,7 @@ async def test_events_seq_is_unique_per_instance(db_session: AsyncSession) -> No
     db_session.add(WorkflowEvent(instance_id=instance_id, seq=0, type="INSTANCE_CREATED"))
     await db_session.flush()
 
-    db_session.add(WorkflowEvent(instance_id=instance_id, seq=0, type="INSTANCE_STARTED"))
+    db_session.add(WorkflowEvent(instance_id=instance_id, seq=0, type="STEP_STARTED"))
 
     with pytest.raises(IntegrityError, match="uq_workflow_events_instance_seq"):
         await db_session.flush()
@@ -332,9 +332,7 @@ async def test_step_seq_advances_under_row_lock(db_session: AsyncSession) -> Non
             text("SELECT coalesce(max(seq), -1) FROM workflow_events WHERE instance_id = :i"),
             {"i": instance_id},
         )
-        db_session.add(
-            WorkflowEvent(instance_id=instance_id, seq=current + 1, type="INSTANCE_STARTED")
-        )
+        db_session.add(WorkflowEvent(instance_id=instance_id, seq=current + 1, type="STEP_STARTED"))
         await db_session.flush()
         assert current + 1 == expected
 

@@ -112,8 +112,8 @@ class WorkflowInstance(Base, TimestampMixin):
             postgresql_where="status IN ('PENDING','RUNNING','WAITING','CANCELLING','COMPENSATING','COMPENSATION_FAILED')",
         ),
         Index("ix_workflow_instances_status_created", "status", "created_at"),
-        # Фильтр по определению — внешний ключ без индекса, а фильтр без
-        # него считается в определию скановеками.
+        # Фильтр по определению — внешний ключ, а внешние ключи индекса не
+        # получают: без него отбор по определению сканировал бы таблицу.
         Index("ix_workflow_instances_definition", "definition_id"),
     )
 
@@ -148,9 +148,9 @@ class WorkflowEvent(Base):
         Index("uq_workflow_events_instance_seq", "instance_id", "seq", unique=True),
         Index("ix_workflow_events_instance_created", "instance_id", "created_at"),
         Index("ix_workflow_events_type_created", "type", "created_at"),
-        # Поток SSE сортирует события по времени без ведущей колонки,
-        # а у двух именющихся индексов начинаются с created_at или type:
-        # без этого планированик читает всю таблицу и сортирует.
+        # Поток SSE сортирует события по времени, а индексы по инстансу и по
+        # типу начинаются не с него: без такого индекса планировщик читает всю
+        # таблицу и сортирует её на стороне СУБД.
         Index("ix_workflow_events_created", "created_at"),
         CheckConstraint("seq >= 0", name="seq_non_negative"),
     )
@@ -219,9 +219,9 @@ class Timer(Base):
 
     __table_args__ = (
         Index("ix_timers_due", "fired", "due_at"),
-        # planned_for или ся ищет по инстансу и шагу на каждом цикле воркера,
-        # а не по сроке ожидания. Без этого индекса воркер шага с ожиданием
-        # сканировал всю таблицу.
+        # `planned_for` ищет по инстансу и шагу на каждом цикле воркера, а не
+        # по сроку ожидания: без индекса на этой паре воркер сканировал бы
+        # всю таблицу таймеров.
         Index("ix_timers_instance_step", "instance_id", "step_name"),
     )
 
@@ -293,9 +293,8 @@ class CompensationLog(Base):
             unique=True,
             postgresql_where="finished_at IS NULL",
         ),
-        # Частичный индекс без условия: партиальный уникальный
-        # сработает только на невыкоменных запусках, а find_step_run ищет
-        # по всем записям.
+        # Индекс без условия: партиальный уникальный действовал бы только на
+        # невыполненных запусках, а `find_step_run` ищет по всем записям.
         Index("ix_compensation_log_step_run", "step_run_id"),
     )
 

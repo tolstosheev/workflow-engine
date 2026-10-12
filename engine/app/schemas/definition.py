@@ -28,6 +28,10 @@ class RetryPolicy(BaseModel):
     max_attempts: int = Field(default=3, ge=1, le=100)
     backoff_seconds: float = Field(default=1.0, ge=0, le=3600)
     backoff_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
+    # Потолок задержки. Без него `backoff_seconds * multiplier**(n-1)` при
+    # разрешённых границах даёт ожидание на миллиарды секунд: процесс ушёл бы
+    # в таймер за пределы срока службы.
+    max_backoff_seconds: float = Field(default=300.0, ge=0, le=86_400)
 
 
 class Step(BaseModel):

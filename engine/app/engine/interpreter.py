@@ -109,8 +109,8 @@ def decide_after_failure(
         return StepDecision(step_name=on_failure, kind="run")
 
     if permanent:
-        # Отказ по сути дела: товар не появится, и ещё несколько попыток
-        # только отдалит откат в себя уже выполненного шага.
+        # Отказ по существу дела: товар не появится, и ещё несколько попыток
+        # только отложат откат уже выполненного шага.
         return StepDecision(
             step_name=None, kind="stop", reason="постоянная ошибка, повтор не поможет"
         )
@@ -131,9 +131,13 @@ def backoff_for(step: Step, attempt: int, fallback_max: int) -> float:
 
     Рост задержки обязателен: немедленные повторы при недоступном сервисе
     только добивают его, не оставляя времени на восстановление.
+
+    Рост ограничен потолком политики: без него степень растёт до величин,
+    которые переводят ожидание за пределы срока службы процесса.
     """
     policy = _default_retry(step, fallback_max)
-    return policy.backoff_seconds * (policy.backoff_multiplier ** max(attempt - 1, 0))
+    delay = policy.backoff_seconds * (policy.backoff_multiplier ** max(attempt - 1, 0))
+    return min(delay, policy.max_backoff_seconds)
 
 
 def wait_before(step: Step) -> float:

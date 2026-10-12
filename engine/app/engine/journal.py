@@ -179,10 +179,6 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.status = InstanceStatus.PENDING
             state.current_step = payload.get("start")
 
-        case EventType.INSTANCE_STARTED:
-            state.status = InstanceStatus.RUNNING
-            state.current_step = payload.get("step", state.current_step)
-
         case EventType.STEP_STARTED:
             state.status = InstanceStatus.RUNNING
             state.current_step = payload.get("step")
@@ -214,9 +210,9 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
                 InstanceStatus.COMPENSATING if payload.get("terminal") else InstanceStatus.RUNNING
             )
             if payload.get("terminal"):
-                # Откат восил по проводилению: если откат подадается из отказа,
-                # инстанс закончивается отказом, а не отменой. Воркер различает
-                # эти состояния по поля механизма.
+                # Откат восстанавливается по журналу: если компенсация пошла из
+                # отказа, инстанс закончится отказом, а не отменой. Различие
+                # хранится в самом механизме, а не догадывается по колонке.
                 state.cancel_requested = False
             # Переход по объявленной ветке `on_failure`. Терминальный отказ
             # означает откат, а не продолжение, поэтому в нём шага нет.
@@ -245,9 +241,6 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
         case EventType.COMPENSATION_FAILED:
             state.status = InstanceStatus.COMPENSATION_FAILED
 
-        case EventType.COMPENSATION_SKIPPED:
-            state.status = InstanceStatus.COMPENSATING
-
         case EventType.INSTANCE_COMPLETED:
             state.status = InstanceStatus.COMPLETED
             state.current_step = None
@@ -274,13 +267,12 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.status = InstanceStatus.CANCELLED
             state.current_step = None
 
-        case EventType.LEASE_EXPIRED:
-            # Само по себе истечение аренды ничего не меняет: подхват должен
-            # продолжить с того же места.
+        case _:  # pragma: no cover - событие из более новой версии движка
+            # Неизвестный тип не останавливает разбор: событие появилось в
+            # более новой версии движка, и старый воркер обязан продолжить
+            # работу с журналом, а не упасть на каждом чтении состояния.
+            # Известные типы перечислены выше явно, опечатка в enum невозможна.
             pass
-
-        case _:  # pragma: no cover - все типы перечислены выше
-            raise ValueError(f"неизвестный тип события: {event.type}")
 
 
 def replay(events: list[RecordedEvent]) -> InstanceState:

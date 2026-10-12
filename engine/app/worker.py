@@ -33,18 +33,11 @@ from app.core.logging import configure_logging
 from app.engine import executor, interpreter, lease, saga, scheduler
 from app.engine.journal import read_events, replay
 from app.metrics import IS_MULTIPROCESS, LEASE_ACQUIRED
-from app.models.enums import TERMINAL_STATUSES, EventType, InstanceStatus
+from app.models.enums import TERMINAL_STATUSES, InstanceStatus
 from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
 
 logger = logging.getLogger(__name__)
-
-STATUS_EVENTS = {
-    InstanceStatus.PENDING: EventType.INSTANCE_STARTED,
-    InstanceStatus.RUNNING: EventType.INSTANCE_STARTED,
-    InstanceStatus.WAITING: EventType.INSTANCE_STARTED,
-    InstanceStatus.COMPENSATING: EventType.INSTANCE_STARTED,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,14 +48,14 @@ class CycleResult:
     step_executed: bool
     terminal: bool
     lease_lost: bool
-    # Идентификатор инстанса: без него в логе невозможно сказать, какой инстанс
-    # цикл оборвал и в поведения аварии не показан места.
+    # Идентификатор инстанса: без него в логе не сказать, какой процесс оборвал
+    # цикл, и разбор аварии по журналу воркера был бы невозможен.
     instance_id: uuid.UUID | None = None
 
 
 def _worker_id() -> str:
-    # Идентификатор включает имя узла: по нему видно, какой из воркеров подхватил.
-    # docker-compose сейчас держит инстанс.
+    # Идентификатор включает имя узла: по нему видно, какой воркер подхватил
+    # инстанс, и записи разных процессов различаются в журнале.
     return f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
 
@@ -146,9 +139,8 @@ async def _compensate(
         if not items:
             # Откатывать нечего. Отмена при этом всё равно завершилась, но
             # называть её `COMPENSATED` было бы враньём: компенсаций не было.
-            # Итог утечённое состояние зависит от последнего события:
-            # пользователь запросил отмену — инстанс отменён,
-            # а упавший шаг — отказан — отказан в себя успешно не был.
+            # Итог зависит от последнего события журнала: отмену запросили —
+            # инстанс отменён, шаг упал — отказ, потому что откатывать было нечего.
             empty_status = (
                 InstanceStatus.CANCELLED if state.cancel_requested else InstanceStatus.FAILED
             )
@@ -306,8 +298,8 @@ async def run_cycle(
         claimed = await lease.claim_next(session, worker_id)
         if claimed is None:
             return CycleResult(handled=False, step_executed=False, terminal=False, lease_lost=False)
-        # Аренда удачена этого шага: любой успешный захват воркера, а не этот
-        # скалькой цикл вообще. Метрика считает, сколько раз аренд был десятько всегда нечего стоало недельзя.
+        # Аренда удалась этому шагу: метрика считает удачные захваты, а не
+        # пустые циклы, в которых никто ничего не взял.
         LEASE_ACQUIRED.inc()
 
         instance_row = await session.get(
@@ -481,8 +473,8 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
                 if not result.handled:
                     break
                 if result.lease_lost:
-                    # Цикл оборваны недоведённо: шаг пал с неожиданной ошибкой.
-                    # Без паузы воркер сразу забирает следующий инстанс и берёт его сразу.
+                    # Цикл оборвался недоведённо: без паузы воркер сразу забрал бы
+                    # следующий инстанс и упал бы на нём тем же самым.
                     logger.warning(
                         "cycle.aborted",
                         extra={

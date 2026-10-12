@@ -296,15 +296,6 @@ async def test_failure_event_carries_error(db_session: AsyncSession) -> None:
     assert state.status.value == "COMPENSATION_FAILED"
 
 
-async def test_skipped_step_is_recorded(db_session: AsyncSession) -> None:
-    instance_id = await _new_instance(db_session)
-
-    await saga.mark_skipped(db_session, instance_id, "validate")
-
-    events = await read_events(db_session, instance_id)
-    assert [e.type for e in events] == [EventType.COMPENSATION_SKIPPED]
-
-
 async def test_attempts_counted_from_log(db_session: AsyncSession) -> None:
     # Счётчик обязан переживать перезапуск воркера, поэтому берётся из БД.
     instance_id = await _new_instance(db_session)

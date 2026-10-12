@@ -67,8 +67,8 @@ async def create_instance(
 ) -> InstanceCreated:
     instance = await service.create_instance(db_session, payload.definition_id, payload.input)
     await db_session.commit()
-    # Счётчик растёт после коммита: откат не создаёт инстанса,
-    # и считать его бы некому — загрузка считала бы считала больше созданённых.
+    # Счётчик растёт после коммита: откат не создаёт инстанса, и считать его
+    # некому — загрузка показала бы больше созданных, чем их есть.
     INSTANCES_TOTAL.inc()
 
     definition = await _definition_of(db_session, instance)

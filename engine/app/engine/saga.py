@@ -246,15 +246,6 @@ async def finish_attempt(
     )
 
 
-async def mark_skipped(db_session: AsyncSession, instance_id: uuid.UUID, step_name: str) -> None:
-    """Фиксирует шаг без компенсации.
-
-    Отсутствие компенсации — не ошибка: часть шагов обратима по умолчанию.
-    Событие нужно, чтобы по журналу было видно, что шаг откатан не будет.
-    """
-    await append_event(db_session, instance_id, EventType.COMPENSATION_SKIPPED, {"step": step_name})
-
-
 def operation_key(instance_id: uuid.UUID, item: CompensationItem) -> OperationKey:
     """Ключ идемпотентности для компенсации.
 

@@ -16,7 +16,6 @@ export type StepRunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CO
 
 export type EventType =
   | 'INSTANCE_CREATED'
-  | 'INSTANCE_STARTED'
   | 'STEP_STARTED'
   | 'STEP_COMPLETED'
   | 'STEP_FAILED'
@@ -27,13 +26,11 @@ export type EventType =
   | 'COMPENSATION_STARTED'
   | 'COMPENSATION_COMPLETED'
   | 'COMPENSATION_FAILED'
-  | 'COMPENSATION_SKIPPED'
   | 'INSTANCE_COMPLETED'
   | 'INSTANCE_COMPENSATED'
   | 'INSTANCE_FAILED'
   | 'INSTANCE_CANCEL_REQUESTED'
   | 'INSTANCE_CANCELLED'
-  | 'LEASE_EXPIRED'
 
 export interface DefinitionRef {
   id: string
