@@ -10,6 +10,7 @@
  * интерфейсе.
  */
 
+import type { InstanceStatus } from '@/types/api'
 /** Значение одного образца: метрика с набором меток. */
 export interface Sample {
   name: string
@@ -18,6 +19,32 @@ export interface Sample {
 }
 
 const SAMPLE = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{(.*)\})?\s+([-+0-9.eE]+|NaN|[+-]?Inf)/
+
+/**
+ * Статусы, которые показывает разрез: всегда, даже когда их ноль.
+ *
+ * Ожидающие и застрявшие состояния не менее важны, чем успешные. Созданный,
+ * но не начатый процесс означает, что воркер его не взял; застрявший в отмене
+ * — что компенсация не пошла. Список сверяется с перечислением движка тестом
+ * `engine/tests/unit/test_metrics_contract.py`: добавили состояние — список
+ * обязан его показать.
+ */
+export const BREAKDOWN_STATUSES: InstanceStatus[] = [
+  'PENDING',
+  'RUNNING',
+  'WAITING',
+  // Пауза ждёт человека: без неё в разрезе не видно, сколько процессов стоит
+  // и ждёт решения — а это ровно те процессы, у которых часы идут, а работа
+  // не идёт.
+  'PAUSED',
+  'CANCELLING',
+  'COMPENSATING',
+  'COMPENSATION_FAILED',
+  'COMPLETED',
+  'COMPENSATED',
+  'CANCELLED',
+  'FAILED',
+]
 
 /** Разбирает одну строку в образец. `null`, если строка не образец. */
 export function parseSample(line: string): Sample | null {

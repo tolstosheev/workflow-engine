@@ -12,9 +12,8 @@ import { useCallback, useState } from 'react'
 import { service } from '@/api/client'
 import { Card, EmptyState, ErrorState } from '@/components/ui'
 import { usePolling } from '@/hooks/usePolling'
-import { labelsOf, parseMetrics, sumBy, valueOf } from '@/lib/metrics'
+import { BREAKDOWN_STATUSES, labelsOf, parseMetrics, sumBy, valueOf } from '@/lib/metrics'
 import type { Sample } from '@/lib/metrics'
-import type { InstanceStatus } from '@/types/api'
 
 /** Значения, ненулевые в которых означают инцидент. */
 const ALARMS: Array<{ test: (samples: Sample[]) => number; text: string }> = [
@@ -32,17 +31,12 @@ const ALARMS: Array<{ test: (samples: Sample[]) => number; text: string }> = [
   },
 ]
 
-/** Статусы, показываются всегда: нулевое значение тоже информативно. */
-const STATUSES: InstanceStatus[] = [
-  'RUNNING',
-  'WAITING',
-  'COMPENSATING',
-  'COMPENSATION_FAILED',
-  'COMPLETED',
-  'COMPENSATED',
-  'CANCELLED',
-  'FAILED',
-]
+/**
+ * Список живёт в `lib/metrics`, а не здесь: он проверяется тестом на стороне
+ * движка, который сверяет его с перечислением статусов, а тест из файла
+ * компонента прочитать не может.
+ */
+const STATUSES = BREAKDOWN_STATUSES
 
 /**
  * Частота опроса метрик. Значение короткое: метрики собираются из БД при

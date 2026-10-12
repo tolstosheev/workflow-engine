@@ -13,7 +13,6 @@ import {
   eventLabel,
   formatDateTime,
   formatDuration,
-  formatTime,
   statusLabel,
   statusTone,
   stepTone,
@@ -101,15 +100,13 @@ describe('тон шага', () => {
 
 describe('время', () => {
   it('показывает прочерк вместо пустой даты', () => {
-    expect(formatTime(null)).toBe('—')
-    expect(formatTime(undefined)).toBe('—')
     expect(formatDateTime(null)).toBe('—')
+    expect(formatDateTime(undefined)).toBe('—')
   })
 
   it('подставляет прочерк вместо Invalid Date', () => {
     // Неразбираная дата не должна попадать в журнал: «Invalid Date»
     // выглядит как сбой интерфейса, а не как отсутствие данных.
-    expect(formatTime('не дата')).toBe('—')
     expect(formatDateTime('не дата')).toBe('—')
   })
 

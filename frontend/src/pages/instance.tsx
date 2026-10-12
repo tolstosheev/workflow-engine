@@ -279,6 +279,7 @@ function EventPayload({ payload }: { payload: Record<string, unknown> | null | u
     <>
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
         className="mt-0.5 text-[11px] text-accent/80 hover:text-accent"
       >
@@ -286,7 +287,7 @@ function EventPayload({ payload }: { payload: Record<string, unknown> | null | u
       </button>
       {open && (
         <pre className="mt-1 overflow-auto rounded bg-surface p-2 text-[11px] text-white/60">
-          {JSON.stringify(Object.fromEntries(entries), null, 2)}
+          {JSON.stringify(payload, null, 2)}
         </pre>
       )}
     </>

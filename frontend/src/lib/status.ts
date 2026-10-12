@@ -93,19 +93,8 @@ export function stepTone(status: StepRunStatus): string {
   return TONE_CLASSES[STEP_TONES[status]]
 }
 
-export function formatTime(value: string | null | undefined): string {
-  return format(value, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
 export function formatDateTime(value: string | null | undefined): string {
-  return format(value, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
+  return format(value, DATE_TIME)
 }
 
 /**
@@ -115,12 +104,27 @@ export function formatDateTime(value: string | null | undefined): string {
  * выглядит как сбой интерфейса, а не как отсутствие данных, и отвлекает от
  * того, что смотрели.
  */
-function format(value: string | null | undefined, options: Intl.DateTimeFormatOptions): string {
+function format(value: string | null | undefined, formatter: Intl.DateTimeFormat): string {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('ru-RU', { ...options, hour12: false })
+  return formatter.format(date)
 }
+
+/**
+ * Форматтеры создаются один раз: `toLocaleString` собирает локаль заново при
+ * каждом вызове, а подпись времени показывается в каждой строке таблицы и в
+ * каждом событии журнала.
+ */
+const DATE_TIME = new Intl.DateTimeFormat('ru-RU', {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+})
 
 export function formatDuration(from: string, to: string | null): string {
   if (!to) return 'выполняется'
