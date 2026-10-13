@@ -105,9 +105,6 @@ export default function DefinitionsPage() {
       // обновить снимает тупик, в который попадает каждый, кто сохранил
       // образец дважды.
       const clash = list.find((item) => item.name === name && item.version === version)
-      // Обновление принимает только саму схему без имени и версии: у
-      // DefinitionUpdate с extra="forbid" отвергает name и version,
-      // и запрос падал бы с 422.
       if (
         clash &&
         !window.confirm(
@@ -285,7 +282,12 @@ export default function DefinitionsPage() {
                   <td className="py-2 text-white/50">{formatDateTime(item.created_at)}</td>
                   <td className="py-2">
                     <div className="flex gap-2">
-                      <Button onClick={() => setSelected(item.id)}>Выбрать</Button>
+                      {/* Выбор виден только цветом кнопки: с клавиатуры и для
+                          скринридера было непонятно, какое из определений сейчас
+                          выбрано, а от этого зависит карточка запуска. */}
+                      <Button aria-pressed={selected === item.id} onClick={() => setSelected(item.id)}>
+                        Выбрать
+                      </Button>
                       <Button onClick={() => void validate(item.id)}>Проверить</Button>
                       <Button disabled={busy} onClick={() => void start(item.id)}>Запустить</Button>
                     </div>

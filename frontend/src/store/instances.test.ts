@@ -25,17 +25,82 @@ const STUB = (id: string, status: WorkflowInstance['status'] = 'RUNNING'): Workf
   updated_at: '2026-10-10T00:00:00Z',
 })
 
-const event = (type: StreamEvent['type'], payload: Record<string, unknown>): StreamEvent =>
+const event = (
+  type: StreamEvent['type'],
+  payload: Record<string, unknown>,
+  over: Partial<StreamEvent> = {},
+): StreamEvent =>
   ({
     instance_id: 'i1',
+    seq: 1,
     type,
     payload,
     created_at: '2026-10-10T00:01:00Z',
+    ...over,
   }) as StreamEvent
 
 describe('handleEvent', () => {
   beforeEach(() => {
-    useInstancesStore.setState({ items: [STUB('i1'), STUB('i2', 'PENDING')], lastEventAt: null })
+    useInstancesStore.setState({
+      items: [STUB('i1'), STUB('i2', 'PENDING')],
+      lastEventAt: null,
+      lastSeq: {},
+    })
+  })
+
+  it('отбрасывает кадр, который уже применён', () => {
+    // Поток переподключается с последнего события и присылает его снова, а
+    // поздний кадр приходит позже нового. Без сверки номера повтор возвращал
+    // завершённый процесс в «выполняется» и включал кнопки, которые для него
+    // закрыты.
+    useInstancesStore.getState().handleEvent(
+      event('INSTANCE_COMPLETED', {}, { seq: 5 }),
+    )
+
+    useInstancesStore.getState().handleEvent(
+      event('STEP_STARTED', { step: 'a' }, { seq: 4 }),
+    )
+
+    expect(useInstancesStore.getState().items[0].status).toBe('COMPLETED')
+  })
+
+  it('применяет кадр с номером больше предыдущего', () => {
+    useInstancesStore.getState().handleEvent(event('STEP_COMPLETED', { next: 'b' }, { seq: 5 }))
+
+    useInstancesStore.getState().handleEvent(
+      event('STEP_STARTED', { step: 'b' }, { seq: 6 }),
+    )
+
+    expect(useInstancesStore.getState().items[0].status).toBe('RUNNING')
+    expect(useInstancesStore.getState().items[0].current_step).toBe('b')
+  })
+
+  it('следит за номерами каждого инстанса отдельно', () => {
+    useInstancesStore.getState().handleEvent(event('STEP_COMPLETED', {}, { seq: 9 }))
+
+    // Номер девять у одного инстанса не означает «девять всего»: у второго
+    // событий могло быть больше или меньше.
+    useInstancesStore.getState().handleEvent(
+      event('STEP_STARTED', { step: 'z' }, { instance_id: 'i2', seq: 1 }),
+    )
+
+    expect(useInstancesStore.getState().items[1].current_step).toBe('z')
+  })
+
+  it('показывает паузу и снятие паузы', () => {
+    useInstancesStore.getState().handleEvent(event('INSTANCE_PAUSED', { step: 'approve' }, { seq: 2 }))
+
+    expect(useInstancesStore.getState().items[0].status).toBe('PAUSED')
+
+    useInstancesStore.getState().handleEvent(event('INSTANCE_RESUMED', { step: 'approve' }, { seq: 3 }))
+
+    expect(useInstancesStore.getState().items[0].status).toBe('RUNNING')
+  })
+
+  it('отмечает отмену', () => {
+    useInstancesStore.getState().handleEvent(event('INSTANCE_CANCEL_REQUESTED', {}))
+
+    expect(useInstancesStore.getState().items[0].status).toBe('CANCELLING')
   })
 
   it('updates only the instance the event belongs to', () => {

@@ -40,21 +40,15 @@ export default defineConfig({
       // покрыт частично — и это уже настоящая цифра, а не выдуманная.
       include: ['src/lib/**', 'src/store/**', 'src/hooks/**', 'src/api/**', 'src/components/**', 'src/pages/**'],
       reporter: ['text'],
-      // Порог по строкам стоит низко не потому, что 46 % — норма, а потому что
-      // раньше страницы и компоненты вообще не попадали в отчёт: при них
-      // цифра была 91 % на половине файлов. Теперь отчёт честный, и видно,
-      // сколько ещё не покрыто.
-      //
-      // Не покрыты: pages/definitions.tsx, pages/instance.tsx,
-      // pages/not-found.tsx, components/DefinitionGraph.tsx,
-      // components/RollbackLane.tsx, components/WorkerLeases.tsx,
-      // components/layout/AppLayout.tsx, api/stream.ts. Это следующая
-      // очередь: без неё порог по строкам не поднялся бы.
+      // Порог держится на достигнутом, а не на завышенном: раньше страницы и
+      // компоненты вообще не попадали в отчёт, и цифра 91 % относилась к
+      // половине файлов. Теперь список полный, и падение ниже означает, что
+      // появился непокрытый участок, а не что кто-то сузил include.
       thresholds: {
-        statements: 45,
-        branches: 80,
-        functions: 80,
-        lines: 45,
+        statements: 93,
+        branches: 88,
+        functions: 84,
+        lines: 93,
       },
     },
   },
