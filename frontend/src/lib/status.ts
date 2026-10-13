@@ -89,6 +89,32 @@ const STEP_TONES: Record<StepRunStatus, Tone> = {
   COMPENSATED: 'success',
 }
 
+/**
+ * Подпись прогона шага.
+ *
+ * Тон у прогона был, а подписи не было: страница отдавала сырое `COMPLETED` из
+ * базы рядом с русскими подписями состояний процесса. Человек, читающий список
+ * прогов, видел английские слова посреди русского текста.
+ */
+export const STEP_LABELS: Record<StepRunStatus, string> = {
+  PENDING: 'не начат',
+  RUNNING: 'выполняется',
+  COMPLETED: 'выполнен',
+  FAILED: 'провален',
+  COMPENSATED: 'откатан',
+}
+
+/**
+ * Подпись прогона шага, а при неизвестном значении — само значение.
+ *
+ * Лента приходит из бэкенда свободным текстом, и состояние, которого движок
+ * ещё не знает, должно показываться как есть, а не пропадать: как и в
+ * `eventLabel`.
+ */
+export function stepLabel(status: StepRunStatus | string): string {
+  return STEP_LABELS[status as StepRunStatus] ?? status
+}
+
 export function stepTone(status: StepRunStatus): string {
   return TONE_CLASSES[STEP_TONES[status]]
 }

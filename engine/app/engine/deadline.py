@@ -18,8 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.journal import append_event
-from app.engine.scheduler import PAUSE_DEADLINE
-from app.models.enums import EventType, InstanceStatus
+from app.models.enums import PAUSE_DEADLINE, EventType, InstanceStatus
 from app.models.workflow import Timer, WorkflowInstance
 
 

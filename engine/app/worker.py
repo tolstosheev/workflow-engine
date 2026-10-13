@@ -34,7 +34,12 @@ from app.engine import deadline, executor, interpreter, lease, saga, scheduler
 from app.engine.journal import append_event, read_events, replay
 from app.metrics import IS_MULTIPROCESS, LEASE_ACQUIRED
 from app.models import chaos
-from app.models.enums import TERMINAL_STATUSES, EventType, InstanceStatus
+from app.models.enums import (
+    PAUSE_DEADLINE,
+    TERMINAL_STATUSES,
+    EventType,
+    InstanceStatus,
+)
 from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
 
@@ -290,7 +295,7 @@ async def _fire_due_timers() -> int:
             # Вид важнее таймера: срок паузы отменяет процесс, а ожидание шага
             # просто будит его. Обработчик выбирается здесь, чтобы у каждого
             # вида была ровно одна точка срабатывания.
-            if timer.kind == scheduler.PAUSE_DEADLINE:
+            if timer.kind == PAUSE_DEADLINE:
                 done = await deadline.expire_pause_deadline(session, timer)
             else:
                 done = await scheduler.fire_due(session, timer)

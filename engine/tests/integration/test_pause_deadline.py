@@ -168,6 +168,28 @@ def test_deadline_is_bounded() -> None:
         )
 
 
+async def test_deadline_does_not_turn_a_pause_into_a_wait(
+    db_session: AsyncSession,
+) -> None:
+    # Срок планируется таймером и пишет `TIMER_SCHEDULED` — тем же событием,
+    # что и ожидание шага. Разбор без оглядки на вид события переводил паузу в
+    # `WAITING`, и одна и та же страница называла одно состояние двумя словами:
+    # шапка «Ждёт решения» и карточка «Ожидание» (§3.1).
+    flow = _flow(pause_timeout_seconds=3600)
+
+    instance_id, _ = await _create_instance(db_session, flow)
+    await _seed_journal(db_session, instance_id, flow)
+    await db_session.commit()
+    await _run_cycles("w1")
+
+    from app.engine.journal import read_events, replay
+
+    state = replay(await read_events(db_session, instance_id))
+
+    assert await _status(db_session, instance_id) == InstanceStatus.PAUSED
+    assert state.status is InstanceStatus.PAUSED
+
+
 async def _fire_pause_deadline(db_session: AsyncSession, instance_id: object) -> None:
     """Срабатывает срок так, как это сделал бы настоящий таймер."""
     from app.engine import deadline

@@ -13,13 +13,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.journal import append_event
-from app.models.enums import EventType, InstanceStatus
+from app.models.enums import STEP_WAIT, EventType, InstanceStatus
 from app.models.workflow import Timer, WorkflowInstance
-
-# Вид ожидания. Срок паузы и ожидание шага различаются видом: на одном шаге они
-# могут стоять одновременно (ADR-0016).
-STEP_WAIT = "step"
-PAUSE_DEADLINE = "pause_deadline"
 
 
 def _now() -> datetime:

@@ -15,6 +15,7 @@ import {
   formatDuration,
   statusLabel,
   statusTone,
+  stepLabel,
   stepTone,
 } from '@/lib/status'
 import type { EventType, InstanceStatus, StepRunStatus } from '@/types/api'
@@ -87,6 +88,28 @@ describe('подписи событий', () => {
   it('отдаёт само имя события, если подписи нет', () => {
     // Новое событие в движке не должно превращаться в «undefined» в журнале.
     expect(eventLabel('STEP_SKIPPED' as EventType)).toBe('STEP_SKIPPED')
+  })
+})
+
+describe('подпись шага', () => {
+  it('подписывает каждое состояние прогона, а не отдаёт его имя', () => {
+    // Сырое `COMPLETED` в русском интерфейсе выдаёт движок, а человек читает
+    // подпись: «выполнен» и «провал» говорят больше, чем имя колонки в БД.
+    for (const status of ['COMPLETED', 'FAILED', 'COMPENSATED', 'RUNNING'] as StepRunStatus[]) {
+      expect(stepLabel(status)).not.toBe(status)
+    }
+  })
+
+  it('подписывает все состояния прогона, какие движок записывает', () => {
+    for (const status of ['RUNNING', 'COMPLETED', 'FAILED', 'COMPENSATED'] as StepRunStatus[]) {
+      expect(stepLabel(status)).toBeTruthy()
+    }
+  })
+
+  it('отдаёт само значение, если состояния нет в словаре', () => {
+    // Лента приходит свободным текстом, и состояние из более новой версии
+    // движка должно быть видно, а не пропасть в пустое место.
+    expect(stepLabel('ЧТО-ТО НОВОЕ')).toBe('ЧТО-ТО НОВОЕ')
   })
 })
 

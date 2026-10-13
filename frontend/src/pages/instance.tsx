@@ -9,7 +9,15 @@ import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/
 import { useAbortable } from '@/hooks/useAbortable'
 import { usePolling } from '@/hooks/usePolling'
 import { pollingIntervalMs } from '@/lib/polling'
-import { eventLabel, formatDuration, formatDateTime, statusLabel, statusTone, stepTone } from '@/lib/status'
+import {
+  eventLabel,
+  formatDuration,
+  formatDateTime,
+  statusLabel,
+  statusTone,
+  stepLabel,
+  stepTone,
+} from '@/lib/status'
 import type { InstanceState, StepRun, TimelineEntry, WorkflowDefinition, WorkflowInstance } from '@/types/api'
 
 export default function InstancePage() {
@@ -208,7 +216,7 @@ export default function InstancePage() {
                   <td className="py-2">{run.step_name}</td>
                   <td className="py-2 text-white/50">{run.attempt}</td>
                   <td className="py-2">
-                    <StatusBadge label={run.status} toneClass={stepTone(run.status)} />
+                    <StatusBadge label={stepLabel(run.status)} toneClass={stepTone(run.status)} />
                   </td>
                   <td className="py-2 text-white/60">{formatDuration(run.started_at, run.finished_at)}</td>
                   <td className="py-2 text-white/50">{run.compensated ? 'выполнена' : '—'}</td>
@@ -249,7 +257,7 @@ export default function InstancePage() {
                     <span className="min-w-0">
                       <span className="block">{entry.step_name}</span>
                       <span className="text-xs text-white/40">
-                        {entry.status?.toLowerCase()}
+                        {entry.status ? stepLabel(entry.status) : ''}
                         {entry.compensated ? ', компенсация выполнена' : ''}
                       </span>
                     </span>

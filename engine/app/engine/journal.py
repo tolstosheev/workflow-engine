@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import EventType, InstanceStatus, StepRunStatus
+from app.models.enums import PAUSE_DEADLINE, EventType, InstanceStatus, StepRunStatus
 from app.models.workflow import WorkflowEvent, WorkflowInstance
 
 
@@ -243,7 +243,11 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.resumed_step = payload.get("step")
 
         case EventType.TIMER_SCHEDULED:
-            state.status = InstanceStatus.WAITING
+            # Срок ожидания человека планируется тем же событием, и без оглядки
+            # на вид он переводил паузу в `WAITING`: страница называла одно
+            # состояние двумя словами — «Ждёт решения» и «Ожидание» (ADR-0016).
+            if payload.get("kind") != PAUSE_DEADLINE:
+                state.status = InstanceStatus.WAITING
             state.current_step = payload.get("step")
 
         case EventType.TIMER_FIRED:
