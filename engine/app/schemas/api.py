@@ -205,6 +205,17 @@ class ChaosStepRequest(BaseModel):
     error: str = "сбой шага (инъекция)"
 
 
+class ChaosCompensationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instance_id: uuid.UUID | None = None
+    # Ссылка на обработчик обязательна: пустая означала бы «сломать любое
+    # возмещение», а это не демонстрация сбоя, а порча стенда целиком.
+    handler: str = Field(min_length=3, max_length=256, pattern=r"^[\w.]+:[\w]+$")
+    mode: Literal["once", "always"] = "always"
+    error: str = "сбой компенсации (инъекция)"
+
+
 class ChaosServiceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

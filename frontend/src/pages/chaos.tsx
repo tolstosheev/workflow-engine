@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { chaos as chaosApi } from '@/api/client'
 import { Button, Card, EmptyState, ErrorState } from '@/components/ui'
 
+const DEMO_MODULE = 'app.demo.handlers'
+
 const MODES = [
   { value: 'once', label: 'Один раз' },
   { value: 'always', label: 'Всегда' },
@@ -13,6 +15,19 @@ const SERVICES = [
   { value: 'inventory', label: 'Склад' },
   { value: 'payment', label: 'Платежи' },
   { value: 'shipment', label: 'Доставка' },
+] as const
+
+/**
+ * Обработчики отката демо-области.
+ *
+ * Список ведётся вручную: компенсации принадлежат определению, а не коду, и
+ * вывести их из реестра обработчиков нельзя — там нет обратной связи от шага к
+ * его компенсации.
+ */
+const COMPENSATION_HANDLERS = [
+  { value: `${DEMO_MODULE}:release_inventory`, label: 'Отменить резерв' },
+  { value: `${DEMO_MODULE}:refund_payment`, label: 'Вернуть оплату' },
+  { value: `${DEMO_MODULE}:cancel_shipment`, label: 'Отменить доставку' },
 ] as const
 
 /** Шаги заказа: подставляются по имени, без правки текста вручную. */
@@ -149,6 +164,33 @@ export default function ChaosPage() {
           >
             Сломать шаг
           </Button>
+        </Card>
+
+        <Card title="Сломать компенсацию">
+          <p className="mb-3 text-sm text-white/60">
+            Отказ при откате. Saga обещает, что возврат может не пройти, и без этого
+            правила показать провал отката было нечем: прямой шаг ломается и без
+            него. Правило адресовано обработчику, а не шагу.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {COMPENSATION_HANDLERS.map((item) => (
+              <Button
+                key={item.value}
+                variant="danger"
+                onClick={() =>
+                  void run(() =>
+                    chaosApi.failCompensation({
+                      instance_id: failInstanceId || null,
+                      handler: item.value,
+                      mode,
+                    }),
+                  )
+                }
+              >
+                {item.label}
+              </Button>
+            ))}
+          </div>
         </Card>
 
         <Card title="Отключить сервис">

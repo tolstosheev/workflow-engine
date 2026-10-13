@@ -17,9 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import metrics
 from app.core.db import get_db
 from app.core.errors import NotFoundError
+from app.handlers.registry import is_handler_importable
 from app.models import chaos
 from app.models.workflow import WorkflowInstance
 from app.schemas.api import (
+    ChaosCompensationRequest,
     ChaosLeaseRequest,
     ChaosLeaseStop,
     ChaosResult,
@@ -84,6 +86,36 @@ async def fail_service(
     await chaos.add_rule(db_session, None, step_name, "always", f"{payload.service} недоступен")
     await db_session.commit()
     return ChaosResult(active=[f"service:{payload.service}"], message="сервис помечен недоступным")
+
+
+@router.post("/api/chaos/fail-compensation", response_model=ChaosResult)
+async def fail_compensation(
+    payload: ChaosCompensationRequest, db_session: AsyncSession = Depends(get_db)
+) -> ChaosResult:
+    """Помечает обработчик компенсации отказывающим (ADR-0015).
+
+    Правило адресовано обработчику отката, а не шагу: шаг уже выполнен, и
+    правило по его имени сработало бы на прямом шаге, а не на возврате.
+    """
+    if payload.instance_id is not None and not await chaos.existing_instance(
+        db_session, payload.instance_id
+    ):
+        raise NotFoundError(f"инстанс не найден: {payload.instance_id}")
+
+    # Обработчик резолвится сразу: правило, которое никогда не сработает,
+    # выглядит на панели как работающая инъекция, и оператор будет искать,
+    # почему откат не падает.
+    if not is_handler_importable(payload.handler):
+        raise NotFoundError(f"обработчик не найден: {payload.handler}")
+
+    await chaos.add_rule_for_handler(
+        db_session, payload.instance_id, payload.handler, payload.mode, payload.error
+    )
+    await db_session.commit()
+    return ChaosResult(
+        active=[f"compensation:{payload.handler}:{payload.mode}"],
+        message="инъекция сбоя компенсации зарегистрирована",
+    )
 
 
 @router.get("/api/chaos", response_model=ChaosResult)

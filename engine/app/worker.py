@@ -33,6 +33,7 @@ from app.core.logging import configure_logging
 from app.engine import executor, interpreter, lease, saga, scheduler
 from app.engine.journal import append_event, read_events, replay
 from app.metrics import IS_MULTIPROCESS, LEASE_ACQUIRED
+from app.models import chaos
 from app.models.enums import TERMINAL_STATUSES, EventType, InstanceStatus
 from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
@@ -219,7 +220,7 @@ async def _invoke_compensation(
 
     from app.core.db import session_scope
     from app.engine import idempotency
-    from app.engine.executor import build_compensation_context
+    from app.engine.executor import StepFailed, build_compensation_context
     from app.handlers.registry import resolve_handler
 
     key = saga.operation_key(instance_id, item)
@@ -234,6 +235,13 @@ async def _invoke_compensation(
             return True, None
 
     try:
+        # Проверка инъекции до обработчика отката: правило адресовано именно
+        # ему, и прямой шаг оно не задевает (ADR-0015).
+        async with session_scope() as session:
+            rule = await chaos.find_rule_for_handler(session, instance_id, item.compensation_ref)
+        if rule is not None:
+            raise StepFailed(rule.error, retryable=False)
+
         handler = resolve_handler(item.compensation_ref)
         # Контекст строится так же, как для обычного шага. Раньше компенсация
         # получала None и знать не могла, что отменяет, — освободить резерв

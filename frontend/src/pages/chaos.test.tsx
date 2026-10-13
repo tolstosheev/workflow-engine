@@ -22,6 +22,13 @@ const failService = vi.fn<() => Promise<unknown>>()
 const stopLease = vi.fn<() => Promise<unknown>>()
 const resumeLease = vi.fn<() => Promise<unknown>>()
 const clear = vi.fn<() => Promise<unknown>>()
+const failCompensation = vi.fn<(body: CompRule) => Promise<unknown>>()
+
+interface CompRule {
+  instance_id: string | null
+  handler: string
+  mode: string
+}
 
 vi.mock('@/api/client', () => ({
   chaos: {
@@ -31,12 +38,34 @@ vi.mock('@/api/client', () => ({
     stopLease: () => stopLease(),
     resumeLease: () => resumeLease(),
     clear: () => clear(),
+    failCompensation: (body: CompRule) => failCompensation(body),
   },
 }))
 
+/**
+ * Дожидается конца обработчика нажатия.
+ *
+ * Панель отправляет действие «в пустоту» и не ждёт его, поэтому обработчик
+ * предыдущего теста мог сработать уже после сброса шпионов — и проверка
+ * «шаг не сломан» падала на звонке из чужого теста.
+ */
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
 afterEach(() => {
   cleanup()
-  for (const spy of [list, failStep, failService, stopLease, resumeLease, clear]) spy.mockReset()
+  for (const spy of [
+    list,
+    failStep,
+    failService,
+    stopLease,
+    resumeLease,
+    clear,
+    failCompensation,
+  ]) {
+    spy.mockReset()
+  }
 })
 
 beforeEach(() => {
@@ -46,6 +75,7 @@ beforeEach(() => {
   stopLease.mockResolvedValue({})
   resumeLease.mockResolvedValue({})
   clear.mockResolvedValue({})
+  failCompensation.mockResolvedValue({})
 })
 
 describe('панель инъекций', () => {
@@ -70,6 +100,7 @@ describe('панель инъекций', () => {
     // именем никогда не срабатывает и выглядит как «инъекция не работает».
     await fireEvent.click(screen.getByRole('button', { name: 'create_shipment' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Сломать шаг' }))
+    await flush()
 
     expect(failStep).toHaveBeenCalledOnce()
   })
@@ -112,6 +143,53 @@ describe('панель инъекций', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Остановить на 40 с' }))
 
     expect(stopLease).toHaveBeenCalledOnce()
+  })
+
+  it('ломает компенсацию отдельным адресом, а не шагом', async () => {
+    render(<ChaosPage />)
+    await screen.findByText('Инъекций нет')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Отменить резерв' }))
+    await flush()
+
+    // Правило адресует обработчик отката, а не шаг: одно поле, значившее оба
+    // действия, сделало бы «сломать возврат» тем же, что «сломать шаг».
+    expect(failCompensation).toHaveBeenCalledWith({
+      instance_id: null,
+      handler: 'app.demo.handlers:release_inventory',
+      mode: 'always',
+    })
+    expect(failStep).not.toHaveBeenCalled()
+  })
+
+  it('адресует компенсацию тому инстансу, что указан', async () => {
+    render(<ChaosPage />)
+    await screen.findByText('Инъекций нет')
+
+    await fireEvent.change(screen.getByLabelText('Инстанс (необязательно)'), {
+      target: { value: 'i-1' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Вернуть оплату' }))
+    await flush()
+
+    expect(failCompensation.mock.calls[0][0]).toMatchObject({
+      instance_id: 'i-1',
+      handler: 'app.demo.handlers:refund_payment',
+    })
+  })
+
+  it('уважает выбранный режим', async () => {
+    render(<ChaosPage />)
+    await screen.findByText('Инъекций нет')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Один раз' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Отменить доставку' }))
+    await flush()
+
+    expect(failCompensation.mock.calls[0][0]).toMatchObject({
+      handler: 'app.demo.handlers:cancel_shipment',
+      mode: 'once',
+    })
   })
 
   it('показывает причину, когда запрос не прошёл', async () => {

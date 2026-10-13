@@ -164,6 +164,14 @@ export const chaos = {
       body: JSON.stringify({ service }),
     }),
 
+  // Отдельный адрес, а не флаг у шага: обработчик отката и шаг — разные
+  // действия, и одно поле, значившее оба, ломало бы адресацию (ADR-0015).
+  failCompensation: (body: { instance_id?: string | null; handler: string; mode: string }) =>
+    request<ChaosResult>('/api/chaos/fail-compensation', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   stopLease: (instanceId: string, durationSeconds: number) =>
     request<ChaosResult>('/api/chaos/stop-lease', {
       method: 'POST',
