@@ -112,6 +112,24 @@ def test_repository_comments_are_not_corrupted() -> None:
     assert offenders == [], "повреждённый текст: " + ", ".join(offenders)
 
 
+def test_no_run_of_question_marks_replaces_russian_letters() -> None:
+    # Словарь выше ловит только те случаи, которые уже нашли глазами: новая
+    # порча его проходит, потому что её нет в списке. Здесь ловится сам класс —
+    # буквы, превратившиеся в вопросительные знаки или в знак замены.
+    #
+    # Три знака подряд в этом проекте не встречаются: тернарный оператор пишется
+    # с пробелами, ленивые квантификаторы регулярных выражений — с одним
+    # знаком, связка `??` — с двумя.
+    run_of_marks = re.compile(r"\?{3,}|\uFFFD")
+
+    offenders: list[str] = []
+    for path in _text_files():
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if run_of_marks.search(line):
+                offenders.append(f"{path.relative_to(ROOT).as_posix()}:{number}")
+    assert offenders == [], "текст потерял буквы: " + ", ".join(offenders)
+
+
 def test_user_visible_text_is_intact() -> None:
     # Пользователь читает эти строки, а не разработчик: испорченная подпись
     # видна сразу и стоит дороже, чем испорченный комментарий.
