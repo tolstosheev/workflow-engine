@@ -658,9 +658,10 @@ async def _request_cancel(db_session: AsyncSession, instance_id: uuid.UUID) -> N
 
 
 async def test_cancel_rolls_back_completed_steps(db_session: AsyncSession) -> None:
-    # Снимание решает таймер: операция отмены дожна прекращать дальше чем становить таймер. Результат решает одно из верхов небьзя:
-    # Делать проверку восстановления не нужно: если таймер изанят время после предыдущего инстанса небьзя
-    # применить ведущего поведения останься в работе Saga (§3.5).
+    # Отмена снимает таймер: операция отмены обязана прекращать шаг раньше,
+    # чем таймер его разбудит. Восстановление после этого проверять не нужно —
+    # таймер уже мёртв, и ждать его срабатывания бессмысленно: откат всё равно
+    # уводит процесс в Saga (§3.5).
     instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
     await _seed_journal(db_session, instance_id, CANCEL_FLOW)
     await db_session.commit()

@@ -110,6 +110,7 @@ async function open(status: WorkflowInstance['status'] = 'RUNNING'): Promise<voi
 }
 
 beforeEach(() => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
   // Счётчики запросов копятся между тестами, если их не обнулять: проверка
   // «определение прочитано один раз» видела бы вызовы предыдущих тестов.
   for (const spy of [
@@ -135,7 +136,10 @@ beforeEach(() => {
   retryCompensation.mockResolvedValue({ status: 'COMPENSATING' })
 })
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 describe('кнопки решения', () => {
   it('не показывает «Продолжить» у идущего процесса', async () => {
@@ -177,6 +181,34 @@ describe('кнопки решения', () => {
 
     expect(screen.queryByRole('button', { name: 'Отменить' })).toBeNull()
     expect(screen.queryByRole('button', { name: /Завершить без компенсаций/ })).toBeNull()
+  })
+
+  it('спрашивает перед необратимым завершением', async () => {
+    // «Завершить без компенсаций» отличается от «Отменить» одними словами, а
+    // стоит несопоставимо дороже: выполненные шаги остаются, и отменить
+    // это уже нельзя. Вопрос обязателен.
+    await open('RUNNING')
+    await fireEvent.click(screen.getByRole('button', { name: /Завершить без компенсаций/ }))
+
+    expect(window.confirm).toHaveBeenCalled()
+  })
+
+  it('ничего не завершает, если отказ', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await open('RUNNING')
+
+    await fireEvent.click(screen.getByRole('button', { name: /Завершить без компенсаций/ }))
+
+    expect(forceComplete).not.toHaveBeenCalled()
+  })
+
+  it('завершает по подтверждению', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await open('RUNNING')
+
+    await fireEvent.click(screen.getByRole('button', { name: /Завершить без компенсаций/ }))
+
+    expect(forceComplete).toHaveBeenCalledOnce()
   })
 
   it('предлагает повтор отката там, где он провалился', async () => {
