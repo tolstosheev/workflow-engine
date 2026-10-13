@@ -87,7 +87,16 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
  * забыт, а это противоположные ситуации. Данные берутся из события
  * TIMER_SCHEDULED: таймер лежит в базе, поэтому и срок известен точно.
  */
-export function TimerCountdown({ timeline, waiting }: { timeline: TimelineEntry[]; waiting: boolean }) {
+export function TimerCountdown({
+  timeline,
+  waiting,
+  kind = 'step',
+}: {
+  timeline: TimelineEntry[]
+  waiting: boolean
+  /** Какого ожидания касается отсчёт: шага или срока паузы (ADR-0016). */
+  kind?: 'step' | 'pause_deadline'
+}) {
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -98,8 +107,14 @@ export function TimerCountdown({ timeline, waiting }: { timeline: TimelineEntry[
 
   if (!waiting) return null
 
+  // Отсчёт берёт своё ожидание, а не первое попавшееся: в журнале процесса
+  // их может быть несколько, и срок уже отбывшего ожидания шага показывал бы
+  // неверное время до отмены.
   const scheduled = timeline.find(
-    (entry) => entry.kind === 'event' && entry.type === 'TIMER_SCHEDULED',
+    (entry) =>
+      entry.kind === 'event' &&
+      entry.type === 'TIMER_SCHEDULED' &&
+      (entry.payload?.kind ?? 'step') === kind,
   )
   const fired = timeline.some((entry) => entry.kind === 'event' && entry.type === 'TIMER_FIRED')
 
@@ -114,7 +129,13 @@ export function TimerCountdown({ timeline, waiting }: { timeline: TimelineEntry[
 
   const remaining = new Date(dueAt).getTime() - now
   if (remaining <= 0) {
-    return <p className="mt-1 text-xs text-warning">Ожидание истекло, воркер поднимет инстанс на ближайшем цикле</p>
+    return (
+      <p className="mt-1 text-xs text-warning">
+        {kind === 'pause_deadline'
+          ? 'Срок ожидания истёк, процесс отменится и уйдёт в откат'
+          : 'Ожидание истекло, воркер поднимет инстанс на ближайшем цикле'}
+      </p>
+    )
   }
 
   return (

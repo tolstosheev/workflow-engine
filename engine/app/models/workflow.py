@@ -210,6 +210,12 @@ class Timer(Base):
         UUID(as_uuid=True), ForeignKey("workflow_instances.id", ondelete="RESTRICT"), nullable=False
     )
     step_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Вид ожидания. На одном шаге могут стоять и ожидание, и срок паузы, и без
+    # различия `planned_for` принял бы одно за другое: шаг не наступил бы
+    # никогда, а срок паузы отменил бы не тот процесс (ADR-0016).
+    kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="step", server_default="step"
+    )
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     fired: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)

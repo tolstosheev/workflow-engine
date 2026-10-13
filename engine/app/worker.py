@@ -30,7 +30,7 @@ from app.core.config import get_settings
 from app.core.db import dispose_engine, session_scope
 from app.core.errors import LeaseLostError
 from app.core.logging import configure_logging
-from app.engine import executor, interpreter, lease, saga, scheduler
+from app.engine import deadline, executor, interpreter, lease, saga, scheduler
 from app.engine.journal import append_event, read_events, replay
 from app.metrics import IS_MULTIPROCESS, LEASE_ACQUIRED
 from app.models import chaos
@@ -287,7 +287,14 @@ async def _fire_due_timers() -> int:
     async with session_scope() as session:
         fired = 0
         for timer in await scheduler.claim_due(session):
-            if await scheduler.fire_due(session, timer):
+            # Вид важнее таймера: срок паузы отменяет процесс, а ожидание шага
+            # просто будит его. Обработчик выбирается здесь, чтобы у каждого
+            # вида была ровно одна точка срабатывания.
+            if timer.kind == scheduler.PAUSE_DEADLINE:
+                done = await deadline.expire_pause_deadline(session, timer)
+            else:
+                done = await scheduler.fire_due(session, timer)
+            if done:
                 fired += 1
         return fired
 
@@ -369,6 +376,16 @@ async def run_cycle(
             instance_row = await session.get(WorkflowInstance, claimed.instance_id)
             if instance_row is not None:
                 instance_row.status = InstanceStatus.PAUSED
+            # Срок планируется здесь же, в той же транзакции, что и пауза:
+            # событие без таймера оставило бы паузу без будильника, а таймер
+            # без события не был бы виден в разборе.
+            seconds = interpreter.pause_deadline(step)
+            if seconds is not None and not await deadline.deadline_planned(
+                session, claimed.instance_id, state.current_step
+            ):
+                await deadline.schedule_deadline(
+                    session, claimed.instance_id, state.current_step, seconds
+                )
             await lease.release(session, claimed.instance_id, worker_id)
         return CycleResult(handled=True, step_executed=False, terminal=False, lease_lost=False)
 

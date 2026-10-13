@@ -16,6 +16,11 @@ from app.engine.journal import append_event
 from app.models.enums import EventType, InstanceStatus
 from app.models.workflow import Timer, WorkflowInstance
 
+# Вид ожидания. Срок паузы и ожидание шага различаются видом: на одном шаге они
+# могут стоять одновременно (ADR-0016).
+STEP_WAIT = "step"
+PAUSE_DEADLINE = "pause_deadline"
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
@@ -35,7 +40,11 @@ async def schedule(
     """
     due_at = _now() + timedelta(seconds=delay_seconds)
     timer = Timer(
-        instance_id=instance_id, step_name=step_name, due_at=due_at, payload=payload or {}
+        instance_id=instance_id,
+        step_name=step_name,
+        kind=STEP_WAIT,
+        due_at=due_at,
+        payload=payload or {},
     )
     db_session.add(timer)
     await db_session.flush()
@@ -103,20 +112,33 @@ async def fire_due(db_session: AsyncSession, timer: Timer) -> bool:
     return True
 
 
-async def planned_for(db_session: AsyncSession, instance_id: uuid.UUID, step_name: str) -> bool:
+async def planned_for(
+    db_session: AsyncSession,
+    instance_id: uuid.UUID,
+    step_name: str,
+    kind: str = STEP_WAIT,
+) -> bool:
     """Планировалось ли ожидание для этого шага инстанса.
 
     Учитываются и сгоревшие таймеры: `wait_before_seconds` ждёт **один** раз,
     и после срабатывания таймера шаг обязан исполниться, а не завести новую
     паузу. Проверяется перед планированием ожидания — иначе воркер создавал бы
     таймер на каждом цикле и шаг не наступил бы никогда.
+
+    Вид обязателен: на одном шаге могут стоять и ожидание, и срок паузы, и без
+    различия вторая проверка приняла бы первую за себя, и шаг не наступил бы
+    никогда (ADR-0016).
     """
     from sqlalchemy import func
 
     count = await db_session.scalar(
         select(func.count())
         .select_from(Timer)
-        .where(Timer.instance_id == instance_id, Timer.step_name == step_name)
+        .where(
+            Timer.instance_id == instance_id,
+            Timer.step_name == step_name,
+            Timer.kind == kind,
+        )
     )
     return bool(count)
 

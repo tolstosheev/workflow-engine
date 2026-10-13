@@ -150,6 +150,15 @@ def waits_for_person(step: Step) -> bool:
     return step.wait_for == "manual"
 
 
+def pause_deadline(step: Step) -> float | None:
+    """Срок ожидания человека, если он задан (ADR-0016).
+
+    `None` — срока нет, и пауза живёт, пока не придёт команда. Это поведение
+    по умолчанию: срок выдумывать нельзя, он меняет смысл паузы.
+    """
+    return step.pause_timeout_seconds
+
+
 def wait_before(step: Step) -> float:
     """Задержка перед шагом. Ожидание — durable-объект, не sleep в памяти."""
     return step.wait_before_seconds

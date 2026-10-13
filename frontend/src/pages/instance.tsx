@@ -142,6 +142,11 @@ export default function InstancePage() {
                 value={
                   instance.status === 'WAITING' ? (
                     <TimerCountdown timeline={timeline} waiting />
+                  ) : instance.status === 'PAUSED' ? (
+                    // Отсчёт показывается и для паузы: без него «ждёт решения»
+                    // и «ждёт, пока не отменится» выглядят одинаково, а
+                    // разница в том, вернётся ли человек вообще.
+                    <TimerCountdown timeline={timeline} waiting kind="pause_deadline" />
                   ) : (
                     '—'
                   )

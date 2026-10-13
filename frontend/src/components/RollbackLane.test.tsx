@@ -194,4 +194,56 @@ describe('обратный отсчёт ожидания', () => {
 
     expect(screen.getByText(/срок из журнала неизвестен/)).toBeTruthy()
   })
+
+  it('берёт срок того ожидания, ради которого процесс и стоит', () => {
+    const stepWait = timer({ seq: 1, payload: { due_at: new Date(Date.now() + 5_000).toISOString() } })
+    const deadline = timer({
+      seq: 2,
+      step_name: 'approve_order',
+      payload: {
+        due_at: new Date(Date.now() + 3_600_000).toISOString(),
+        kind: 'pause_deadline',
+      },
+    })
+
+    render(<TimerCountdown timeline={[stepWait, deadline]} waiting kind="pause_deadline" />)
+
+    // Оба ожидания стоят в одном журнале, и «первое по порядку» показало бы
+    // срок уже отбывшего ожидания шага: процесс стоял бы час там, где на самом
+    // деле пять минут до отмены.
+    expect(screen.getByText(/approve_order/)).toBeTruthy()
+    expect(screen.queryByText(/charge_payment/)).toBeNull()
+  })
+
+  it('не путает срок ожидания шага со сроком паузы', () => {
+    const stepWait = timer({ seq: 1, payload: { due_at: new Date(Date.now() + 5_000).toISOString() } })
+    const deadline = timer({
+      seq: 2,
+      step_name: 'approve_order',
+      payload: {
+        due_at: new Date(Date.now() + 3_600_000).toISOString(),
+        kind: 'pause_deadline',
+      },
+    })
+
+    render(<TimerCountdown timeline={[stepWait, deadline]} waiting />)
+
+    // Обратный случай: шаг ждёт таймер, и срок паузы к этому отношения не имеет.
+    expect(screen.getByText(/charge_payment/)).toBeTruthy()
+    expect(screen.queryByText(/approve_order/)).toBeNull()
+  })
+
+  it('говорит, что по истечении срока паузы процесс отменится', () => {
+    render(
+      <TimerCountdown
+        timeline={[timer({ payload: { due_at: new Date(Date.now() - 1000).toISOString(), kind: 'pause_deadline' } })]}
+        waiting
+        kind="pause_deadline"
+      />,
+    )
+
+    // «Воркер поднимет инстанс» здесь было бы неправдой: срок паузы не
+    // поднимает, а отменяет, и процесс уходит в откат.
+    expect(screen.getByText(/отменится/)).toBeTruthy()
+  })
 })
