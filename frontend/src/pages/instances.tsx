@@ -1,13 +1,12 @@
-import { Link } from 'react-router-dom'
+import { useMemo } from 'react'
 
-import { useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 
 import { WorkerLeases, StreamStatus } from '@/components/WorkerLeases'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useInstancesFeed } from '@/hooks/useInstancesFeed'
 import { countRunning, selectInstances } from '@/lib/instanceList'
 import { formatDateTime, statusLabel, statusTone } from '@/lib/status'
-import { useInstancesStore } from '@/store/instances'
 import type { InstanceStatus } from '@/types/api'
 
 const FILTERS: Array<{ value: InstanceStatus | 'ALL'; label: string }> = [
@@ -18,12 +17,35 @@ const FILTERS: Array<{ value: InstanceStatus | 'ALL'; label: string }> = [
   { value: 'COMPLETED', label: 'Завершённые' },
 ]
 
+/** Статусы, которые адрес вправе называть. Всё прочее — опечатка, а не выбор. */
+const KNOWN = new Set<string>(FILTERS.map((item) => item.value))
+
+function readStatus(value: string | null): InstanceStatus | 'ALL' {
+  return value !== null && KNOWN.has(value) ? (value as InstanceStatus | 'ALL') : 'ALL'
+}
+
 export default function InstancesPage() {
-  const { items, all, loading, error, connected, lastEventAt, load } = useInstancesFeed()
-  const statusFilter = useInstancesStore((state) => state.statusFilter)
-  const setStatusFilter = useInstancesStore((state) => state.setStatusFilter)
-  const [query, setQuery] = useState('')
-  const [newestFirst, setNewestFirst] = useState(true)
+  // Состояние списка живёт в адресе, а не в полях страницы: без него фильтр и
+  // порядок терялись при перезагрузке, ссылка была негодной, а кнопка «назад»
+  // возвращала на список, который человек уже отфильтровал.
+  const [params, setParams] = useSearchParams()
+  const statusFilter = readStatus(params.get('status'))
+  const query = params.get('q') ?? ''
+  const newestFirst = params.get('sort') !== 'old'
+
+  function patch(next: Record<string, string>): void {
+    const merged = new URLSearchParams(params)
+    for (const [key, value] of Object.entries(next)) merged.set(key, value)
+    // Пустые и равные умолчанию значения убираются, а не пишутся: `?q=&status=ALL`
+    // — это шум в ссылке, и две ссылки на одно состояние разъезжаются.
+    for (const key of [...merged.keys()]) {
+      const value = merged.get(key)
+      if (value === '' || (key === 'status' && value === 'ALL')) merged.delete(key)
+    }
+    setParams(merged, { replace: true })
+  }
+
+  const { items, all, loading, error, connected, lastEventAt, load } = useInstancesFeed(statusFilter)
 
   // Поиск и сортировка применяются к уже полученному списку: это то, что
   // видно сейчас, без запроса на каждый ввод. Отбор и порядок считаются в
@@ -47,7 +69,7 @@ export default function InstancesPage() {
             key={filter.value}
             variant={statusFilter === filter.value ? 'primary' : 'secondary'}
             aria-pressed={statusFilter === filter.value}
-            onClick={() => setStatusFilter(filter.value)}
+            onClick={() => patch({ status: filter.value })}
           >
             {filter.label}
           </Button>
@@ -55,13 +77,13 @@ export default function InstancesPage() {
 
         <input
           id="instance-search"
-          aria-label="Поиск инстанса по имени"
+          aria-label="Поиск по имени процесса"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Поиск по процессу"
+          onChange={(event) => patch({ q: event.target.value })}
+          placeholder="Имя процесса"
           className="ml-auto w-56 rounded-md border border-surface-border bg-surface px-3 py-1.5 text-sm"
         />
-        <Button onClick={() => setNewestFirst((value) => !value)}>
+        <Button onClick={() => patch({ sort: newestFirst ? 'old' : '' })}>
           {newestFirst ? 'Сначала новые' : 'Сначала старые'}
         </Button>
       </div>

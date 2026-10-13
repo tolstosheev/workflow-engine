@@ -5,6 +5,7 @@ import { useAbortable } from '@/hooks/useAbortable'
 import { usePolling } from '@/hooks/usePolling'
 import { pollingIntervalMs } from '@/lib/polling'
 import { useInstancesStore } from '@/store/instances'
+import type { InstanceStatus } from '@/types/api'
 
 /**
  * Живая лента инстансов: события потока плюс подстраховка опросом.
@@ -15,15 +16,16 @@ import { useInstancesStore } from '@/store/instances'
  *
  * Из стора берутся только нужные поля: подписка на весь стор перерисовывала
  * бы страницу при каждой записи `loading` и `connected`.
+ *
+ * Фильтр по статусу приходит снаружи, а не берётся из стора: он живёт в
+ * адресе, и адрес — единственное место, где он переживает перезагрузку.
  */
-export function useInstancesFeed() {
+export function useInstancesFeed(statusFilter: InstanceStatus | 'ALL') {
   const items = useInstancesStore((state) => state.items)
   const loading = useInstancesStore((state) => state.loading)
   const error = useInstancesStore((state) => state.error)
   const connected = useInstancesStore((state) => state.connected)
   const lastEventAt = useInstancesStore((state) => state.lastEventAt)
-  const statusFilter = useInstancesStore((state) => state.statusFilter)
-  const setStatusFilter = useInstancesStore((state) => state.setStatusFilter)
   const handleEvent = useInstancesStore((state) => state.handleEvent)
   const setConnected = useInstancesStore((state) => state.setConnected)
   const loadList = useInstancesStore((state) => state.load)
@@ -51,8 +53,6 @@ export function useInstancesFeed() {
     error,
     connected,
     lastEventAt,
-    statusFilter,
-    setStatusFilter,
     load: reload,
   }
 }

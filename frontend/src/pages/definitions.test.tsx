@@ -15,7 +15,7 @@
  *   наполнение, и сохраняться должен при любом состоянии базы.
  */
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -48,7 +48,25 @@ const EXISTING = {
   updated_at: '2026-03-01T09:00:00Z',
 }
 
+/**
+ * Открывает страницу и дожидается, пока список сохранённых определений придёт.
+ *
+ * Ждать заголовка недостаточно: решение «обновлять или создавать» страница
+ * принимает по загруженному списку, и нажатие до прихода ответа сохраняло бы
+ * определение без вопроса — ровно тот случай, который проверяют тесты ниже.
+ */
 async function open(): Promise<void> {
+  await mount()
+  await screen.findByRole('table', { name: 'Определения workflow' })
+}
+
+/** То же для случая, когда сохранённых определений нет и таблицы не будет. */
+async function openEmpty(): Promise<void> {
+  await mount()
+  await screen.findByText('Определений пока нет')
+}
+
+async function mount(): Promise<void> {
   render(
     <MemoryRouter>
       <DefinitionsPage />
@@ -69,15 +87,15 @@ beforeEach(() => {
 })
 
 /**
- * Дожидается конца обработчика нажатия.
+ * Ждёт, пока действие дойдёт до вопроса.
  *
- * Страница сохраняет «в пустоту» и не ждёт ответа, поэтому под инструментацией
- * покрытия, где всё медленнее, проверка успевала пройти раньше, чем сохранение
- * дошло до вопроса. Ожидание результата надёжнее, чем пауза фиксированной
- * длины.
+ * Страница сохраняет «в пустоту» и не ждёт ответа, поэтому проверка успевала
+ * пройти раньше обработчика. `waitFor` ждёт по умолчанию секунду, чего хватает
+ * на пустой машине и не хватает при двадцати трёх файлах сразу: срок задан явно,
+ * потому что лимит должен описывать машину разработчика, а не её загрузку.
  */
-async function flush(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0))
+async function waitForQuestion(assertion: () => void): Promise<void> {
+  await waitFor(assertion, { timeout: 5_000 })
 }
 
 afterEach(() => {
@@ -104,9 +122,8 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
-    await flush()
 
-    expect(window.confirm).toHaveBeenCalled()
+    await waitForQuestion(() => expect(window.confirm).toHaveBeenCalled())
     expect(update).toHaveBeenCalledOnce()
     expect(create).not.toHaveBeenCalled()
   })
@@ -116,8 +133,11 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
-    await flush()
 
+    // Вопрос задаётся и при отказе — ждать надо его, а не результата: при отказе
+    // результата нет, и проверка «ничего не сохранено» прошла бы мгновенно,
+    // ничего не дождавшись.
+    await waitForQuestion(() => expect(window.confirm).toHaveBeenCalled())
     expect(update).not.toHaveBeenCalled()
     expect(create).not.toHaveBeenCalled()
   })
@@ -126,7 +146,8 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
-    await flush()
+
+    await waitForQuestion(() => expect(update).toHaveBeenCalledOnce())
 
     // Обновление принимает только саму схему: имя и версия в нём запрещены,
     // и запрос с ними падал бы в 422.
@@ -140,18 +161,17 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
-    await flush()
 
+    // `findByText` ждёт сам: пауза перед ним лишь добавила бы гонку.
     expect(await screen.findByText(/сохранено и активировано/)).toBeTruthy()
   })
 
   it('показывает причину, если сохранить не удалось', async () => {
     create.mockRejectedValue(new Error('определение уже существует'))
     list.mockResolvedValue({ items: [], total: 0 })
-    await open()
+    await openEmpty()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
-    await flush()
 
     // Молчаливая неудача хуже: человек решил бы, что сохранил, и запустил бы
     // не то, что собирался.
@@ -167,7 +187,6 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getAllByRole('button', { name: 'Проверить' })[0])
-    await flush()
 
     expect(await screen.findByText('Ошибок: 1')).toBeTruthy()
     expect(screen.getByText('charge: обработчик не найден')).toBeTruthy()

@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import { instances as instancesApi } from '@/api/client'
-import type { InstanceStatus, StreamEvent, WorkflowInstance } from '@/types/api'
+import type { StreamEvent, WorkflowInstance } from '@/types/api'
 
 interface InstancesState {
   items: WorkflowInstance[]
@@ -11,7 +11,6 @@ interface InstancesState {
   error: string | null
   connected: boolean
   lastEventAt: string | null
-  statusFilter: InstanceStatus | 'ALL'
   /**
    * Последний применённый номер события по каждому инстансу.
    *
@@ -22,7 +21,6 @@ interface InstancesState {
    */
   lastSeq: Record<string, number>
   load: (signal?: AbortSignal) => Promise<void>
-  setStatusFilter: (status: InstanceStatus | 'ALL') => void
   handleEvent: (event: StreamEvent) => void
   setConnected: (connected: boolean) => void
 }
@@ -33,7 +31,6 @@ export const useInstancesStore = create<InstancesState>((set) => ({
   error: null,
   connected: false,
   lastEventAt: null,
-  statusFilter: 'ALL',
   lastSeq: {},
 
   load: async (signal) => {
@@ -64,12 +61,6 @@ export const useInstancesStore = create<InstancesState>((set) => ({
         error: error instanceof Error ? error.message : 'Не удалось загрузить инстансы',
       })
     }
-  },
-
-  setStatusFilter: (statusFilter) => {
-    // Фильтр применяется на клиенте, а не на сервере: список уже загружен,
-    // и повторный запрос вернул бы те же строки.
-    set({ statusFilter })
   },
 
   // Событие меняет только то, к чему относится: полная перезагрузка списка на
