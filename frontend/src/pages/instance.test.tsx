@@ -99,6 +99,18 @@ const DEFINITION = {
 /** Единственный смонтированный экземпляр на тест: два рендера искали бы кнопки друг друга. */
 async function open(status: WorkflowInstance['status'] = 'RUNNING'): Promise<void> {
   get.mockResolvedValue(instance(status))
+  renderPage()
+  await screen.findByRole('heading', { name: 'order_demo' })
+}
+
+/**
+ * Рендер без ожидания заголовка.
+ *
+ * Нужен там, где страница не показывается: при непрочитанном состоянии
+ * заголовка нет, и `open()` ждал бы его до отказа таймаутом, вместо того
+ * чтобы показать, что на самом деле выведено на экран.
+ */
+function renderPage(): void {
   render(
     <MemoryRouter initialEntries={['/instances/i-1']}>
       <Routes>
@@ -106,7 +118,6 @@ async function open(status: WorkflowInstance['status'] = 'RUNNING'): Promise<voi
       </Routes>
     </MemoryRouter>,
   )
-  await screen.findByRole('heading', { name: 'order_demo' })
 }
 
 beforeEach(() => {
@@ -224,9 +235,77 @@ describe('кнопки решения', () => {
     // «завершить» здесь предложили бы забыть о неоткатанном резерве.
     expect(screen.queryByRole('button', { name: 'Отменить' })).toBeNull()
   })
+
+  it('повторяет откат по нажатию', async () => {
+    await open('COMPENSATION_FAILED')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Повторить откат' }))
+
+    // Кнопка без действия хуже отсутствующей: оператор решил бы, что откат
+    // пошёл, а процесс остался бы ждать следующего подходящего момента.
+    expect(retryCompensation).toHaveBeenCalledWith('i-1')
+  })
+
+  it('отменяет процесс по нажатию', async () => {
+    await open('RUNNING')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Отменить' }))
+
+    expect(cancel).toHaveBeenCalledWith('i-1')
+  })
+
+  it('показывает причину, если отмена не прошла', async () => {
+    cancel.mockRejectedValue(new Error('отмена отклонена'))
+    await open('RUNNING')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Отменить' }))
+
+    // Молчаливая неудача опаснее отсутствия кнопки: процесс остался бы в
+    // работе, а человек считал бы его отменённым.
+    expect(await screen.findByText('отмена отклонена')).toBeTruthy()
+  })
+
+  it('объясняет, если состояние процесса не прочиталось', async () => {
+    state.mockRejectedValue(new Error('журнал недоступен'))
+    get.mockResolvedValue(instance('RUNNING'))
+    renderPage()
+
+    // Страница не показывается частично: заголовок с именем процесса и кнопки
+    // действий без состояния означали бы «всё в порядке», и оператор нажал бы
+    // на кнопку вслепую. Вместо этого — причина и повтор.
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.getByText('журнал недоступен')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'order_demo' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Отменить' })).toBeNull()
+  })
+
+  it('повторяет чтение по кнопке', async () => {
+    state.mockRejectedValueOnce(new Error('журнал недоступен'))
+    get.mockResolvedValue(instance('RUNNING'))
+    renderPage()
+
+    await screen.findByRole('alert')
+    await fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
+
+    // Повтор без надежды на успех — просто предложение начать заново.
+    expect(await screen.findByRole('heading', { name: 'order_demo' })).toBeTruthy()
+  })
 })
 
 describe('разбор журнала', () => {
+  it('показывает, сколько раз повторялся каждый шаг', async () => {
+    state.mockResolvedValue({
+      ...REBUILT,
+      step_iterations: { validate_cart: 3, approve_order: 1 },
+    })
+
+    await open('RUNNING')
+
+    // Единицы не интересны: видно только те шаги, что повторялись на самом
+    // деле, — по ним видно, где процесс буксует.
+    expect(await screen.findByText('validate_cart: 3')).toBeTruthy()
+  })
+
   it('показывает выполненные шаги из состояния, а не из колонки', async () => {
     state.mockResolvedValue({
       ...REBUILT,
