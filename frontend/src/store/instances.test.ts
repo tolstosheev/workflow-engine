@@ -103,6 +103,33 @@ describe('handleEvent', () => {
     expect(useInstancesStore.getState().items[0].status).toBe('CANCELLING')
   })
 
+  it('отмечает завершённую отмену', () => {
+    // Отмена проходит двумя событиями: запрос и итог. Без второго список
+    // вечно показывал бы «отменяется» на процессе, который уже закончен.
+    useInstancesStore.getState().handleEvent(event('INSTANCE_CANCELLED', {}))
+
+    expect(useInstancesStore.getState().items[0].status).toBe('CANCELLED')
+  })
+
+  it('отмечает процесс, ушедший в откат по исчерпанному циклу', () => {
+    // Цикл исчерпал проходы: процесс откатывается. Если это событие не было бы
+    // обработано, список показывал бы шаг, который на самом деле повторяться
+    // уже перестал.
+    useInstancesStore.getState().handleEvent(event('LOOP_EXHAUSTED', {}))
+
+    expect(useInstancesStore.getState().items[0].status).toBe('COMPENSATING')
+  })
+
+  it('помнит, жив ли поток событий', () => {
+    // Разрыв потока и его восстановление — разные состояния: без отметки
+    // экран не отличил бы «никто не слышит» от «всё тихо».
+    useInstancesStore.getState().setConnected(false)
+    expect(useInstancesStore.getState().connected).toBe(false)
+
+    useInstancesStore.getState().setConnected(true)
+    expect(useInstancesStore.getState().connected).toBe(true)
+  })
+
   it('updates only the instance the event belongs to', () => {
     useInstancesStore.getState().handleEvent(event('COMPENSATION_STARTED', {}))
 

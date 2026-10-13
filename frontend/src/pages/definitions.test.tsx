@@ -68,6 +68,18 @@ beforeEach(() => {
   vi.spyOn(window, 'confirm').mockReturnValue(true)
 })
 
+/**
+ * Дожидается конца обработчика нажатия.
+ *
+ * Страница сохраняет «в пустоту» и не ждёт ответа, поэтому под инструментацией
+ * покрытия, где всё медленнее, проверка успевала пройти раньше, чем сохранение
+ * дошло до вопроса. Ожидание результата надёжнее, чем пауза фиксированной
+ * длины.
+ */
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -92,6 +104,7 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
+    await flush()
 
     expect(window.confirm).toHaveBeenCalled()
     expect(update).toHaveBeenCalledOnce()
@@ -103,6 +116,7 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
+    await flush()
 
     expect(update).not.toHaveBeenCalled()
     expect(create).not.toHaveBeenCalled()
@@ -112,6 +126,7 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
+    await flush()
 
     // Обновление принимает только саму схему: имя и версия в нём запрещены,
     // и запрос с ними падал бы в 422.
@@ -125,6 +140,7 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
+    await flush()
 
     expect(await screen.findByText(/сохранено и активировано/)).toBeTruthy()
   })
@@ -135,6 +151,7 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
+    await flush()
 
     // Молчаливая неудача хуже: человек решил бы, что сохранил, и запустил бы
     // не то, что собирался.
@@ -150,6 +167,7 @@ describe('редактор определений', () => {
     await open()
 
     await fireEvent.click(screen.getAllByRole('button', { name: 'Проверить' })[0])
+    await flush()
 
     expect(await screen.findByText('Ошибок: 1')).toBeTruthy()
     expect(screen.getByText('charge: обработчик не найден')).toBeTruthy()
