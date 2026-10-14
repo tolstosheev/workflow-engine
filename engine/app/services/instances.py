@@ -10,8 +10,9 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.errors import ConflictError, NotFoundError
 from app.engine import scheduler
@@ -69,13 +70,24 @@ async def list_instances(
     offset: int,
     status: str | None,
     definition_id: uuid.UUID | None,
+    archived: str = "active",
 ) -> tuple[list[tuple[WorkflowInstance, WorkflowDefinition]], int]:
     """Список инстансов вместе с дефинишенами.
 
     Соединение делается одним запросом: дефинишена нужна каждой строке списка,
     а поштучная догрузка дала бы N+1 на страницу.
+
+    `archived`: `active` — только неархивные (по умолчанию), `archived` —
+    только архивные, `all` — и те и другие. По умолчанию архивные скрыты,
+    иначе уборка списка ничего бы не убирала.
     """
-    filters = []
+    # Явный тип: без него список выводится по первому условию, и добавление
+    # `is_(None)` — это уже не сравнение, а проверка на пустое значение.
+    filters: list[ColumnElement[bool]] = []
+    if archived == "active":
+        filters.append(WorkflowInstance.archived_at.is_(None))
+    elif archived == "archived":
+        filters.append(WorkflowInstance.archived_at.is_not(None))
     if status is not None:
         filters.append(WorkflowInstance.status == status)
     if definition_id is not None:
@@ -96,6 +108,58 @@ async def list_instances(
         select(func.count()).select_from(WorkflowInstance).where(*filters)
     )
     return list(rows), total or 0
+
+
+#: Архивировать можно только то, что пришло к концу. Набор уже есть в
+#: `enums` и совпадает с нужным: `COMPENSATION_FAILED` и `PAUSED` в него не
+#: входят — первый ждёт человека, второй ждёт решения. Свой список здесь
+#: разошёлся бы с этим через месяц.
+
+
+async def count_archived(db_session: AsyncSession) -> int:
+    """Сколько процессов убрано в архив."""
+    return (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(WorkflowInstance)
+            .where(WorkflowInstance.archived_at.is_not(None))
+        )
+    ) or 0
+
+
+async def archive_terminal(db_session: AsyncSession, before: datetime | None = None) -> int:
+    """Убирает завершённые процессы из списка, не удаляя их (ADR-0017).
+
+    Обновляется только `workflow_instances`: журнал не трогается, и состояние
+    архивного процесса по-прежнему выводится повтором событий. Отбор идёт по
+    терминальным статусам, поэтому `PAUSED` и `COMPENSATION_FAILED` остаются
+    видимыми: первый ждёт решения человека, второй — повтора отката.
+    """
+    conditions: list[ColumnElement[bool]] = [
+        WorkflowInstance.status.in_(TERMINAL_STATUSES),
+        WorkflowInstance.archived_at.is_(None),
+    ]
+    if before is not None:
+        conditions.append(WorkflowInstance.created_at < before)
+
+    result = await db_session.execute(
+        update(WorkflowInstance)
+        .where(*conditions)
+        .values(archived_at=datetime.now(UTC))
+        .returning(WorkflowInstance.id)
+    )
+    return len(result.all())
+
+
+async def unarchive(db_session: AsyncSession, instance_id: uuid.UUID) -> WorkflowInstance | None:
+    """Возвращает процесс из архива в список."""
+    result = await db_session.execute(
+        update(WorkflowInstance)
+        .where(WorkflowInstance.id == instance_id, WorkflowInstance.archived_at.is_not(None))
+        .values(archived_at=None)
+        .returning(WorkflowInstance)
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_events(

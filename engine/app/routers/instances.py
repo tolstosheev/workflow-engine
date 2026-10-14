@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,8 @@ from app.models.enums import InstanceStatus
 from app.models.workflow import WorkflowDefinition, WorkflowInstance
 from app.schemas.api import (
     ActionResult,
+    ArchiveRequest,
+    ArchiveResult,
     DefinitionRef,
     EventListOut,
     EventOut,
@@ -56,6 +59,7 @@ def _to_out(instance: WorkflowInstance, definition: WorkflowDefinition) -> Insta
         lease_owner=instance.lease_owner,
         lease_expires_at=instance.lease_expires_at,
         heartbeat_at=instance.heartbeat_at,
+        archived_at=instance.archived_at,
         created_at=instance.created_at,
         updated_at=instance.updated_at,
     )
@@ -89,16 +93,53 @@ async def list_instances(
     offset: int = Query(default=0, ge=0),
     status_filter: str | None = Query(default=None, alias="status"),
     definition_id: uuid.UUID | None = None,
+    archived: Literal["active", "archived", "all"] = Query(default="active"),
     db_session: AsyncSession = Depends(get_db),
 ) -> InstanceListOut:
     rows, total = await service.list_instances(
-        db_session, limit, offset, status_filter, definition_id
+        db_session, limit, offset, status_filter, definition_id, archived
     )
     return InstanceListOut(
         items=[_to_out(instance, definition) for instance, definition in rows],
         total=total,
         limit=limit,
         offset=offset,
+        archived_total=await service.count_archived(db_session),
+    )
+
+
+@router.post("/archive", response_model=ArchiveResult)
+async def archive_finished(
+    request: ArchiveRequest,
+    db_session: AsyncSession = Depends(get_db),
+) -> ArchiveResult:
+    """Убирает завершённые процессы из списка (ADR-0017).
+
+    Это не удаление: журнал остаётся целым, и состояние по-прежнему
+    выводится его повтором. Архивируются только терминальные процессы —
+    `COMPENSATION_FAILED` ждёт человека, и спрятать такой процесс значило бы
+    спрятать незакрытый инцидент.
+    """
+    archived_count = await service.archive_terminal(db_session, request.before)
+    await db_session.commit()
+    return ArchiveResult(
+        archived=archived_count,
+        message=f"в архив убрано процессов: {archived_count}",
+    )
+
+
+@router.post("/{instance_id}/unarchive", response_model=ActionResult)
+async def unarchive_instance(
+    instance_id: uuid.UUID,
+    db_session: AsyncSession = Depends(get_db),
+) -> ActionResult:
+    """Возвращает процесс из архива в список."""
+    restored = await service.unarchive(db_session, instance_id)
+    if restored is None:
+        raise NotFoundError(f"инстанс {instance_id} не найден в архиве")
+    await db_session.commit()
+    return ActionResult(
+        status=InstanceStatus(restored.status), message="процесс возвращён из архива"
     )
 
 

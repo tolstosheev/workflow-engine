@@ -103,7 +103,13 @@ export const definitions = {
 
 export const instances = {
   list: (
-    params: { limit?: number; offset?: number; status?: string; definition_id?: string } = {},
+    params: {
+      limit?: number
+      offset?: number
+      status?: string
+      definition_id?: string
+      archived?: 'active' | 'archived' | 'all'
+    } = {},
     signal?: AbortSignal,
   ) => {
     const query = new URLSearchParams()
@@ -111,6 +117,9 @@ export const instances = {
     if (params.offset !== undefined) query.set('offset', String(params.offset))
     if (params.status) query.set('status', params.status)
     if (params.definition_id) query.set('definition_id', params.definition_id)
+    // По умолчанию архивные скрыты, но параметр уходит всегда: так список
+    // ведёт себя одинаково независимо от настроек сервера.
+    query.set('archived', params.archived ?? 'active')
     const suffix = query.toString() ? `?${query}` : ''
     return request<Paginated<WorkflowInstance>>(`/api/instances${suffix}`, { signal })
   },
@@ -129,6 +138,18 @@ export const instances = {
 
   state: (id: string, signal?: AbortSignal) =>
     request<InstanceState>(`/api/instances/${id}/state`, { signal }),
+
+  /** Убирает завершённые процессы из списка. Это не удаление (ADR-0017). */
+  archive: (before?: string) =>
+    request<{ archived: number; message: string }>('/api/instances/archive', {
+      method: 'POST',
+      body: JSON.stringify(before ? { before } : {}),
+    }),
+
+  unarchive: (id: string) =>
+    request<{ status: string; message: string }>(`/api/instances/${id}/unarchive`, {
+      method: 'POST',
+    }),
 
   start: (definitionId: string, input: Record<string, unknown>) =>
     request<WorkflowInstance>('/api/instances', {

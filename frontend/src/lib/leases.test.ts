@@ -17,6 +17,7 @@ function instance(partial: Partial<WorkflowInstance> & { id: string }): Workflow
     lease_owner: null,
     lease_expires_at: null,
     heartbeat_at: null,
+    archived_at: null,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
   }

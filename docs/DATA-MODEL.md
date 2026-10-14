@@ -36,6 +36,7 @@ erDiagram
         string lease_owner
         timestamptz lease_expires_at
         timestamptz heartbeat_at
+        timestamptz archived_at "убран из списка"
         timestamptz created_at
     }
 
@@ -152,7 +153,15 @@ erDiagram
 | `lease_owner` | `text` | Идентификатор воркера-арендатора |
 | `lease_expires_at` | `timestamptz` | Момент истечения аренды |
 | `heartbeat_at` | `timestamptz` | Последнее продление |
+| `archived_at` | `timestamptz` | Отметка архива: процесс убран из списка (ADR-0017) |
 | `created_at` | `timestamptz` | Создание |
+
+**`archived_at` — не удаление.** Убранный из списка процесс остаётся в базе,
+его журнал цел, а состояние по-прежнему выводится повтором событий. Удаление
+запрещено схемой: `workflow_events.instance_id` ссылается на инстанс с
+`ondelete="RESTRICT"`. Проставляется только терминальным процессам —
+`PAUSED` и `COMPENSATION_FAILED` ждут человека, и спрятать их значило бы
+спрятать незакрытое.
 
 **`variables` — не источник истины.** Это денормализованный результат replay,
 ускоряющий выбор следующего шага. Восстановление читает журнал, а не

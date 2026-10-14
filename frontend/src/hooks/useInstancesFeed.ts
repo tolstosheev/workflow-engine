@@ -26,6 +26,7 @@ export function useInstancesFeed(statusFilter: InstanceStatus | 'ALL') {
   const error = useInstancesStore((state) => state.error)
   const connected = useInstancesStore((state) => state.connected)
   const lastEventAt = useInstancesStore((state) => state.lastEventAt)
+  const archivedTotal = useInstancesStore((state) => state.archivedTotal)
   const handleEvent = useInstancesStore((state) => state.handleEvent)
   const setConnected = useInstancesStore((state) => state.setConnected)
   const loadList = useInstancesStore((state) => state.load)
@@ -53,6 +54,7 @@ export function useInstancesFeed(statusFilter: InstanceStatus | 'ALL') {
     error,
     connected,
     lastEventAt,
+    archivedTotal,
     load: reload,
   }
 }

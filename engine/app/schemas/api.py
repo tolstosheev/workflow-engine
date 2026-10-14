@@ -87,6 +87,9 @@ class InstanceOut(BaseModel):
     # Отдельно от срока аренды: по нему видно, что воркер жив, даже если
     # аренда формально истекла в момент запроса.
     heartbeat_at: datetime | None
+    # Отметка архива (ADR-0017). Процесс убран из списка, но не удалён: журнал
+    # цел, а страница процесса открывается.
+    archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -96,6 +99,9 @@ class InstanceListOut(BaseModel):
     total: int
     limit: int
     offset: int
+    # Сколько всего архивных: без этого числа кнопка уборки не знала бы,
+    # что именно она убирает.
+    archived_total: int = 0
 
 
 class InstanceCreate(BaseModel):
@@ -190,6 +196,21 @@ class ForceCompleteRequest(BaseModel):
 
 class ActionResult(BaseModel):
     status: InstanceStatus
+    message: str
+
+
+class ArchiveRequest(BaseModel):
+    """Тело запроса уборки завершённых процессов."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Только процессы, созданные раньше срока. Без срока база растёт, а
+    # удалять по возрасту мы сознательно не умеем (ADR-0017).
+    before: datetime | None = None
+
+
+class ArchiveResult(BaseModel):
+    archived: int
     message: str
 
 

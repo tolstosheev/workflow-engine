@@ -30,6 +30,7 @@ const instance = (id: string, status: WorkflowInstance['status']): WorkflowInsta
   lease_owner: null,
   lease_expires_at: null,
   heartbeat_at: null,
+  archived_at: null,
   created_at: '2026-03-01T10:00:00Z',
   updated_at: '2026-03-01T10:00:30Z',
 })
@@ -96,6 +97,33 @@ describe('сравнение процессов', () => {
     // Подписи карточек совпадают с подписями полей выбора, поэтому проверка
     // идёт по тому, что доказывает загрузку: у каждой стороны своя
     // длительность жизни на общем отрезке.
+    expect(await screen.findByText('20 мс жизни')).toBeTruthy()
+    expect(await screen.findByText('30.0 с жизни')).toBeTruthy()
+  })
+
+  it('берёт и второй процесс из адреса', async () => {
+    // Один выбор уже проверялся; второй вёлся бы отдельно, а забытый
+    // обработчик сделал бы «сравнение» односторонним — и это не заметно.
+    renderAt('/compare')
+
+    await screen.findByRole('combobox', { name: 'Второй процесс' })
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Второй процесс' }), {
+      target: { value: 'long-1' },
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('path').textContent).toBe('/compare?b=long-1'),
+    )
+  })
+
+  it('рисует обе стороны на одном отрезке', async () => {
+    renderAt('/compare?a=short-1&b=long-1')
+
+    // Обе стороны показаны одновременно — ради этого страница и писалась. Проверка
+    // по подписям, а не по наличию списка: список есть и у стороны без
+    // прогонов, и у стороны с ними.
+    expect(await screen.findByText('short-1')).toBeTruthy()
+    expect(await screen.findByText('long-1')).toBeTruthy()
     expect(await screen.findByText('20 мс жизни')).toBeTruthy()
     expect(await screen.findByText('30.0 с жизни')).toBeTruthy()
   })

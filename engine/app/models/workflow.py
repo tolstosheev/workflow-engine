@@ -94,6 +94,11 @@ class WorkflowInstance(Base, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # Отметка «убран из списка» (ADR-0017). Это не удаление: журнал остаётся
+    # целым, а процесс по-прежнему открывается. Архивировать можно только
+    # терминальные — незакрытый инцидент из вида убирать нельзя.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     definition: Mapped[WorkflowDefinition] = relationship(back_populates="instances")
     events: Mapped[list[WorkflowEvent]] = relationship(
         back_populates="instance",

@@ -20,6 +20,8 @@ interface InstancesState {
    * для него не должны быть доступны.
    */
   lastSeq: Record<string, number>
+  /** Сколько процессов убрано в архив: нужно подписи кнопки уборки (ADR-0017). */
+  archivedTotal: number
   load: (signal?: AbortSignal) => Promise<void>
   handleEvent: (event: StreamEvent) => void
   setConnected: (connected: boolean) => void
@@ -32,6 +34,7 @@ export const useInstancesStore = create<InstancesState>((set) => ({
   connected: false,
   lastEventAt: null,
   lastSeq: {},
+  archivedTotal: 0,
 
   load: async (signal) => {
     // Ошибку не стираем до попытки: фоновая подстраховка мигает на экране,
@@ -48,7 +51,13 @@ export const useInstancesStore = create<InstancesState>((set) => ({
 
       // Счётчик событий сбрасывается вместе со списком: новая выборка —
       // это новая точка отсчёта, и события предыдущей к ней не относятся.
-      set({ items: page.items, loading: false, error: null, lastSeq: {} })
+      set({
+        items: page.items,
+        loading: false,
+        error: null,
+        lastSeq: {},
+        archivedTotal: page.archived_total ?? 0,
+      })
     } catch (error) {
       if (signal?.aborted) {
         // Отмена — не ошибка: ответит следующая загрузка, а сообщение об

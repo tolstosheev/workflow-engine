@@ -203,6 +203,7 @@ curl -X POST http://localhost:8000/api/definitions \
 | `status` | string | Фильтр по состоянию |
 | `definition_id` | uuid | Фильтр по дефинишену |
 | `limit` / `offset` | int | Пагинация |
+| `archived` | `active` \| `archived` \| `all` | Кого показывать. По умолчанию `active` — архивные скрыты, иначе уборка списка ничего бы не убирала |
 
 ```json
 {
@@ -221,9 +222,13 @@ curl -X POST http://localhost:8000/api/definitions \
   ],
   "total": 1,
   "limit": 50,
-  "offset": 0
+  "offset": 0,
+  "archived_total": 0
 }
 ```
+
+Поле `archived_total` нужно клиенту, чтобы кнопка уборки знала, сколько
+процессов она убирает.
 
 ### `POST /api/instances`
 
@@ -368,6 +373,36 @@ curl -X POST http://localhost:8000/api/instances/b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4
 curl -X POST http://localhost:8000/api/instances/{id}/complete \
   -H "Content-Type: application/json" \
   -d '{"reason": "клиент подтвердил вручную"}'
+```
+
+### `POST /api/instances/archive`
+
+Убирает завершённые процессы из списка (ADR-0017). **Это не удаление:** журнал
+процесса остаётся целым, а состояние по-прежнему выводится его повтором.
+Убираются только терминальные процессы — `PAUSED` ждёт решения человека, а
+`COMPENSATION_FAILED` ждёт повтора отката, и спрятать их значило бы спрятать
+незакрытое.
+
+Необязательное поле `before` ограничивает уборку возрастом: берутся только
+процессы, созданные раньше срока.
+
+```bash
+curl -X POST http://localhost:8000/api/instances/archive \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+```json
+{"archived": 42, "message": "в архив убрано процессов: 42"}
+```
+
+### `POST /api/instances/{id}/unarchive`
+
+Возвращает процесс из архива в список. Отвечает `404`, если процесс не был
+архивирован: такой инстанс существует и жив, и называть его «не найденным в
+архиве» — единственное честное, что здесь можно сказать.
+
+```bash
+curl -X POST http://localhost:8000/api/instances/{id}/unarchive
 ```
 
 ### `POST /api/instances/{id}/compensation/retry`

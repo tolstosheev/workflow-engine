@@ -1,13 +1,14 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { Link, useSearchParams } from 'react-router-dom'
 
+import { instances as instancesApi } from '@/api/client'
 import { WorkerLeases, StreamStatus } from '@/components/WorkerLeases'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useInstancesFeed } from '@/hooks/useInstancesFeed'
 import { countRunning, selectInstances } from '@/lib/instanceList'
 import { formatDateTime, statusLabel, statusTone } from '@/lib/status'
-import type { InstanceStatus } from '@/types/api'
+import type { InstanceStatus, WorkflowInstance } from '@/types/api'
 
 const FILTERS: Array<{ value: InstanceStatus | 'ALL'; label: string }> = [
   { value: 'ALL', label: 'Все' },
@@ -45,7 +46,67 @@ export default function InstancesPage() {
     setParams(merged, { replace: true })
   }
 
-  const { items, all, loading, error, connected, lastEventAt, load } = useInstancesFeed(statusFilter)
+  const showArchive = params.get('archive') === '1'
+  const { items, all, loading, error, connected, lastEventAt, load, archivedTotal } =
+    useInstancesFeed(statusFilter)
+
+  // Архивный список грузится отдельно от основного: стор держит только живые
+  // процессы, и мешать ему архивные строки значило бы заставить его помнить,
+  // в каком режиме открыт.
+  const [archiveItems, setArchiveItems] = useState<WorkflowInstance[]>([])
+  const [tidyError, setTidyError] = useState<string | null>(null)
+  const [tidyNote, setTidyNote] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!showArchive) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const page = await instancesApi.list({ limit: 100, archived: 'archived' })
+        if (!cancelled) setArchiveItems(page.items)
+      } catch (cause) {
+        if (!cancelled) {
+          setTidyError(cause instanceof Error ? cause.message : 'Архив не прочитан')
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [showArchive])
+
+  // Уборка архивирует, а не удаляет: журнал процесса остаётся целым, и кнопка
+  // так и называется. Слово «удалить» обещало бы больше, чем делает движок.
+  const runTidy = async () => {
+    setBusy(true)
+    setTidyError(null)
+    setTidyNote(null)
+    try {
+      const result = await instancesApi.archive()
+      setTidyNote(result.message)
+      await load()
+    } catch (cause) {
+      setTidyError(cause instanceof Error ? cause.message : 'Уборка не выполнена')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const restore = async (id: string) => {
+    setBusy(true)
+    setTidyError(null)
+    try {
+      await instancesApi.unarchive(id)
+      const page = await instancesApi.list({ limit: 100, archived: 'archived' })
+      setArchiveItems(page.items)
+      await load()
+    } catch (cause) {
+      setTidyError(cause instanceof Error ? cause.message : 'Не удалось вернуть процесс')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   // Поиск и сортировка применяются к уже полученному списку: это то, что
   // видно сейчас, без запроса на каждый ввод. Отбор и порядок считаются в
@@ -86,7 +147,53 @@ export default function InstancesPage() {
         <Button onClick={() => patch({ sort: newestFirst ? 'old' : '' })}>
           {newestFirst ? 'Сначала новые' : 'Сначала старые'}
         </Button>
+        <Button aria-pressed={showArchive} onClick={() => patch({ archive: showArchive ? '' : '1' })}>
+          {showArchive ? 'Скрыть архив' : `Архив${archivedTotal ? ` (${archivedTotal})` : ''}`}
+        </Button>
+        {!showArchive && (
+          <Button disabled={busy} onClick={() => void runTidy()}>
+            {busy ? 'Убираем…' : 'Убрать завершённые'}
+          </Button>
+        )}
       </div>
+
+      {tidyNote && (
+        <p aria-live="polite" className="text-xs text-white/40">
+          {tidyNote}. Из списка они убраны, но не удалены: журнал цел, а открыть процесс можно через
+          переключатель «Архив».
+        </p>
+      )}
+      {tidyError && <ErrorState message={tidyError} />}
+
+      {showArchive && (
+        <Card title="Архив">
+          {archiveItems.length === 0 ? (
+            <EmptyState message="В архиве пусто" />
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {archiveItems.map((instance) => (
+                <li key={instance.id} className="flex items-center gap-2">
+                  <Link to={`/instances/${instance.id}`} className="text-accent hover:underline">
+                    {instance.definition.name}
+                  </Link>
+                  <StatusBadge
+                    label={statusLabel(instance.status)}
+                    toneClass={statusTone(instance.status)}
+                  />
+                  <span className="text-xs text-white/40">{formatDateTime(instance.created_at)}</span>
+                  <Button
+                    className="ml-auto"
+                    disabled={busy}
+                    onClick={() => void restore(instance.id)}
+                  >
+                    Вернуть в список
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
 
       {query.trim() && (
         <p aria-live="polite" className="text-xs text-white/40">

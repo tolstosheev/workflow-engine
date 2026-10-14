@@ -32,6 +32,8 @@ vi.mock('@/api/client', async () => {
   return {
     instances: {
       list: vi.fn(async () => ({ items: fixture(), total: fixture().length })),
+      archive: vi.fn(async () => ({ archived: 3, message: 'в архив убрано процессов: 3' })),
+      unarchive: vi.fn(async () => ({ status: 'COMPLETED', message: 'процесс возвращён из архива' })),
     },
     chaosApi: { list: vi.fn(async () => ({ active: [] })) },
     definitions: {},
@@ -244,6 +246,85 @@ describe('список инстансов', () => {
     await search('нетакого')
 
     expect(rows()).toHaveLength(0)
+  })
+
+  it('убирает завершённые и говорит, что они не удалены', async () => {
+    renderPage()
+    await screen.findByText('order-new')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Убрать завершённые' }))
+
+    // Кнопка обещает убрать, а не удалить: журнал процесса остаётся целым, и
+    // без этой оговорки человек решит, что история стёрта.
+    expect(await screen.findByText(/Из списка они убраны, но не удалены/)).toBeTruthy()
+  })
+
+  it('переключает архив кнопкой и убирает его обратно', async () => {
+    renderPage()
+    await screen.findByText('order-new')
+
+    // Переключатель архива — единственный способ увидеть убранное, и если он
+    // не работает, уборка выглядит как удаление: процесс пропал совсем.
+    await fireEvent.click(screen.getByRole('button', { name: /^Архив/ }))
+    expect((await screen.findAllByRole('button', { name: 'Вернуть в список' })).length).toBe(3)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Скрыть архив' }))
+    expect(screen.queryByRole('button', { name: 'Вернуть в список' })).toBeNull()
+  })
+
+  it('повторяет чтение списка по кнопке в сообщении об ошибке', async () => {
+    const { instances } = await import('@/api/client')
+    vi.mocked(instances.list).mockRejectedValueOnce(new Error('список недоступен'))
+
+    renderPage()
+
+    expect(await screen.findByText('список недоступен')).toBeTruthy()
+    vi.mocked(instances.list).mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
+    expect(await screen.findByText(/Инстансов пока нет/)).toBeTruthy()
+  })
+
+  it('объясняет, если уборка не вышла', async () => {
+    const { instances } = await import('@/api/client')
+    vi.mocked(instances.archive).mockRejectedValueOnce(new Error('сервис недоступен'))
+
+    renderPage()
+    await screen.findByText('order-new')
+    await fireEvent.click(screen.getByRole('button', { name: 'Убрать завершённые' }))
+
+    // Молчаливая неудача выглядела бы как «убрали, но ничего не изменилось».
+    expect(await screen.findByText('сервис недоступен')).toBeTruthy()
+  })
+
+  it('объясняет, если процесс не вернулся из архива', async () => {
+    const { instances } = await import('@/api/client')
+    vi.mocked(instances.unarchive).mockRejectedValueOnce(new Error('инстанс не найден'))
+
+    renderPage('/?archive=1')
+    const restores = await screen.findAllByRole('button', { name: 'Вернуть в список' })
+    await fireEvent.click(restores[0])
+
+    expect(await screen.findByText('инстанс не найден')).toBeTruthy()
+  })
+
+  it('показывает архив по переключателю и возвращает процесс', async () => {
+    renderPage('/?archive=1')
+
+    // Кнопка возврата своя у каждой архивной строки, поэтому ищутся все, а не
+    // первая: иначе проверка не заметила бы, что строк несколько.
+    const restores = await screen.findAllByRole('button', { name: 'Вернуть в список' })
+    expect(restores).toHaveLength(3)
+
+    await fireEvent.click(restores[0])
+    expect(
+      (await screen.findAllByRole('button', { name: 'Вернуть в список' })).length,
+    ).toBeGreaterThan(0)
   })
 
   it('объявляет то же число, что и показывает', async () => {

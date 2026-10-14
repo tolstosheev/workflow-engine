@@ -98,6 +98,8 @@ export interface WorkflowInstance {
   lease_owner: string | null
   lease_expires_at: string | null
   heartbeat_at: string | null
+  // Отметка архива (ADR-0017): процесс убран из списка, но не удалён.
+  archived_at: string | null
   created_at: string
   updated_at: string
 }
@@ -164,6 +166,8 @@ export interface Paginated<T> {
   total: number
   limit: number
   offset: number
+  /** Сколько процессов в архиве: без этого кнопка уборки не знает, что убирает. */
+  archived_total?: number
 }
 
 export interface ChaosResult {
