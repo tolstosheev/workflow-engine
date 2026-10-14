@@ -36,7 +36,16 @@ services:
       context: ./engine
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://workflow:workflow@db:5432/workflow_engine}
+      # Адрес БД внутри сети compose — литеральный, ровно как у `migrate` выше.
+      #
+      # Здесь стояла подстановка `${DATABASE_URL:-...}`, и она была тихой
+      # поломкой: compose берёт переменную из окружения оболочки, а адрес БД для
+      # хостовых скриптов (scripts.seed, scripts.load, pytest) — это
+      # `localhost:5434`. Заданная в оболочке, она уезжала внутрь контейнера,
+      # где такого хоста нет, и воркер уходил в бесконечные попытки соединения,
+      # оставаясь «живым»: инстансы висели в очереди, не показывая причины.
+      # Подстановки здесь быть не должно — адрес контейнера не выбирают.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-workflow}@db:5432/${POSTGRES_DB:-workflow_engine}
       DEBUG: ${DEBUG:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       # Общий каталог метрик: API собирает счётчики и воркеров из своих
@@ -64,7 +73,7 @@ services:
     # и два воркера с pid 1 записывали бы в один файл и счётчики терялись.
     pid: host
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://workflow:workflow@db:5432/workflow_engine}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-workflow}@db:5432/${POSTGRES_DB:-workflow_engine}
       LEASE_TTL_SECONDS: ${LEASE_TTL_SECONDS:-30}
       HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS:-5}
       COMPENSATION_RETRY_BASE_SECONDS: ${COMPENSATION_RETRY_BASE_SECONDS:-5}
@@ -84,7 +93,7 @@ services:
     # и два воркера с pid 1 записывали бы в один файл и счётчики терялись.
     pid: host
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://workflow:workflow@db:5432/workflow_engine}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-workflow}@db:5432/${POSTGRES_DB:-workflow_engine}
       LEASE_TTL_SECONDS: ${LEASE_TTL_SECONDS:-30}
       HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS:-5}
       COMPENSATION_RETRY_BASE_SECONDS: ${COMPENSATION_RETRY_BASE_SECONDS:-5}
