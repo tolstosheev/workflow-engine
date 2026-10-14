@@ -29,6 +29,7 @@ export function StepTimeline({ steps, now }: { steps: StepRun[]; now?: number })
   if (!layout) return null
 
   const share = dutyRatio(layout)
+  const running = layout.rows.find((row) => row.running)
 
   return (
     <section className="rounded-lg border border-surface-border bg-surface-raised p-4">
@@ -39,6 +40,16 @@ export function StepTimeline({ steps, now }: { steps: StepRun[]; now?: number })
           Процесс живёт {formatDuration('1970-01-01T00:00:00Z', new Date(layout.totalMs).toISOString())}, из
           него в шагах {percent(share)}, остальное — ожидание.
         </p>
+        {running && (
+          // Подпись исполняемого шага стоит над лентой, а не только на полосе:
+          // полоса растёт на глазах, и без подписи непонятно, что именно
+          // сейчас происходит с процессом.
+          <p className="mt-2 flex items-center gap-2 text-xs text-accent">
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-accent" />
+            Сейчас исполняется: {running.stepName}
+            {running.attempt > 1 ? `, попытка ${running.attempt}` : ''}
+          </p>
+        )}
       </header>
 
       <ol className="space-y-1">
@@ -60,7 +71,9 @@ function Row({ row }: { row: LaneRow }) {
 
       <span className="relative h-4 flex-1 overflow-hidden rounded bg-surface">
         <span
-          className={`absolute top-0 h-full ${BAR_CLASSES[row.status]}`}
+          className={`absolute top-0 h-full ${BAR_CLASSES[row.status]} ${
+            row.running ? 'animate-pulse' : ''
+          }`}
           style={{ left: `${row.offset * 100}%`, width: `${row.width * 100}%` }}
         />
       </span>

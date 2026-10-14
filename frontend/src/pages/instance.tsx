@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom'
 import { instances as instancesApi, definitions as definitionsApi } from '@/api/client'
 import { useEventStream } from '@/api/stream'
 import { DefinitionGraph } from '@/components/DefinitionGraph'
+import { LeaseDetails } from '@/components/LeaseDetails'
 import { ReplayCheck } from '@/components/ReplayCheck'
 import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
 import { StepTimeline } from '@/components/StepTimeline'
@@ -141,12 +142,12 @@ export default function InstancePage() {
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Состояние по журналу" className="lg:col-span-1">
           {state ? (
-            <dl className="space-y-2 text-sm">
-              <Row label="Статус" value={statusLabel(state.status)} />
+            <>
+              <dl className="space-y-2 text-sm">
+                <Row label="Статус" value={statusLabel(state.status)} />
               <Row label="Текущий шаг" value={state.current_step ?? '—'} />
               <Row label="Выполнено" value={state.completed_steps.join(' → ') || '—'} />
               <Row label="К откату" value={state.pending_compensations.join(' → ') || '—'} />
-              <Row label="Аренда" value={instance.lease_owner ?? 'свободна'} />
               <Row
                 label="Ожидание"
                 value={
@@ -172,7 +173,17 @@ export default function InstancePage() {
                 }
               />
               <Row label="Создан" value={formatDateTime(instance.created_at)} />
-            </dl>
+              </dl>
+
+              {/* Аренда вместо блокировок не читается в коде, а строка «Аренда:
+                  worker-1» ничего не говорила о том, что срок истечёт и инстанс
+                  освободится сам. */}
+              <LeaseDetails
+                owner={instance.lease_owner}
+                expiresAt={instance.lease_expires_at}
+                heartbeatAt={instance.heartbeat_at}
+              />
+            </>
           ) : (
             <EmptyState message="Нет данных" />
           )}

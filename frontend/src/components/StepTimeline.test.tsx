@@ -95,6 +95,29 @@ describe('лента времени процесса', () => {
     expect(screen.getByText('откатан')).toBeTruthy()
   })
 
+  it('называет шаг, который исполняется сейчас', () => {
+    render(
+      <StepTimeline
+        now={NOW}
+        steps={[
+          run({ id: 'a', started_at: '2026-03-01T10:00:00Z', finished_at: '2026-03-01T10:00:01Z' }),
+          run({
+            id: 'b',
+            step_name: 'charge_payment',
+            attempt: 2,
+            status: 'RUNNING',
+            started_at: '2026-03-01T10:00:30Z',
+            finished_at: null,
+          }),
+        ]}
+      />,
+    )
+
+    // Полоса исполняемого шага растёт на глазах, и без подписи над лентой не
+    // видно, что именно сейчас происходит с процессом.
+    expect(screen.getByText(/Сейчас исполняется: charge_payment/)).toBeTruthy()
+  })
+
   it('не рисует ничего, когда разложить нечего', () => {
     const { container } = render(<StepTimeline now={NOW} steps={[]} />)
 
