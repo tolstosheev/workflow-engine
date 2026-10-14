@@ -139,6 +139,33 @@ test.afterEach(async ({ request }) => {
   await api(request, 'delete', '/api/chaos')
 })
 
+test('сценарий приводит к откату через интерфейс', async ({ page, request }) => {
+  // Страница сценариев обещает показать свойство, а не запустить процесс.
+  // Проверка идёт через неё целиком: кнопка, правило инъекции, ожидание конца.
+  // Если сценарий перестанет снимать правило, следующая проверка встанет на
+  // чужой инъекции — и это тоже часть договора страницы.
+  const definitionId = await demoDefinition(request)
+  await api(request, 'post', `/api/definitions/${definitionId}/activate`)
+
+  await page.goto('/scenarios')
+  // Карточка ищется от заголовка вверх до ближайшей секции: поиск по тексту
+  // секции ловит и внешние обёртки, потому что они тоже содержат этот текст.
+  const rollback = page
+    .getByRole('heading', { name: 'Платёж отказывает, заказ откатывается' })
+    .locator('xpath=ancestor::section[1]')
+    .getByRole('button', { name: 'Запустить' })
+  await rollback.click()
+
+  // Итог — конечное состояние процесса, а не «кнопка нажата».
+  await expect(page.getByText('пришёл в ожидаемое состояние').first()).toBeVisible({
+    timeout: 60_000,
+  })
+
+  // И правило снято: чужое правило сломало бы всё, что запустят дальше.
+  const { json } = await api(request, 'get', '/api/chaos')
+  expect(json.active).toEqual([])
+})
+
 test('пауза называется на странице одним и тем же', async ({ page, request }) => {
   // Дефект: планирование срока пишет TIMER_SCHEDULED, разбор принимал его за
   // ожидание шага, и карточка называла паузу «Ожидание», а шапка — «Ждёт

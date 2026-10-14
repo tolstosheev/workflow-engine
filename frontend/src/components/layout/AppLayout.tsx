@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { to: '/metrics', label: 'Состояние' },
   { to: '/chaos', label: 'Инъекция отказов' },
   { to: '/compare', label: 'Сравнение' },
+  { to: '/scenarios', label: 'Сценарии' },
 ]
 
 const navLinkClass = ({ isActive }: { isActive: boolean }): string =>

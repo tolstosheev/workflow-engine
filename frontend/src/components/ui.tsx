@@ -24,7 +24,14 @@ export function Card({ title, actions, children, className = '' }: CardProps) {
     <section className={`rounded-lg border border-surface-border bg-surface-raised p-4 ${className}`}>
       {(title || actions) && (
         <header className="mb-3 flex items-center justify-between gap-3">
-          {title}
+          {/* Заголовок карточки — настоящий заголовок, а не текст в шапке.
+              Иначе на странице с полдюжиной карточек скринридер выдаёт подряд
+              безымянные секции, и перейти к нужной можно только глазами. */}
+          {typeof title === 'string' ? (
+            <h2 className="text-sm font-semibold text-white">{title}</h2>
+          ) : (
+            title
+          )}
           {actions}
         </header>
       )}
