@@ -15,7 +15,7 @@
  *   наполнение, и сохраняться должен при любом состоянии базы.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,6 +25,7 @@ const list = vi.fn()
 const create = vi.fn()
 const update = vi.fn()
 const activate = vi.fn()
+const validate = vi.fn()
 const validatePayload = vi.fn()
 const start = vi.fn()
 
@@ -34,6 +35,7 @@ vi.mock('@/api/client', () => ({
     create: (...args: unknown[]) => create(...args),
     update: (...args: unknown[]) => update(...args),
     activate: (...args: unknown[]) => activate(...args),
+    validate: (...args: unknown[]) => validate(...args),
     validatePayload: (...args: unknown[]) => validatePayload(...args),
   },
   instances: { start: (...args: unknown[]) => start(...args) },
@@ -60,6 +62,17 @@ async function open(): Promise<void> {
   await screen.findByRole('table', { name: 'Определения workflow' })
 }
 
+/**
+ * Кнопка в строке таблицы, а не первая такая же на странице.
+ *
+ * «Проверить» есть и у редактора, и у каждой строки; без области поиска
+ * нашлась бы первая, и проверялось бы не то определение.
+ */
+function rowButton(name: string): HTMLElement {
+  const table = screen.getByRole('table', { name: 'Определения workflow' })
+  return within(table).getByRole('button', { name })
+}
+
 /** То же для случая, когда сохранённых определений нет и таблицы не будет. */
 async function openEmpty(): Promise<void> {
   await mount()
@@ -76,11 +89,14 @@ async function mount(): Promise<void> {
 }
 
 beforeEach(() => {
-  for (const spy of [list, create, update, activate, validatePayload, start]) spy.mockReset()
+  for (const spy of [list, create, update, activate, validate, validatePayload, start]) {
+    spy.mockReset()
+  }
   list.mockResolvedValue({ items: [EXISTING], total: 1 })
   create.mockResolvedValue({ id: 'd-new', name: 'demo_order', version: 1 })
   update.mockResolvedValue(EXISTING)
   activate.mockResolvedValue(EXISTING)
+  validate.mockResolvedValue({ valid: true, errors: [], warnings: [] })
   validatePayload.mockResolvedValue({ valid: true, errors: [], warnings: [] })
   start.mockResolvedValue({ id: 'i-1' })
   vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -176,6 +192,66 @@ describe('редактор определений', () => {
     // Молчаливая неудача хуже: человек решил бы, что сохранил, и запустил бы
     // не то, что собирался.
     expect(await screen.findByText('определение уже существует')).toBeTruthy()
+  })
+
+  it('объясняет по-русски, что входные данные не читаются', async () => {
+    await open()
+
+    // Поле входа принимает свободный текст, и вставленный обрывок — обычное
+    // дело. Сообщение движка JavaScript на русской странице объясняет ничего:
+    // человек не знает, что «Unexpected token» — это про `{`, а не про сервер.
+    await fireEvent.change(screen.getByLabelText('Входные данные инстанса в формате JSON'), {
+      target: { value: '{ не json' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Запустить' }))
+
+    expect(await screen.findByText(/JSON не разбирается/)).toBeTruthy()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('объясняет по-русски, что определение не читается', async () => {
+    await open()
+
+    await fireEvent.change(screen.getByLabelText('Определение workflow в формате JSON'), {
+      target: { value: '{ сломанный' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить и активировать' }))
+
+    expect(await screen.findByText(/JSON не разбирается/)).toBeTruthy()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('запускает выбранное определение с введёнными данными', async () => {
+    await open()
+
+    await fireEvent.change(screen.getByLabelText('Входные данные инстанса в формате JSON'), {
+      target: { value: '{"sku":"SKU-1","qty":2}' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Выбрать' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Запустить выбранное определение' }))
+
+    // Входные данные уходят в запрос как есть: инстанс получает ровно то, что
+    // человек ввёл, и редактор не подставляет ничего от себя.
+    expect(start).toHaveBeenCalledWith('d-old', { sku: 'SKU-1', qty: 2 })
+  })
+
+  it('проверяет сохранённое определение по его строке', async () => {
+    await open()
+
+    await fireEvent.click(rowButton('Проверить'))
+
+    // У каждого определения своя проверка: проверять всё подряд значило бы
+    // спрашивать сервер обо всех строках при нажатии одной кнопки.
+    expect(validate).toHaveBeenCalledWith('d-old')
+  })
+
+  it('объясняет, если проверка не прошла', async () => {
+    validate.mockRejectedValue(new Error('определение недоступно'))
+    await open()
+
+    await fireEvent.click(rowButton('Проверить'))
+
+    expect(await screen.findByText('определение недоступно')).toBeTruthy()
   })
 
   it('разделяет ошибки и предупреждения', async () => {

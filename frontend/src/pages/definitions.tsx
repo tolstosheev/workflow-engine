@@ -96,7 +96,17 @@ export default function DefinitionsPage() {
     if (busy) return
     setBusy(true)
     try {
-      const parsed = JSON.parse(source)
+      let parsed: Record<string, unknown>
+      try {
+        parsed = JSON.parse(source) as Record<string, unknown>
+      } catch {
+        // Нераспознаваемый JSON — обычное дело при вставке из буфера. Сообщение
+        // движка на русской странице ничего не объясняет: «Unexpected token»
+        // читается как отказ сервера, а это ошибка того, что введено в поле.
+        setError('JSON не разбирается — проверьте синтаксис')
+        setValidation(null)
+        return
+      }
       const name = String(parsed.name ?? '')
       const version = Number(parsed.version ?? 1)
 
@@ -165,7 +175,17 @@ export default function DefinitionsPage() {
     if (busy) return
     setBusy(true)
     try {
-      const created = await instancesApi.start(definitionId, JSON.parse(startInput))
+      let input: Record<string, unknown>
+      try {
+        input = JSON.parse(startInput) as Record<string, unknown>
+      } catch {
+        // Причина та же, что и при сохранении: входные данные вводятся руками,
+        // и обрывок в поле — обычное дело, а не сбой сервиса.
+        setError('JSON не разбирается — проверьте синтаксис')
+        setNotice(null)
+        return
+      }
+      const created = await instancesApi.start(definitionId, input)
       setError(null)
       setNotice(`Инстанс ${created.id} запущен`)
     } catch (cause) {

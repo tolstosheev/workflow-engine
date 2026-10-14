@@ -2,10 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { StreamEvent, WorkflowInstance } from '@/types/api'
 
+/** Страница списка: тип задан руками, иначе пустой массив выводится как `never[]`. */
+interface Page {
+  items: WorkflowInstance[]
+  total: number
+  limit: number
+  offset: number
+}
+
+const list = vi.fn<(params: unknown, signal?: AbortSignal) => Promise<Page>>(
+  async () => ({ items: [], total: 0, limit: 100, offset: 0 }),
+)
+
+// Шпион отдаётся напрямую, а не в обёртке: иначе `vi.mocked(list)` доставал
+// обычную функцию, у которой нет ни `mockResolvedValue`, ни счётчика вызовов.
 vi.mock('@/api/client', () => ({
-  instances: {
-    list: vi.fn(async () => ({ items: [], total: 0, limit: 100, offset: 0 })),
-  },
+  instances: { list },
 }))
 
 const { useInstancesStore } = await import('@/store/instances')
@@ -176,6 +188,53 @@ describe('handleEvent', () => {
 
     expect(useInstancesStore.getState().lastEventAt).toBe('2026-10-10T00:01:00Z')
     expect(useInstancesStore.getState().items).toHaveLength(2)
+  })
+
+  it('загрузка заменяет список и снимает прошлаю ошибку', async () => {
+    list.mockResolvedValue({ items: [STUB('из-базы')], total: 1, limit: 100, offset: 0 })
+    useInstancesStore.setState({ items: [STUB('старый')], loading: true, error: 'прошлая ошибка' })
+
+    await useInstancesStore.getState().load()
+
+    // Список, который показали, и тот, что пришёл с сервера, — разные вещи:
+    // пока идёт загрузка, на экране старое, и без замены он остался бы навсегда.
+    expect(useInstancesStore.getState().items.map((item) => item.id)).toEqual(['из-базы'])
+    expect(useInstancesStore.getState().loading).toBe(false)
+    expect(useInstancesStore.getState().error).toBeNull()
+  })
+
+  it('загрузка начинает отсчёт событий заново', async () => {
+    list.mockResolvedValue({ items: [STUB('из-базы')], total: 1, limit: 100, offset: 0 })
+    useInstancesStore.setState({ items: [], lastSeq: { i1: 50 }, loading: true })
+
+    await useInstancesStore.getState().load()
+
+    // Номера событий принадлежат прежней выборке. Оставленные на месте, они
+    // отбросили бы первые же кадры новой — и список перестал бы оживать.
+    expect(useInstancesStore.getState().lastSeq).toEqual({})
+  })
+
+  it('показывает причину, если загрузка не удалась', async () => {
+    list.mockRejectedValue(new Error('сервер недоступен'))
+    useInstancesStore.setState({ items: [STUB('прежний')], loading: true })
+
+    await useInstancesStore.getState().load()
+
+    expect(useInstancesStore.getState().error).toBe('сервер недоступен')
+    expect(useInstancesStore.getState().loading).toBe(false)
+    // Прежние строки остаются: пустой список читался бы как «процессов нет».
+    expect(useInstancesStore.getState().items).toHaveLength(1)
+  })
+
+  it('объясняет ошибку, даже если пришла не строкой', async () => {
+    // Отказ может прийти чем угодно: строкой, объектом, ничем. Безfallback
+    // на экране оказалось бы `undefined` вместо причины.
+    list.mockRejectedValue('просто строка')
+    useInstancesStore.setState({ loading: true })
+
+    await useInstancesStore.getState().load()
+
+    expect(useInstancesStore.getState().error).toBe('Не удалось загрузить инстансы')
   })
 
   it('отменённый запрос не пишет в состояние', async () => {

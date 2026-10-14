@@ -30,13 +30,20 @@ interface CompRule {
   mode: string
 }
 
+/**
+ * Обёртки передают аргументы шпиону.
+ *
+ * Раньше они вызывали `stopLease()` без ничего, и проверка «инъекция адресована
+ * тому инстансу» физически не могла увидеть адрес: шпион получал пустой вызов.
+ * Проверка проходила, потому что ничего и не утверждала.
+ */
 vi.mock('@/api/client', () => ({
   chaos: {
-    list: () => list(),
-    failStep: () => failStep(),
-    failService: () => failService(),
-    stopLease: () => stopLease(),
-    resumeLease: () => resumeLease(),
+    list: (...args: unknown[]) => list(...(args as [])),
+    failStep: (...args: unknown[]) => failStep(...(args as [])),
+    failService: (...args: unknown[]) => failService(...(args as [])),
+    stopLease: (...args: unknown[]) => stopLease(...(args as [])),
+    resumeLease: (...args: unknown[]) => resumeLease(...(args as [])),
     clear: () => clear(),
     failCompensation: (body: CompRule) => failCompensation(body),
   },
@@ -108,20 +115,20 @@ describe('панель инъекций', () => {
   it('не путает адрес инъекции с адресом для аренды', async () => {
     render(<ChaosPage />)
 
-    await fireEvent.change(screen.getByLabelText('Инстанс (необязательно)'), {
+    await fireEvent.change(screen.getByLabelText('Инстанс для инъекции (необязательно)'), {
       target: { value: 'i-инъекция' },
     })
-    await fireEvent.change(screen.getByLabelText('Инстанс', { selector: '#chaos-instance-lease' }), {
+    await fireEvent.change(screen.getByLabelText('Инстанс для аренды'), {
       target: { value: 'i-аренда' },
     })
 
     // Одно значение на оба поля означало бы, что введённый адрес применяется к
     // действию, о котором оператор не думал.
-    expect((screen.getByLabelText('Инстанс (необязательно)') as HTMLInputElement).value).toBe(
+    expect((screen.getByLabelText('Инстанс для инъекции (необязательно)') as HTMLInputElement).value).toBe(
       'i-инъекция',
     )
     expect(
-      (screen.getByLabelText('Инстанс', { selector: '#chaos-instance-lease' }) as HTMLInputElement)
+      (screen.getByLabelText('Инстанс для аренды') as HTMLInputElement)
         .value,
     ).toBe('i-аренда')
   })
@@ -137,12 +144,71 @@ describe('панель инъекций', () => {
   it('останавливает аренду по введённому адресу', async () => {
     render(<ChaosPage />)
 
-    await fireEvent.change(screen.getByLabelText('Инстанс', { selector: '#chaos-instance-lease' }), {
+    await fireEvent.change(screen.getByLabelText('Инстанс для аренды'), {
       target: { value: 'i-1' },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Остановить на 40 с' }))
 
     expect(stopLease).toHaveBeenCalledOnce()
+  })
+
+  it('принимает имя шага, введённое руками', async () => {
+    render(<ChaosPage />)
+    await screen.findByText('Инъекций нет')
+
+    await fireEvent.change(screen.getByLabelText('Шаг'), { target: { value: 'reserve_inventory' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Сломать шаг' }))
+
+    // Поле существует не для красоты: имена шагов длиннее, помещаются в пресет,
+    // и без правки вручную инъекция на свой шаг была бы недоступна.
+    expect(failStep).toHaveBeenCalledWith(
+      expect.objectContaining({ step: 'reserve_inventory', mode: 'always' }),
+    )
+  })
+
+  it('возобновляет аренду указанного инстанса', async () => {
+    render(<ChaosPage />)
+    await screen.findByText('Инъекций нет')
+
+    await fireEvent.change(screen.getByLabelText('Инстанс для аренды'), { target: { value: 'i-9' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Возобновить' }))
+    await flush()
+
+    // Адрес аренды и адрес инъекции — разные поля намеренно: сначала было одно
+    // на оба, и остановка аренды применялась к адресу инъекции.
+    expect(resumeLease).toHaveBeenCalledWith('i-9')
+  })
+
+  it('снимает все правила разом', async () => {
+    list.mockResolvedValue({ active: ['*:reserve_inventory:always'] })
+    render(<ChaosPage />)
+    await screen.findByText('*:reserve_inventory:always')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Снять все' }))
+    await flush()
+
+    expect(clear).toHaveBeenCalled()
+  })
+
+  it('объясняет ошибку действия, даже если пришла не строкой', async () => {
+    // Отказ может прийти чем угодно, а не только объектом Error: без
+    // запасного текста на экране оказалось бы `undefined` вместо причины.
+    failStep.mockRejectedValue('просто строка')
+    render(<ChaosPage />)
+    await screen.findByText('Инъекций нет')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Сломать шаг' }))
+
+    expect(await screen.findByText('Операция не выполнена')).toBeTruthy()
+  })
+
+  it('объясняет, что список инъекций не пришёл', async () => {
+    // Отказ при загрузке — другое место, чем отказ действия, и сообщение у него
+    // своё: человек должен понять, что не удалось прочитать состояние.
+    list.mockRejectedValue(new Error('панель недоступна'))
+    render(<ChaosPage />)
+
+    expect(await screen.findByText('панель недоступна')).toBeTruthy()
   })
 
   it('ломает компенсацию отдельным адресом, а не шагом', async () => {
@@ -166,7 +232,7 @@ describe('панель инъекций', () => {
     render(<ChaosPage />)
     await screen.findByText('Инъекций нет')
 
-    await fireEvent.change(screen.getByLabelText('Инстанс (необязательно)'), {
+    await fireEvent.change(screen.getByLabelText('Инстанс для инъекции (необязательно)'), {
       target: { value: 'i-1' },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Вернуть оплату' }))

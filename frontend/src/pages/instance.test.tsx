@@ -24,7 +24,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import InstancePage from '@/pages/instance'
 import type { WorkflowInstance } from '@/types/api'
 
-vi.mock('@/api/stream', () => ({ useEventStream: () => undefined }))
+/** Обработчики, которые страница отдала потоку: ими можно управлять в тесте. */
+const stream: { current: { onEvent?: (event: unknown) => void } | null } = { current: null }
+
+vi.mock('@/api/stream', () => ({
+  useEventStream: (handlers: { onEvent?: (event: unknown) => void }) => {
+    stream.current = handlers
+  },
+}))
 
 const get = vi.fn()
 const state = vi.fn()
@@ -229,6 +236,70 @@ describe('кнопки решения', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Завершить без компенсаций/ }))
 
     expect(forceComplete).toHaveBeenCalledOnce()
+  })
+
+  it('показывает процесс без графа, если определение не прочиталось', async () => {
+    // Граф берётся из определения, а состояние — из журнала. Отказ первого не
+    // должен уводить со страницы всё второе: человек пришёл посмотреть, что с
+    // процессом, а не что с картинкой.
+    definitionGet.mockRejectedValue(new Error('определение недоступно'))
+    await open('RUNNING')
+
+    expect(await screen.findByRole('heading', { name: 'order_demo' })).toBeTruthy()
+    expect(screen.queryByText('Граф шагов')).toBeNull()
+    expect(screen.getByText('Выполнено')).toBeTruthy()
+  })
+
+  it('показывает прогоны шагов', async () => {
+    steps.mockResolvedValue({
+      items: [
+        {
+          id: 'sr-1',
+          step_name: 'charge_payment',
+          attempt: 2,
+          status: 'FAILED',
+          started_at: '2026-03-01T10:00:00Z',
+          finished_at: '2026-03-01T10:00:03Z',
+          error: 'отказ платёжной системы',
+          compensated: false,
+        },
+      ],
+    })
+    await open('RUNNING')
+
+    // Прогон с ошибкой — главное, ради чего сюда приходят: страница обязана
+    // показать и попытку, и саму ошибку, иначе непонятно, что именно сломалось.
+    expect(await screen.findByText('charge_payment')).toBeTruthy()
+    expect(screen.getByText('провален')).toBeTruthy()
+    expect(screen.getByText('отказ платёжной системы')).toBeTruthy()
+  })
+
+  it('не перечитывает данные по событию чужого процесса', async () => {
+    await open('RUNNING')
+    const before = get.mock.calls.length
+
+    stream.current?.onEvent?.({ instance_id: 'чужой', type: 'STEP_COMPLETED', payload: {} })
+    await new Promise((resolve) => setTimeout(resolve, 600))
+
+    // Поток общий для всех процессов. Отклик на чужое событие означал бы опрос
+    // списка на каждом шаге любого процесса на стенде.
+    expect(get.mock.calls.length).toBe(before)
+  })
+
+  it('сливает частые события в одно обновление', async () => {
+    await open('RUNNING')
+    const before = get.mock.calls.length
+
+    for (let index = 0; index < 5; index += 1) {
+      stream.current?.onEvent?.({ instance_id: 'i-1', type: 'STEP_COMPLETED', payload: {} })
+    }
+    await new Promise((resolve) => setTimeout(resolve, 700))
+
+    // Шаги идут пачками, и без слияния страница дёргала бы сервер на каждый
+    // шаг: пять событий — пять одинаковых ответов.
+    const calls = get.mock.calls.length - before
+    expect(calls).toBeGreaterThan(0)
+    expect(calls).toBeLessThanOrEqual(2)
   })
 
   it('предлагает повтор отката там, где он провалился', async () => {

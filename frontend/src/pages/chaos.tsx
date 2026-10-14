@@ -138,8 +138,11 @@ export default function ChaosPage() {
             ))}
           </div>
 
+          {/* Подписи различают поля намеренно: два поля «Инстанс» на одной
+              странице скринридер объявляет одинаково, и к какому из них относится
+              действие рядом — остаётся угадать. */}
           <label htmlFor="chaos-instance-fail" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
-            Инстанс (необязательно)
+            Инстанс для инъекции (необязательно)
           </label>
           <input
             id="chaos-instance-fail"
@@ -217,7 +220,7 @@ export default function ChaosPage() {
             подхватывает другой воркер — это и есть проверка восстановления.
           </p>
           <label htmlFor="chaos-instance-lease" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
-            Инстанс
+            Инстанс для аренды
           </label>
           <input
             id="chaos-instance-lease"
