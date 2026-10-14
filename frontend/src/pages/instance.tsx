@@ -5,6 +5,7 @@ import { instances as instancesApi, definitions as definitionsApi } from '@/api/
 import { useEventStream } from '@/api/stream'
 import { DefinitionGraph } from '@/components/DefinitionGraph'
 import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
+import { ReplayCheck } from '@/components/ReplayCheck'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useAbortable } from '@/hooks/useAbortable'
 import { usePolling } from '@/hooks/usePolling'
@@ -174,6 +175,16 @@ export default function InstancePage() {
           ) : (
             <EmptyState message="Нет данных" />
           )}
+
+          {/* Состояние сверху — разбор журнала, а рядом проверка, что колонка
+              с ним согласна. Утверждение «источник истины — журнал» из
+              документации должно проверяться нажатием, иначе оно остаётся
+              словами. */}
+          <ReplayCheck
+            instanceId={instance.id}
+            status={instance.status}
+            currentStep={instance.current_step}
+          />
         </Card>
 
         <Card title="Переменные инстанса" className="lg:col-span-2">

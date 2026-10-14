@@ -212,6 +212,22 @@ test('сломанный шаг приводит к откату', async ({ page
   await expect(page.getByText('Откатан').first()).toBeVisible()
 })
 
+test('состояние процесса подтверждается разбором журнала', async ({ page, request }) => {
+  // Главное утверждение проекта — «состояние выводится из журнала, а не живёт
+  // в колонке» — проверяется нажатием, а не остаётся фразой в документации.
+  // Кнопка перечитывает состояние из журнала и сравнивает с колонкой.
+  const definitionId = await demoDefinition(request)
+  await api(request, 'post', '/api/chaos/fail-step', { step: 'charge_payment', mode: 'always' })
+  const id = await startInstance(request, definitionId)
+  await expectStatus(page, id, ['Откатан', 'CANCELLED'])
+
+  await page.getByRole('button', { name: 'Проверить: состояние = журнал' }).click()
+
+  // Совпадение означает, что колонка догнала журнал и восстановление после
+  // падения воркера возможно: состояние читается из журнала, а не из поля.
+  await expect(page.getByText(/Совпадает/).first()).toBeVisible()
+})
+
 test('страницы не пишут в консоль об ошибках', async ({ page }) => {
   // Дефект, который не виден глазом: браузер просил /favicon.ico и получал 404
   // на каждой странице. Единственный признак был в консоли, которую во время
