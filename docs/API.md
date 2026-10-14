@@ -375,6 +375,34 @@ curl -X POST http://localhost:8000/api/instances/{id}/complete \
   -d '{"reason": "клиент подтвердил вручную"}'
 ```
 
+### `GET /api/workers`
+
+Реестр воркеров (ADR-0018). Отдаёт и тех, кто не отвечает: упавший воркер
+не удаляется из реестра, иначе падение выглядело бы как отсутствие воркера, а
+вопрос был как раз в том, жив ли он.
+
+```json
+{
+  "items": [
+    {
+      "worker_id": "workflow-engine-api-1-4f2a9c81",
+      "state": "active",
+      "started_at": "2026-10-14T12:00:00Z",
+      "heartbeat_at": "2026-10-14T12:04:31Z",
+      "stopped_at": null,
+      "cycles_completed": 1284,
+      "steps_executed": 3971,
+      "lease_lost": 0
+    }
+  ],
+  "fresh_for_seconds": 3.0
+}
+```
+
+`state` — `active` (сердце свежее), `stale` (молчит дольше `fresh_for_seconds`)
+или `stopped` (остановлен штатно). Граница молчания — тройной интервал опроса;
+отдаётся вместе со списком, чтобы подпись «не отвечает» не была загадкой.
+
 ### `POST /api/instances/archive`
 
 Убирает завершённые процессы из списка (ADR-0017). **Это не удаление:** журнал

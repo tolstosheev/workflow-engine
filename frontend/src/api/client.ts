@@ -15,6 +15,7 @@ import type {
   ValidationResult,
   WorkflowDefinition,
   WorkflowEvent,
+  WorkerList,
   WorkflowInstance,
   StepRun,
 } from '@/types/api'
@@ -172,6 +173,11 @@ export const instances = {
 }
 
 // --- Инъекция отказов ------------------------------------------------------
+
+export const workers = {
+  /** Реестр воркеров (ADR-0018): отдаёт и не отвечающих. */
+  list: (signal?: AbortSignal) => request<WorkerList>('/api/workers', { signal }),
+}
 
 export const chaos = {
   list: () => request<ChaosResult>('/api/chaos'),

@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 
 import { instances as instancesApi } from '@/api/client'
 import { WorkerLeases, StreamStatus } from '@/components/WorkerLeases'
+import { WorkerRegistry } from '@/components/WorkerRegistry'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useInstancesFeed } from '@/hooks/useInstancesFeed'
 import { countRunning, selectInstances } from '@/lib/instanceList'
@@ -204,6 +205,8 @@ export default function InstancesPage() {
       {error && <ErrorState message={error} onRetry={() => void load()} />}
 
       <WorkerLeases instances={all} />
+
+      <WorkerRegistry />
 
       <Card>
         {loading && items.length === 0 ? (

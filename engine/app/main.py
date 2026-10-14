@@ -16,6 +16,7 @@ from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.routers.definitions import router as definitions_router
 from app.routers.instances import router as instances_router
+from app.routers.registry import router as registry_router
 from app.routers.service import router as service_router
 from app.routers.stream import router as stream_router
 
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
 
     application.include_router(definitions_router)
     application.include_router(instances_router)
+    application.include_router(registry_router)
     application.include_router(stream_router)
     application.include_router(service_router)
 

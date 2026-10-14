@@ -42,6 +42,7 @@ from app.models.enums import (
 )
 from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
+from app.services import registry
 
 logger = logging.getLogger(__name__)
 
@@ -510,15 +511,24 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         },
     )
 
+    # Реестр воркеров (ADR-0018). Без него простаивающий воркер не виден нигде:
+    # аренды у него нет, и след в системе не остаётся.
+    async with session_scope() as session:
+        await registry.register(session, worker_id)
+
     definition_cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]] = {}
     try:
         while not stop_event.is_set():
             steps_done = 0
+            cycles = 0
+            lease_lost = 0
             while steps_done < settings.worker_max_steps_per_cycle and not stop_event.is_set():
                 result = await run_cycle(worker_id, definition_cache)
                 if not result.handled:
                     break
+                cycles += 1
                 if result.lease_lost:
+                    lease_lost += 1
                     # Цикл оборвался недоведённо: без паузы воркер сразу забрал бы
                     # следующий инстанс и упал бы на нём тем же самым.
                     logger.warning(
@@ -531,6 +541,13 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
                     await asyncio.sleep(settings.worker_poll_interval_seconds)
                 if result.step_executed:
                     steps_done += 1
+            # Сердце продлевается раз за цикл опроса, а не за шаг: запись в БД
+            # на каждом шаге съедала бы часть выигранного времени, а «воркер жив»
+            # должно означать «воркер опрашивает базу», а не «часто исполняет шаги».
+            async with session_scope() as session:
+                await registry.heartbeat(
+                    session, worker_id, cycles=cycles, steps=steps_done, lease_lost=lease_lost
+                )
             # wait_for вместо sleep: событие останавливает цикл немедленно,
             # а не по истечении интервала опроса.
             with contextlib.suppress(TimeoutError):
@@ -538,6 +555,11 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
                     stop_event.wait(), timeout=settings.worker_poll_interval_seconds
                 )
     finally:
+        # Отметка об остановке не должна мешать выходу: если БД недоступна,
+        # воркер всё равно должен завершиться, а строка просто останется stale.
+        with contextlib.suppress(Exception):
+            async with session_scope() as session:
+                await registry.mark_stopped(session, worker_id)
         await dispose_engine()
         # Файлы метрик умершего воркера остаются в общем
         # каталоге: иначе счётчики падавшего воркера продолжали бы давать

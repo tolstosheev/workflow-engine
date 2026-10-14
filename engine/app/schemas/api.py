@@ -199,6 +199,29 @@ class ActionResult(BaseModel):
     message: str
 
 
+class WorkerOut(BaseModel):
+    """Строка реестра воркеров (ADR-0018)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    worker_id: str
+    # `active` — сердце свежее, `stale` — молчит, `stopped` — остановлен штатно.
+    state: Literal["active", "stale", "stopped"]
+    started_at: datetime
+    heartbeat_at: datetime
+    stopped_at: datetime | None
+    cycles_completed: int
+    steps_executed: int
+    lease_lost: int
+
+
+class WorkerListOut(BaseModel):
+    items: list[WorkerOut]
+    # Через сколько секунд молчания воркер объявляется не отвечающим. Отдаётся
+    # вместе со списком, иначе подпись «не отвечает» была бы загадкой.
+    fresh_for_seconds: float
+
+
 class ArchiveRequest(BaseModel):
     """Тело запроса уборки завершённых процессов."""
 

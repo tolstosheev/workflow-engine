@@ -170,6 +170,26 @@ export interface Paginated<T> {
   archived_total?: number
 }
 
+export type WorkerState = 'active' | 'stale' | 'stopped'
+
+/** Строка реестра воркеров (ADR-0018). */
+export interface WorkerRecord {
+  worker_id: string
+  state: WorkerState
+  started_at: string
+  heartbeat_at: string
+  stopped_at: string | null
+  cycles_completed: number
+  steps_executed: number
+  lease_lost: number
+}
+
+export interface WorkerList {
+  items: WorkerRecord[]
+  /** Через сколько секунд молчания воркер объявляется не отвечающим. */
+  fresh_for_seconds: number
+}
+
 export interface ChaosResult {
   active: string[]
   message: string

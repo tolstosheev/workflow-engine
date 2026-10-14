@@ -16,6 +16,7 @@ from app.models.enums import (
     InstanceStatus,
     StepRunStatus,
 )
+from app.models.registry import Worker
 from app.models.workflow import (
     CompensationLog,
     DemoInventoryItem,
@@ -46,6 +47,7 @@ __all__ = [
     "StepRunStatus",
     "Timer",
     "TimestampMixin",
+    "Worker",
     "WorkflowDefinition",
     "WorkflowEvent",
     "WorkflowInstance",

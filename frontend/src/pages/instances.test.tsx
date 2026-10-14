@@ -35,6 +35,9 @@ vi.mock('@/api/client', async () => {
       archive: vi.fn(async () => ({ archived: 3, message: 'в архив убрано процессов: 3' })),
       unarchive: vi.fn(async () => ({ status: 'COMPLETED', message: 'процесс возвращён из архива' })),
     },
+    workers: {
+      list: vi.fn(async () => ({ items: [], fresh_for_seconds: 3 })),
+    },
     chaosApi: { list: vi.fn(async () => ({ active: [] })) },
     definitions: {},
     chaos: {},
