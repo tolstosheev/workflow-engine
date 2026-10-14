@@ -8,9 +8,9 @@ import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useAbortable } from '@/hooks/useAbortable'
 import { usePolling } from '@/hooks/usePolling'
+import { describeEvent } from '@/lib/events'
 import { pollingIntervalMs } from '@/lib/polling'
 import {
-  eventLabel,
   formatDuration,
   formatDateTime,
   statusLabel,
@@ -245,7 +245,7 @@ export default function InstancePage() {
                   <>
                     <span className="w-20 shrink-0 text-white/30">#{entry.seq}</span>
                     <span className="min-w-0">
-                      <span className="block">{eventLabel((entry.type ?? 'INSTANCE_CREATED') as never)}</span>
+                      <span className="block">{describeEvent(entry)}</span>
                       {/* payload — то, чем журнал доказывает: без него видно
                           «шаг выполнен», но не видно, каким был переход. */}
                       <EventPayload payload={entry.payload} />

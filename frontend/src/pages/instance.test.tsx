@@ -420,6 +420,38 @@ describe('разбор журнала', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
   })
 
+  it('читает журнал предложениями, а не названиями событий', async () => {
+    timeline.mockResolvedValue({
+      items: [
+        {
+          kind: 'event',
+          seq: 4,
+          type: 'STEP_COMPLETED',
+          payload: { step: 'reserve_inventory', next: 'charge_payment' },
+          created_at: '2026-03-01T10:00:01Z',
+        },
+        {
+          kind: 'event',
+          seq: 5,
+          type: 'COMPENSATION_FAILED',
+          payload: { for_step: 'reserve_inventory', attempt: 2, error: 'склад недоступен' },
+          created_at: '2026-03-01T10:00:09Z',
+        },
+      ],
+    })
+
+    await open('RUNNING')
+
+    // Человек, разбирающий инцидент, должен понять из строки журнала, что
+    // случилось, не открывая payload по каждому событию.
+    expect(
+      await screen.findByText('Шаг reserve_inventory выполнен, дальше charge_payment'),
+    ).toBeTruthy()
+    expect(
+      await screen.findByText('Компенсация шага reserve_inventory не удалась на попытке 2: склад недоступен'),
+    ).toBeTruthy()
+  })
+
   it('перечитывает определение один раз, а не на каждый цикл опроса', async () => {
     // Опрос страницы повторяется каждые две секунды; определение — единственная
     // строка, которая не меняется, и запрос на каждый цикл на длинном процессе
