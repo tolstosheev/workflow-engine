@@ -4,8 +4,9 @@ import { useParams } from 'react-router-dom'
 import { instances as instancesApi, definitions as definitionsApi } from '@/api/client'
 import { useEventStream } from '@/api/stream'
 import { DefinitionGraph } from '@/components/DefinitionGraph'
-import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
 import { ReplayCheck } from '@/components/ReplayCheck'
+import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
+import { StepTimeline } from '@/components/StepTimeline'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useAbortable } from '@/hooks/useAbortable'
 import { usePolling } from '@/hooks/usePolling'
@@ -203,6 +204,10 @@ export default function InstancePage() {
           <DefinitionGraph definition={definition.definition} steps={steps} instance={state} />
         </Card>
       )}
+
+      {/* Лента времени рядом с порядком отката: порядок отвечает на вопрос
+          «в каком порядке», лента — «когда и сколько ждал». Одного из двух мало. */}
+      <StepTimeline steps={steps} />
 
       <RollbackLane instance={state} steps={steps} />
 
