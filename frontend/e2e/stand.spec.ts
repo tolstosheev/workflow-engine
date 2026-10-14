@@ -49,12 +49,22 @@ async function demoDefinition(request: APIRequestContext): Promise<string> {
   return found.id
 }
 
-/** Определение с паузой и сроком. Создаётся один раз и переиспользуется. */
+/**
+ * Определение с паузой и сроком. Создаётся один раз и переиспользуется.
+ *
+ * Активируется при каждом обращении, а не только при создании: уборка после
+ * прогонов выключает его, и повторный запуск нашёл бы выключенное определение
+ * и упал бы с «определение неактивно» — то есть проверки перестали бы
+ * проходить после первого же удачного прогона.
+ */
 async function manualGateDefinition(request: APIRequestContext): Promise<string> {
   const { json } = await api(request, 'get', '/api/definitions?limit=200')
   const items = json.items as Array<{ id: string; name: string }>
   const found = items.find((item) => item.name === MANUAL_GATE)
-  if (found) return found.id
+  if (found) {
+    await api(request, 'post', `/api/definitions/${found.id}/activate`)
+    return found.id
+  }
 
   const created = await api(request, 'post', '/api/definitions', {
     name: MANUAL_GATE,
@@ -103,6 +113,22 @@ async function expectStatus(page: Page, id: string, wanted: string[]): Promise<v
     timeout: 45_000,
   })
 }
+
+/**
+ * Выключает определение, созданное для паузы.
+ *
+ * Активных определений на стенде может быть несколько, и инструменты вроде
+ * замерщика берут «первое активное». Оставленное включённым определение с паузой
+ * переставляет их порядок, и замер тихо измеряет не то. Уборка здесь — не
+ * аккуратность, а условие того, что последующий замер вообще что-то значит.
+ */
+test.afterAll(async ({ request }) => {
+  const { json } = await api(request, 'get', '/api/definitions?limit=200')
+  const items = json.items as Array<{ id: string; name: string }>
+  for (const item of items.filter((entry) => entry.name === MANUAL_GATE)) {
+    await api(request, 'post', `/api/definitions/${item.id}/deactivate`)
+  }
+})
 
 test.beforeEach(async ({ request }) => {
   // Чужое правило инъекции пережило бы прогон и испортило следующий.

@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 
-from scripts.definitions import DEMO_INVENTORY
+from scripts.definitions import DEFINITION_NAME, DEMO_INVENTORY
 
 DEFAULT_BASE_URL = "http://localhost:8000"
 
@@ -87,16 +87,22 @@ async def wait_for_api(client: httpx.AsyncClient, wait_seconds: float) -> None:
 
 
 async def active_definition_id(client: httpx.AsyncClient) -> str | None:
-    """Активное демонстрационное определение.
+    """Активное демонстрационное определение — строго по имени.
 
     Берётся из списка, а не создаётся здесь: если определения нет, сначала
     должен отработать `make seed` — молча создавать его в проверке означало бы
     замаскировать пустую базу.
+
+    Выбор по имени, а не по «первому активному». На стенде активных определений
+    может быть несколько — достаточно забыть выключить старое, — и проверка
+    молча пошла бы по чужому сценарию. На этом стенде так и вышло: нашлось
+    определение с ожиданием доставки в час, и проверка падала с «процесс не
+    дошёл до конца за 30 с», хотя дело было не в движке.
     """
     response = await client.get("/api/definitions", params={"limit": 200})
     response.raise_for_status()
     for item in response.json()["items"]:
-        if item["is_active"] and item["name"] != "":
+        if item["is_active"] and item["name"] == DEFINITION_NAME:
             return item["id"]
     return None
 
@@ -398,7 +404,14 @@ async def check_beyond_stock(scenario: Scenario, definition_id: str) -> None:
 
     Резерв ограничен `reserved <= available`, поэтому такой заказ падает на
     шаге резервирования и уходит в компенсацию сам.
+
+    Резерв сравнивается со снимком «до», а не с нулём. Подтверждение доставки
+    склад не трогает (ADR-0006), поэтому резерв накапливается у каждого
+    завершённого заказа и на работающем стенде нулю не равен. Проверка на ноль
+    проходила только на пустой базе, а на стенде после первых же заказов
+    объявляла утечкой чужой резерв.
     """
+    reserved_before = _reserved_for(await _domain_snapshot(), FAIL_SKU)
     available = await _available_for(FAIL_SKU)
     beyond = available + 10_000
 
@@ -431,8 +444,8 @@ async def check_beyond_stock(scenario: Scenario, definition_id: str) -> None:
     snapshot = await _domain_snapshot()
     scenario.record(
         "недоступный товар не оставил резерва",
-        _reserved_for(snapshot, FAIL_SKU) == 0,
-        f"резерв {_reserved_for(snapshot, FAIL_SKU)}",
+        _reserved_for(snapshot, FAIL_SKU) == reserved_before,
+        f"резерв {_reserved_for(snapshot, FAIL_SKU)}, до заказа {reserved_before}",
     )
 
 

@@ -31,7 +31,7 @@ from typing import Any
 
 import httpx
 
-from scripts.definitions import order_input
+from scripts.definitions import DEFINITION_NAME, order_input
 from scripts.smoke import TERMINAL_STATUSES, wait_for_api
 
 DEFAULT_BASE_URL = "http://localhost:8000"
@@ -100,12 +100,21 @@ def percentile(values: list[float], fraction: float) -> float:
 
 
 async def _definition_id(client: httpx.AsyncClient) -> str:
+    """Определение замера — строго по имени, а не «первое активное».
+
+    Выбор по активности молча менял предмет замера: стенд может держать больше
+    одного активного определения (сквозные проверки создают своё), и замерял
+    бы то, что попалось первым. Такой прогон печатает уверенный throughput и
+    ничего не говорит о том, что мерил не то — выглядит как результат.
+    """
     response = await client.get("/api/definitions", params={"limit": 200})
     response.raise_for_status()
     for item in response.json()["items"]:
-        if item["is_active"]:
+        if item["name"] == DEFINITION_NAME and item["is_active"]:
             return item["id"]
-    raise SystemExit("нет активных определений — выполните `make seed` перед замером")
+    raise SystemExit(
+        f"нет активного определения {DEFINITION_NAME!r} — выполните `make seed` перед замером"
+    )
 
 
 async def _create_batch(
