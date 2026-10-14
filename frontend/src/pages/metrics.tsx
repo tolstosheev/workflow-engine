@@ -10,6 +10,7 @@
 import { useCallback, useState } from 'react'
 
 import { service } from '@/api/client'
+import { ThroughputChart } from '@/components/ThroughputChart'
 import { Card, EmptyState, ErrorState } from '@/components/ui'
 import { usePolling } from '@/hooks/usePolling'
 import { BREAKDOWN_STATUSES, labelsOf, parseMetrics, sumBy, valueOf } from '@/lib/metrics'
@@ -79,6 +80,8 @@ export function MetricsPage() {
       </div>
 
       {error && <ErrorState message={error} />}
+
+      <ThroughputChart />
 
       <Card title="Тревоги">
         {/* Панель появляется и меняется сама: без объявления скринридер

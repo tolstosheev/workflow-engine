@@ -251,6 +251,44 @@ describe('кнопки решения', () => {
     expect(screen.getByText('Выполнено')).toBeTruthy()
   })
 
+  it('собирает отчёт из уже загруженного, без второго запроса', async () => {
+    // Журнал приходит на страницу в любом случае, а второй запрос за теми же
+    // данными означал бы, что страница тяжелее, чем кажется.
+    get.mockResolvedValue(instance('COMPLETED'))
+    steps.mockResolvedValue({
+      items: [
+        {
+          id: 's-1',
+          step_name: 'reserve_inventory',
+          attempt: 1,
+          status: 'COMPLETED',
+          output: null,
+          error: null,
+          compensated: false,
+          started_at: '2026-03-01T12:00:05Z',
+          finished_at: '2026-03-01T12:00:07Z',
+        },
+      ],
+    })
+    const createObjectURL = vi.fn(() => 'blob:отчёт')
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
+
+    renderPage()
+    // Шаг виден и в таблице, и на ленте — берём любой: проверяется не число
+    // вхождений, а то, что отчёт не тянет данных со стороны.
+    await screen.findAllByText('reserve_inventory')
+
+    // Счётчик снимается после загрузки: до него считали бы собственные
+    // запросы страницы и сравнивали бы их с самими собой.
+    const before = timeline.mock.calls.length
+    await fireEvent.click(screen.getByRole('button', { name: 'Скачать отчёт' }))
+
+    expect(timeline.mock.calls.length).toBe(before)
+    // Отчёт действительно отдан файлом, а не просто нажата кнопка.
+    expect(createObjectURL).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
   it('показывает прогоны шагов', async () => {
     steps.mockResolvedValue({
       items: [

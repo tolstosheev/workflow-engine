@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, definitions, instances, service } from '@/api/client'
+import { ApiError, definitions, instances, service, workers } from '@/api/client'
 
 interface Call {
   url: string
@@ -43,6 +43,44 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('архивирование и реестр воркеров', () => {
+  it('просит список без архива по умолчанию', async () => {
+    // Параметр уходит всегда: так список ведёт себя одинаково независимо от
+    // настроек сервера, а не «как получится».
+    await instances.list()
+    expect(calls[0].url).toContain('archived=active')
+  })
+
+  it('просит именно архивные, когда их просят', async () => {
+    await instances.list({ archived: 'archived', limit: 10 })
+    expect(calls[0].url).toContain('archived=archived')
+    expect(calls[0].url).toContain('limit=10')
+  })
+
+  it('шлит пустое тело при уборке без срока', async () => {
+    await instances.archive()
+    expect(calls[0].url).toContain('/api/instances/archive')
+    expect(calls[0].init?.method).toBe('POST')
+    expect(calls[0].init?.body).toBe('{}')
+  })
+
+  it('шлит срок, если он задан', async () => {
+    await instances.archive('2026-03-01T12:00:00Z')
+    expect(String(calls[0].init?.body)).toContain('2026-03-01T12:00:00Z')
+  })
+
+  it('возвращает процесс из архива отдельной ручкой', async () => {
+    await instances.unarchive('inst-1')
+    expect(calls[0].url).toContain('/api/instances/inst-1/unarchive')
+    expect(calls[0].init?.method).toBe('POST')
+  })
+
+  it('читает реестр воркеров', async () => {
+    await workers.list()
+    expect(calls[0].url).toContain('/api/workers')
+  })
 })
 
 describe('разбор ошибок', () => {

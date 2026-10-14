@@ -13,6 +13,7 @@ import { useAbortable } from '@/hooks/useAbortable'
 import { usePolling } from '@/hooks/usePolling'
 import { describeEvent } from '@/lib/events'
 import { pollingIntervalMs } from '@/lib/polling'
+import { buildInstanceReport, reportFileName } from '@/lib/report'
 import {
   formatDuration,
   formatDateTime,
@@ -21,7 +22,14 @@ import {
   stepLabel,
   stepTone,
 } from '@/lib/status'
-import type { InstanceState, StepRun, TimelineEntry, WorkflowDefinition, WorkflowInstance } from '@/types/api'
+import type {
+  InstanceState,
+  StepRun,
+  TimelineEntry,
+  WorkflowDefinition,
+  WorkflowEvent,
+  WorkflowInstance,
+} from '@/types/api'
 
 export default function InstancePage() {
   const { id } = useParams<{ id: string }>()
@@ -86,6 +94,41 @@ export default function InstancePage() {
   // а при живом потоке интервал редкий — события и так приносят изменения.
   usePolling(load, pollingIntervalMs(instance?.status ?? null, connected))
   useEffect(() => abort, [abort])
+  const [reportError, setReportError] = useState<string | null>(null)
+
+  // Отчёт переживает стенд: экран закрывается, контейнер останавливается, а
+  // разбор инцидента остаётся возможным. Скачивание делается в браузере, без
+  // новой ручки: отчёт — это текст, а не операция над данными.
+  const downloadReport = useCallback(() => {
+    if (!instance) return
+    try {
+      setReportError(null)
+      const text = buildInstanceReport({
+        instance,
+        state,
+        steps,
+        timeline,
+        events: timeline
+          .filter((entry) => entry.kind === 'event' && entry.seq !== null)
+          .map((entry) => ({
+            seq: entry.seq as number,
+            type: (entry.type ?? 'INSTANCE_CREATED') as WorkflowEvent['type'],
+            payload: entry.payload ?? {},
+            created_at: entry.created_at ?? '',
+          })),
+      })
+      const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = reportFileName(instance)
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (cause) {
+      setReportError(cause instanceof Error ? cause.message : 'Отчёт не собран')
+    }
+  }, [instance, state, steps, timeline])
+
   // Приведение экрана запускает запрос, а не каждое событие: шаги идут пачками,
   // и без общего счётчика страница запрашивала бы данные на каждый шаг.
   // Сборка затем, но последнее из любого события.
@@ -131,11 +174,18 @@ export default function InstancePage() {
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge label={statusLabel(instance.status)} toneClass={statusTone(instance.status)} />
+          <Button onClick={downloadReport}>Скачать отчёт</Button>
           <Actions instance={instance} onDone={load} onError={setActionError} />
         </div>
       </div>
 
       {actionError && <ErrorState message={actionError} />}
+
+      {/* Отчёт собирается из уже загруженного: журнал приходит на страницу в
+          любом случае, а второй запрос за теми же данными читался бы как
+          «страница тяжелее, чем кажется». События берутся из ленты времени,
+          где они уже есть вперемешку с шагами. */}
+      {reportError && <ErrorState message={reportError} />}
 
       {error && <ErrorState message={error} onRetry={() => void load()} />}
 
