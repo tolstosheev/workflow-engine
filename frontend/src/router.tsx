@@ -15,6 +15,7 @@ const InstancePage = lazy(() => import('@/pages/instance'))
 const DefinitionsPage = lazy(() => import('@/pages/definitions'))
 const MetricsPage = lazy(() => import('@/pages/metrics').then((m) => ({ default: m.MetricsPage })))
 const ChaosPage = lazy(() => import('@/pages/chaos'))
+const ComparePage = lazy(() => import('@/pages/compare').then((m) => ({ default: m.ComparePage })))
 const NotFoundPage = lazy(() => import('@/pages/not-found'))
 
 export const router = createBrowserRouter([
@@ -27,6 +28,7 @@ export const router = createBrowserRouter([
       { path: 'definitions', element: <DefinitionsPage /> },
       { path: 'metrics', element: <MetricsPage /> },
       { path: 'chaos', element: <ChaosPage /> },
+      { path: 'compare', element: <ComparePage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

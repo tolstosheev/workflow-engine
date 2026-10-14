@@ -3,9 +3,13 @@
  *
  * Главное, что показывает лента, — не наложения: один инстанс держит один
  * воркер (§3.3 AGENTS.md), поэтому шаги внутри него не перекрываются. Показывает
- * она **пробелы** между шагами, а они и есть главный тезис проекта: бизнес-
- * транзакция живёт минуты, а на работу уходит по двадцать миллисекунд за раз,
- * и всё это время умещается в короткие транзакции.
+ * она **пробелы**, а они и есть главный тезис проекта: бизнес-транзакция живёт
+ * минуты, а на работу уходит по двадцать миллисекунд за раз, и всё это время
+ * умещается в короткие транзакции.
+ *
+ * Масштаб вынесен отдельно от раскладки, чтобы два процесса можно было положить
+ * на один отрезок. У каждого своя шкала, и рядом стоящие ленты показывали бы два
+ * процесса одинаковой длины, между которыми нечего сравнивать.
  */
 
 import type { StepRun, StepRunStatus } from '@/types/api'
@@ -16,6 +20,9 @@ export interface LaneRow {
   attempt: number
   status: StepRunStatus
   compensated: boolean
+  /** Начало и конец шага в миллисекундах от начала эпохи. */
+  startMs: number
+  endMs: number
   /** Начало полосы в долях отрезка, 0..1. */
   offset: number
   /** Длина полосы в долях отрезка, 0..1. */
@@ -30,12 +37,18 @@ export interface LaneRow {
 
 export interface StepLayout {
   rows: LaneRow[]
-  /** Длина всего отрезка от первого старта до последнего финиша. */
+  /** Длина отрезка от первого старта до последнего финиша. */
   totalMs: number
   /** Суммарное время, занятое шагами. */
   inStepsMs: number
   /** Время между шагами: ожидания, повторы, решения человека. */
   idleMs: number
+}
+
+export interface TimeScale {
+  from: number
+  to: number
+  span: number
 }
 
 /** Полоса уже этой длины всё равно была бы тоньше пикселя. */
@@ -54,13 +67,20 @@ function toMillis(value: string | null | undefined): number | null {
 }
 
 /**
- * Раскладывает прогоны по отрезку от первого старта до последнего финиша.
+ * Раскладывает прогоны по отрезку.
  *
  * `now` передаётся снаружи, а не берётся внутри: иначе раскладку нельзя было бы
  * проверить — время в тесте шло бы своим ходом и совпадение означало бы удачу.
  * С незакрытым прогоном (`finished_at` пуст) полоса идёт до `now`.
+ *
+ * Явный `scale` кладёт прогоны на чужой отрезок — так два процесса получают
+ * общую шкалу и сравниваются честно.
  */
-export function layoutSteps(steps: StepRun[], now: number = Date.now()): StepLayout | null {
+export function layoutSteps(
+  steps: StepRun[],
+  now: number = Date.now(),
+  scale?: TimeScale,
+): StepLayout | null {
   const timed = steps
     .map((run) => {
       const start = toMillis(run.started_at)
@@ -75,9 +95,9 @@ export function layoutSteps(steps: StepRun[], now: number = Date.now()): StepLay
 
   if (timed.length === 0) return null
 
-  const first = Math.min(...timed.map((item) => item.start))
-  const last = Math.max(...timed.map((item) => item.end))
-  const total = Math.max(last - first, 1)
+  const own = scale ?? bounds(timed.map((item) => [item.start, item.end] as const))
+  const from = own.from
+  const span = Math.max(own.span, 1)
 
   const ordered = [...timed].sort((a, b) => a.start - b.start)
 
@@ -92,8 +112,10 @@ export function layoutSteps(steps: StepRun[], now: number = Date.now()): StepLay
       attempt: item.run.attempt,
       status: item.run.status,
       compensated: item.run.compensated,
-      offset: (item.start - first) / total,
-      width: Math.max(duration / total, MIN_WIDTH),
+      startMs: item.start,
+      endMs: item.end,
+      offset: (item.start - from) / span,
+      width: Math.max(duration / span, MIN_WIDTH),
       durationMs: duration,
       gapMs: gap,
       running: item.running,
@@ -101,13 +123,41 @@ export function layoutSteps(steps: StepRun[], now: number = Date.now()): StepLay
   })
 
   const inStepsMs = rows.reduce((sum, row) => sum + row.durationMs, 0)
+  const from0 = ordered[0].start
+  const to = Math.max(...rows.map((row) => row.endMs))
 
   return {
     rows,
-    totalMs: last - first,
+    totalMs: to - from0,
     inStepsMs,
-    idleMs: Math.max(last - first - inStepsMs, 0),
+    idleMs: Math.max(to - from0 - inStepsMs, 0),
   }
+}
+
+function bounds(points: ReadonlyArray<readonly [number, number]>): TimeScale {
+  const from = Math.min(...points.map(([start]) => start))
+  const to = Math.max(...points.map(([, end]) => end))
+  return { from, to, span: Math.max(to - from, 1) }
+}
+
+/**
+ * Общий отрезок для нескольких наборов прогонов.
+ *
+ * Нужен для сравнения: у каждого процесса своя шкала, и без общего отрезка
+ * короткий процесс растянулся бы на всю ширину и выглядел бы равным длинному.
+ */
+export function sharedScale(sets: StepRun[][], now: number = Date.now()): TimeScale | null {
+  const points: Array<readonly [number, number]> = []
+  for (const steps of sets) {
+    for (const run of steps) {
+      const start = toMillis(run.started_at)
+      if (start === null) continue
+      const finished = toMillis(run.finished_at)
+      points.push([start, finished === null ? now : finished])
+    }
+  }
+  if (points.length === 0) return null
+  return bounds(points)
 }
 
 /** Доля времени, проведённого в шагах. */

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { StepRun } from '@/types/api'
 
-import { dutyRatio, layoutSteps } from './timeline'
+import { dutyRatio, layoutSteps, sharedScale } from './timeline'
 
 const run = (over: Partial<StepRun> & { id: string; started_at: string }): StepRun => ({
   step_name: 'reserve_inventory',
@@ -90,6 +90,34 @@ describe('раскладка прогона по времени', () => {
     )
 
     expect(layout?.rows.map((row) => row.key)).toEqual(['earlier', 'later'])
+  })
+
+  it('кладёт два процесса на общий отрезок', () => {
+    // Без общей шкалы короткий процесс растянулся бы на всю ширину и выглядел
+    // бы равным длинному: сравнивать было бы нечего.
+    const short = [
+      run({ id: 's1', started_at: '2026-03-01T10:00:00Z', finished_at: '2026-03-01T10:00:00.020Z' }),
+    ]
+    const long = [
+      run({ id: 'l1', started_at: '2026-03-01T10:00:00Z', finished_at: '2026-03-01T10:00:30.020Z' }),
+    ]
+
+    const scale = sharedScale([short, long], NOW)
+    expect(scale).not.toBeNull()
+
+    const shortOnScale = layoutSteps(short, NOW, scale!)
+    const longOnScale = layoutSteps(long, NOW, scale!)
+
+    // Двадцать миллисекунд против тридцати секунд: на раздельных шкалах оба
+    // заняли бы всю полосу, на общей — короткий упёрся в минимальную
+    // видимую ширину, длинный занял почти всё.
+    expect(shortOnScale!.rows[0].width).toBe(0.004)
+    expect(longOnScale!.rows[0].width).toBeGreaterThan(0.99)
+  })
+
+  it('не падает, когда для сравнения нечего класть', () => {
+    expect(sharedScale([], NOW)).toBeNull()
+    expect(sharedScale([[]], NOW)).toBeNull()
   })
 
   it('не падает на прогоне, который кончился раньше начала', () => {
