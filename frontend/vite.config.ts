@@ -4,7 +4,15 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const API_URL = process.env.VITE_API_URL ?? 'http://localhost:8000'
+// Адрес бэкенда для прокси сервера разработки. Внутри docker-compose это
+// сетевое имя `api`, и compose задаёт его литералом. Вне контейнера (локальный
+// запуск vite на машине) сетевого имени нет, поэтому умолчание — хостовый адрес.
+//
+// Переменная одна, и это сделано намеренно: раньше адрес жил в VITE_API_URL,
+// который попадал в браузер, а порт публикации жил в API_PORT. Настройка одной
+// тянула за собой вторую, а рассинхрон проявлялся пустым списком без единой
+// ошибки в консоли.
+const API_URL = process.env.API_PROXY_TARGET ?? 'http://localhost:8000'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
