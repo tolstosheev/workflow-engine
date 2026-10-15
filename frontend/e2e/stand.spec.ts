@@ -171,6 +171,74 @@ test('сценарий приводит к откату через интерф�
   expect(json.active).toEqual([])
 })
 
+/**
+ * Прогон сценария через интерфейс до подтверждённого утверждения.
+ *
+ * Карточка ищется от заголовка, а не по номеру: порядок каталога меняется, и
+ * проверка, привязанная к индексу, начала бы бить по соседнему сценарию.
+ */
+async function runCatalogScenario(page: Page, title: string): Promise<void> {
+  await page.goto('/scenarios')
+  await page
+    .getByRole('heading', { name: title })
+    .locator('xpath=ancestor::section[1]')
+    .getByRole('button', { name: 'Запустить' })
+    .click()
+
+  // Подтверждение — это состояние плюс свидетельства из журнала. Буква
+  // «ожидаемое» тут означала бы «процесс дошёл до какого-то состояния».
+  await expect(page.getByText('Утверждение подтверждено').first()).toBeVisible({
+    timeout: 120_000,
+  })
+}
+
+test('откат, который не прошёл, остаётся разбираемым', async ({ page }) => {
+  // Провал компенсации обязан быть виден как разбор: процесс стоит в
+  // COMPENSATION_FAILED, а не тихо завершается. Раньше интерфейс об этом молчал.
+  await runCatalogScenario(page, 'Откат не проходит')
+
+  await expect(page.getByText('провал компенсации записан в журнал').first()).toBeVisible()
+})
+
+test('повтор отката возвращает средства один раз', async ({ page, request }) => {
+  // Сценарий снимает правило и повторяет откат вручную: проверяется, что путь
+  // разбора существует в интерфейсе, а не только в API.
+  await runCatalogScenario(page, 'Повтор отката не возвращает средства дважды')
+
+  const { json } = await api(request, 'get', '/api/chaos')
+  expect(json.active).toEqual([])
+})
+
+test('ворота согласования ждут человека и продолжаются', async ({ page }) => {
+  // Пауза человека — единственное состояние, где процесс стоит по решению
+  // оператора: страница обязана показать и паузу, и последующее продолжение.
+  await runCatalogScenario(page, 'Ворота согласования')
+
+  await expect(page.getByText(/пауза записана в журнал/i).first()).toBeVisible()
+})
+
+test('склад показывает, что резерв вернулся после доставки', async ({ page, request }) => {
+  // Возврат резерва (ADR-0020) — половина утверждения о доставке, и увидеть
+  // его можно только на панели склада: в журнале остаётся лишь факт шага.
+  //
+  // Ссылка берётся из карточки сценария, а не из списка: это ровно тот процесс,
+  // который только что отработал, и проверка не зависит от порядка строк.
+  await runCatalogScenario(page, 'Заказ проходит целиком')
+  await page
+    .getByRole('heading', { name: 'Заказ проходит целиком' })
+    .locator('xpath=ancestor::section[1]')
+    .getByRole('link', { name: 'Открыть процесс' })
+    .click()
+
+  await expect(page.getByRole('table', { name: 'Остатки склада' })).toBeVisible()
+  await expect(page.getByText(/снимок склада/i)).toBeVisible()
+
+  // Под таблицей — и данные: возврат резерва проверяется не только глазами.
+  const { json } = await api(request, 'get', '/api/demo/inventory')
+  const reserved = (json.items as Array<{ reserved: number }>).map((item) => item.reserved)
+  expect(reserved.every((value) => value === 0)).toBe(true)
+})
+
 test('страница состояния показывает метрики, а не нули', async ({ page, request }) => {
   // Регрессия: браузер ходит в свой origin, а прокси знал только /api. Метрики
   // лежат по /metrics, запрос уходил в дев-сервер, тот отвечал 404, и разбор
