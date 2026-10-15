@@ -60,6 +60,7 @@ def _to_out(instance: WorkflowInstance, definition: WorkflowDefinition) -> Insta
         lease_expires_at=instance.lease_expires_at,
         heartbeat_at=instance.heartbeat_at,
         archived_at=instance.archived_at,
+        journal_pruned_at=instance.journal_pruned_at,
         created_at=instance.created_at,
         updated_at=instance.updated_at,
     )

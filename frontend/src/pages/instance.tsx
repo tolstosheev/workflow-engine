@@ -247,6 +247,7 @@ export default function InstancePage() {
             instanceId={instance.id}
             status={instance.status}
             currentStep={instance.current_step}
+            journalPrunedAt={instance.journal_pruned_at}
           />
         </Card>
 

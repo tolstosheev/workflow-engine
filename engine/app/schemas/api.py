@@ -90,6 +90,10 @@ class InstanceOut(BaseModel):
     # Отметка архива (ADR-0017). Процесс убран из списка, но не удалён: журнал
     # цел, а страница процесса открывается.
     archived_at: datetime | None
+    # Убран ли журнал (ADR-0019). Разбор состояния для такого процесса
+    # невозможен, и страница обязана сказать об этом прямо: пустая лента без
+    # пометки читалась бы как «событий не было».
+    journal_pruned_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -186,6 +190,10 @@ class InstanceStateOut(BaseModel):
     # Сколько раз шаг успешно завершился: интерфейсу нужен для показа
     # «проход 2 из 3» у цикла.
     step_iterations: dict[str, int] = Field(default_factory=dict)
+    # Убран ли журнал (ADR-0019). Тогда состояние выше — это колонка
+    # инстанса, а не разбор: разбирать нечего, и объявлять об этом обязан
+    # сам ответ.
+    journal_pruned_at: datetime | None = None
 
 
 class ForceCompleteRequest(BaseModel):

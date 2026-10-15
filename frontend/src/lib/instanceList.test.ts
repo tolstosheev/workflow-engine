@@ -22,6 +22,7 @@ const instance = (
   lease_expires_at: null,
   heartbeat_at: null,
   archived_at: null,
+  journal_pruned_at: null,
   created_at: createdAt,
   updated_at: createdAt,
 })

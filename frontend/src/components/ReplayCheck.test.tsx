@@ -75,6 +75,36 @@ describe('проверка состояния по журналу', () => {
     await waitFor(() => expect(screen.getByText('журнал недоступен')).toBeTruthy())
   })
 
+  it('у процесса с убранным журналом объявляет уборку, а не расхождение', () => {
+    // Сравнивать нечего: событий нет, и пустой разбор выглядел бы как
+    // «состояние изменено в обход журнала». Выдуманный дефект в разборе
+    // инцидента хуже, чем отсутствие кнопки.
+    render(
+      <ReplayCheck
+        instanceId="i-1"
+        status="COMPLETED"
+        currentStep={null}
+        journalPrunedAt="2026-10-01T12:00:00Z"
+      />,
+    )
+
+    expect(screen.getByText(/убран уборкой/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Проверить/ })).toBeNull()
+  })
+
+  it('у процесса с убранным журналом не просит разбор', () => {
+    render(
+      <ReplayCheck
+        instanceId="i-1"
+        status="COMPLETED"
+        currentStep={null}
+        journalPrunedAt="2026-10-01T12:00:00Z"
+      />,
+    )
+
+    expect(state).not.toHaveBeenCalled()
+  })
+
   it('не запрашивает состояние, пока кнопку не нажали', () => {
     // Проверка добровольная: страница и так опрашивает состояние по циклу, и
     // лишний запрос на каждом открытии ничего не добавлял бы.

@@ -11,6 +11,11 @@
  * колонка догнала журнал и восстановление после падения возможно; расхождение
  * означает, что кто-то изменил состояние в обход журнала, и это уже дефект,
  * который надо назвать, а не спрятать.
+ *
+ * Исключение одно: у процесса с убранным журналом (ADR-0019) разбора нет,
+ * и сравнивать нечего. Там кнопка объявляет уборку и не выдаёт её за
+ * расхождение: выдуманный дефект в разборе инцидента хуже отсутствующей
+ * кнопки.
  */
 
 import { useState } from 'react'
@@ -25,6 +30,8 @@ interface ReplayCheckProps {
   /** Состояние из колонки — то, чему журнал должен подтверждать или противоречить. */
   status: InstanceStatus
   currentStep: string | null
+  /** Момент уборки журнала; для такого процесса проверка невозможна. */
+  journalPrunedAt?: string | null
 }
 
 type Verdict =
@@ -37,8 +44,14 @@ type Verdict =
       stepDiffers: boolean
     }
 
-export function ReplayCheck({ instanceId, status, currentStep }: ReplayCheckProps) {
+export function ReplayCheck({
+  instanceId,
+  status,
+  currentStep,
+  journalPrunedAt,
+}: ReplayCheckProps) {
   const [verdict, setVerdict] = useState<Verdict>({ kind: 'idle' })
+  const pruned = Boolean(journalPrunedAt)
 
   const check = async () => {
     setVerdict({ kind: 'checking' })
@@ -58,6 +71,18 @@ export function ReplayCheck({ instanceId, status, currentStep }: ReplayCheckProp
         message: cause instanceof Error ? cause.message : 'Не удалось перечитать состояние',
       })
     }
+  }
+
+  if (pruned) {
+    return (
+      <div className="mt-3 border-t border-surface-border pt-3 text-xs">
+        <p className="text-white/60">
+          Журнал этого процесса убран уборкой старых архивных записей (ADR-0019),
+          поэтому сверить состояние с разбором нечем: событий нет. Колонка инстанса
+          осталась последним известным значением.
+        </p>
+      </div>
+    )
   }
 
   return (

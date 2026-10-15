@@ -33,7 +33,7 @@ const STUB = (id: string, status: WorkflowInstance['status'] = 'RUNNING'): Workf
   lease_owner: null,
   lease_expires_at: null,
   heartbeat_at: null,
-  archived_at: null,
+  archived_at: null, journal_pruned_at: null,
   created_at: '2026-10-10T00:00:00Z',
   updated_at: '2026-10-10T00:00:00Z',
 })

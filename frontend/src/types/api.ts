@@ -100,6 +100,8 @@ export interface WorkflowInstance {
   heartbeat_at: string | null
   // Отметка архива (ADR-0017): процесс убран из списка, но не удалён.
   archived_at: string | null
+  /** Убран ли журнал процесса уборкой (ADR-0019). */
+  journal_pruned_at: string | null
   created_at: string
   updated_at: string
 }

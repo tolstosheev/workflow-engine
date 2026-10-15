@@ -345,6 +345,25 @@ async def rebuild_state(db_session: AsyncSession, instance_id: uuid.UUID) -> dic
 
     events = await read_events(db_session, instance_id)
     state = replay(events)
+
+    # Убранный журнал (ADR-0019) разбирается в пустой процесс: replay по
+    # нулю событий даёт `PENDING`, и ответ выглядел бы как испорченный.
+    # Пометка уборки обязана попасть в ответ — иначе вызывающий приметил бы
+    # её за состояние процесса.
+    instance = await db_session.get(WorkflowInstance, instance_id)
+    pruned_at = instance.journal_pruned_at if instance is not None else None
+    if pruned_at is not None:
+        return {
+            "status": instance.status if instance is not None else state.status,
+            "current_step": None,
+            "variables": {},
+            "completed_steps": [],
+            "pending_compensations": [],
+            "is_terminal": True,
+            "step_iterations": {},
+            "journal_pruned_at": pruned_at,
+        }
+
     result = {
         "status": state.status,
         "current_step": state.current_step,
@@ -353,6 +372,7 @@ async def rebuild_state(db_session: AsyncSession, instance_id: uuid.UUID) -> dic
         "pending_compensations": steps_to_compensate(state),
         "is_terminal": state.is_terminal,
         "step_iterations": state.step_iterations,
+        "journal_pruned_at": None,
     }
     if len(_STATE_CACHE) >= _STATE_CACHE_SIZE:
         _STATE_CACHE.clear()

@@ -25,6 +25,7 @@ function instance(over: Partial<WorkflowInstance> = {}): WorkflowInstance {
     lease_expires_at: null,
     heartbeat_at: null,
     archived_at: null,
+    journal_pruned_at: null,
     created_at: '2026-03-01T12:10:30Z',
     updated_at: '2026-03-01T12:11:05Z',
     ...over,
