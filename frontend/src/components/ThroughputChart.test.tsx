@@ -96,6 +96,16 @@ describe('график темпа', () => {
     expect(captured[0]).toBe('all')
   })
 
+  it('объявляет, если список не прочитан', async () => {
+    // График без данных и график, который не смог прочитать данные, — разные
+    // вещи: первый означает «работы не было», второй «показать нечем».
+    list.mockRejectedValue(new Error('список недоступен'))
+
+    render(<ThroughputChart />)
+
+    expect(await screen.findByText(/список недоступен/)).toBeTruthy()
+  })
+
   it('объявляет график для скринридера одной фразой', async () => {
     list.mockResolvedValue({
       items: [instance(minutesAgo(2), 'COMPLETED')],

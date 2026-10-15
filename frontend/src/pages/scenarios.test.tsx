@@ -16,13 +16,14 @@ import ScenariosPage from '@/pages/scenarios'
 
 // `vi.hoisted` обязателен: фабрика мока поднимается в начало файла и
 // переменная, объявленная ниже, на момент подъёма ещё не существует.
-const { start, get, clear, events, steps, cancel } = vi.hoisted(() => ({
+const { start, get, clear, events, steps, cancel, list } = vi.hoisted(() => ({
   start: vi.fn(),
   get: vi.fn(),
   clear: vi.fn(),
   events: vi.fn(),
   steps: vi.fn(),
   cancel: vi.fn(),
+  list: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -45,7 +46,15 @@ vi.mock('@/api/client', () => ({
     })),
     activate: vi.fn(async () => ({})),
   },
-  instances: { start, get, events, steps, cancel, resume: vi.fn(async () => ({})) },
+  instances: {
+    start,
+    get,
+    events,
+    steps,
+    cancel,
+    resume: vi.fn(async () => ({})),
+    list,
+  },
 }))
 
 function renderPage() {
@@ -63,7 +72,14 @@ async function buttons(): Promise<HTMLElement[]> {
 
 describe('страница сценариев', () => {
   beforeEach(() => {
-    for (const mock of [start, get, clear, events, steps, cancel]) mock.mockReset()
+    for (const mock of [start, get, clear, events, steps, cancel, list]) mock.mockReset()
+    list.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+      archived_total: 0,
+    })
     clear.mockResolvedValue({ active: [], message: '' })
     start.mockResolvedValue({ id: 'inst-9' })
     events.mockResolvedValue({
@@ -81,6 +97,80 @@ describe('страница сценариев', () => {
   })
 
   afterEach(cleanup)
+
+  it('предупреждает о незакрытых откатах на стенде', async () => {
+    // Правило инъекции без адресата достаётся в том числе незакрытым
+    // процессам: без предупреждения сценарий молча проверил бы чужой откат
+    // и объявил успех (ADR-0022).
+    list.mockResolvedValue({
+      items: [
+        {
+          id: 'i-1',
+          definition: { id: 'd-1', name: 'order_fulfillment', version: 1 },
+          status: 'COMPENSATION_FAILED',
+          current_step: null,
+          input: {},
+          variables: {},
+          error: null,
+          lease_owner: null,
+          lease_expires_at: null,
+          heartbeat_at: null,
+          archived_at: null,
+          journal_pruned_at: null,
+          created_at: '2026-03-01T12:00:00Z',
+          updated_at: '2026-03-01T12:00:01Z',
+        },
+        {
+          id: 'i-2',
+          definition: { id: 'd-1', name: 'order_fulfillment', version: 1 },
+          status: 'PAUSED',
+          current_step: 'charge_payment',
+          input: {},
+          variables: {},
+          error: null,
+          lease_owner: null,
+          lease_expires_at: null,
+          heartbeat_at: null,
+          archived_at: null,
+          journal_pruned_at: null,
+          created_at: '2026-03-01T12:00:00Z',
+          updated_at: '2026-03-01T12:00:01Z',
+        },
+      ],
+      total: 2,
+      limit: 100,
+      offset: 0,
+      archived_total: 0,
+    })
+
+    renderPage()
+
+    expect(await screen.findByText(/2 незакрытых процессов/)).toBeTruthy()
+  })
+
+  it('не ломает страницу, если список процессов не прочитался', async () => {
+    // Предупреждение не обязано работать: каталог сценариев показывается и на
+    // стенде, где список недоступен, и падать из-за необязательной подсказки
+    // было бы хуже, чем её отсутствие.
+    list.mockRejectedValue(new Error('список недоступен'))
+
+    renderPage()
+
+    // Кнопок столько же, сколько сценариев: каталог отрисован целиком, то есть
+    // страница пережила недоступный список.
+    expect((await screen.findAllByRole('button', { name: 'Запустить' })).length).toBeGreaterThan(5)
+    expect(screen.queryByText(/незакрытых процессов/)).toBeNull()
+  })
+
+  it('молчит, когда незакрытых откатов нет', async () => {
+    renderPage()
+
+    await screen.findAllByRole('button', { name: 'Запустить' })
+
+    // Предупреждение без повода выглядит тревогой, и человек перестаёт читать
+    // такие подписи вовсе.
+    expect(screen.queryByText(/незакрытых процессов/)).toBeNull()
+  })
 
   it('называет, что каждый сценарий доказывает', () => {
     renderPage()
@@ -202,6 +292,39 @@ describe('страница сценариев', () => {
       () => expect(screen.getByText(/ждёт решения/)).toBeTruthy(),
       { timeout: 6000 },
     )
+  })
+
+  it('объявляет, что процесс не пришёл за отведённый срок', async () => {
+    // Молчаливое ожидание читается как «идёт» независимо от того, что
+    // происходит: по часам сценарий обязан превратиться в «не пришёл».
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    get.mockResolvedValue({ id: 'inst-9', status: 'RUNNING', current_step: 'reserve_inventory' })
+
+    renderPage()
+    await fireEvent.click((await buttons())[0])
+    await vi.advanceTimersByTimeAsync(200_000)
+
+    await vi.waitFor(
+      () => expect(screen.getByText(/не пришёл к ожидаемому состоянию/)).toBeTruthy(),
+      { timeout: 6000 },
+    )
+    vi.useRealTimers()
+  })
+
+  it('показывает паузу с истекающим сроком как наблюдаемое состояние', async () => {
+    // Процесс с истекающим сроком стоит и сам не пойдёт дальше: ждать конца
+    // бессмысленно, и без этого показа человек ждал бы зря.
+    get.mockResolvedValue({ id: 'inst-9', status: 'PAUSED', current_step: 'charge_payment' })
+
+    renderPage()
+    // Каталог: happy, payment-fails, compensation-fails, compensation-retry,
+    // retry-succeeds, stock-exhausted, cancel, long-wait, human-pause,
+    // pause-deadline.
+    await fireEvent.click((await buttons())[9])
+
+    await vi.waitFor(() => expect(screen.getByText(/ждёт решения/)).toBeTruthy(), {
+      timeout: 6000,
+    })
   })
 
   it('не падает, если наблюдение оборвалось ошибкой', async () => {

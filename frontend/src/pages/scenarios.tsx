@@ -92,10 +92,13 @@ function actionLabel(spec: ScenarioSpec): string {
   return `остановить продление аренды, дойдя до «${when}»`
 }
 
+const POLL_MS_UNRESOLVED = 10_000
+
 export default function ScenariosPage() {
   const [running, setRunning] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [started, setStarted] = useState<Record<string, Started>>({})
+  const [unresolved, setUnresolved] = useState<number | null>(null)
   // Правила, снятые при уходе со страницы: без этого инъекция пережила бы
   // вкладку и досталась следующему прогону.
   const dirty = useRef(false)
@@ -202,6 +205,29 @@ export default function ScenariosPage() {
     return () => window.clearInterval(timer)
   }, [started, watch])
 
+  // Незакрытые откаты на стенде (ADR-0022): правило инъекции без инстанса
+  // достаётся в том числе им, и человек узнаёт об этом раньше результата.
+  const watchUnresolved = useCallback(async () => {
+    try {
+      const page = await instancesApi.list({ limit: 100 })
+      setUnresolved(
+        page.items.filter(
+          (item) =>
+            item.status === 'COMPENSATION_FAILED' || item.status === 'PAUSED',
+        ).length,
+      )
+    } catch {
+      // Не читается — молчим: предупреждение не обязано ломать страницу.
+      setUnresolved(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    void watchUnresolved()
+    const timer = window.setInterval(() => void watchUnresolved(), POLL_MS_UNRESOLVED)
+    return () => window.clearInterval(timer)
+  }, [watchUnresolved])
+
   // Уход со страницы снимает правила: забытая инъекция ломает всё, что дальше.
   useEffect(() => {
     return () => {
@@ -221,6 +247,14 @@ export default function ScenariosPage() {
       </div>
 
       {error && <ErrorState message={error} />}
+
+      {unresolved !== null && unresolved > 0 && (
+        <p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
+          На стенде {unresolved} незакрытых процессов: они ждут решения человека или повтора
+          отката. Правило инъекции без адресата достаётся в том числе им, поэтому сценарий,
+          требующий «сломать один раз», показывается через ручной повтор (ADR-0022).
+        </p>
+      )}
 
       {SCENARIOS.map((spec) => {
         const entry = started[spec.id]
