@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom'
 import { instances as instancesApi, definitions as definitionsApi } from '@/api/client'
 import { useEventStream } from '@/api/stream'
 import { DefinitionGraph } from '@/components/DefinitionGraph'
+import { InventoryPanel } from '@/components/InventoryPanel'
 import { LeaseDetails } from '@/components/LeaseDetails'
 import { ReplayCheck } from '@/components/ReplayCheck'
 import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
@@ -248,6 +249,8 @@ export default function InstancePage() {
             currentStep={instance.current_step}
           />
         </Card>
+
+        <InventoryPanel />
 
         <Card title="Переменные инстанса" className="lg:col-span-2">
           {Object.keys(instance.variables).length === 0 ? (

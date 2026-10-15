@@ -22,12 +22,46 @@ def _step(action: str, **extra: Any) -> dict[str, Any]:
     return {"action": f"{HANDLERS}:{action}", **extra}
 
 
+#: Шаг после подтверждения доставки.
+#:
+#: Нужен, чтобы компенсация доставки была достижима: откат строится по
+#: успешно завершённым шагам, а шаг последний ничем не может быть сорван.
+#: Без него компенсация `await_delivery` существовала бы в схеме и никогда не
+#: выполнялась бы — то есть её правильность не проверял бы никто.
+NOTIFY = "notify_customer"
+
+
+def _delivery_tail(wait_before_seconds: float = 0) -> dict[str, Any]:
+    """Шаги после резерва: отправление, ожидание, доставка и уведомление."""
+    return {
+        "create_shipment": _step(
+            "create_shipment",
+            compensation=f"{HANDLERS}:cancel_shipment",
+            next="await_delivery",
+            description="Создание отправления",
+        ),
+        "await_delivery": _step(
+            "confirm_delivery",
+            # Доставка отпускает резерв (ADR-0020), а значит стала необратимой:
+            # отмена возвращает товар в холд обратно.
+            compensation=f"{HANDLERS}:reserve_inventory",
+            next=NOTIFY,
+            wait_before_seconds=wait_before_seconds,
+            description="Ожидание доставки: durable-таймер, а не sleep",
+        ),
+        NOTIFY: _step(
+            "notify_customer",
+            description="Уведомление о доставке: внешнего эффекта в демо-области нет",
+        ),
+    }
+
+
 def order_fulfillment(wait_before_seconds: float = 0) -> dict[str, Any]:
-    """Заказ: резерв → оплата → отправление → подтверждение.
+    """Заказ: резерв → оплата → отправление → доставка → уведомление.
 
     У каждого шага, меняющего внешнее состояние, объявлена компенсация: без неё
-    откат оставил бы резерв или списание (§3.5 AGENTS.md). Валидация и
-    подтверждение обратимы по умолчанию, поэтому компенсаций не имеют.
+    откат оставил бы резерв или списание (§3.5 AGENTS.md). Проверка корзины
+    ничего не меняет и обратима по умолчанию.
 
     `wait_before_seconds` у ожидания — единственный долгий участок процесса:
     именно он делает процесс долгоживущим, а не быстрым запросом.
@@ -55,17 +89,7 @@ def order_fulfillment(wait_before_seconds: float = 0) -> dict[str, Any]:
                 retry={"max_attempts": 3, "backoff_seconds": 1, "backoff_multiplier": 2},
                 description="Списание средств — главный необратимый шаг",
             ),
-            "create_shipment": _step(
-                "create_shipment",
-                compensation=f"{HANDLERS}:cancel_shipment",
-                next="await_delivery",
-                description="Создание отправления",
-            ),
-            "await_delivery": _step(
-                "confirm_delivery",
-                wait_before_seconds=wait_before_seconds,
-                description="Ожидание доставки: durable-таймер, а не sleep",
-            ),
+            **_delivery_tail(wait_before_seconds),
         },
     }
 
@@ -105,16 +129,7 @@ def order_with_approval(pause_timeout_seconds: float | None = None) -> dict[str,
                 description="Резерв товара на складе",
             ),
             "charge_payment": _step("charge_payment", **step),
-            "create_shipment": _step(
-                "create_shipment",
-                compensation=f"{HANDLERS}:cancel_shipment",
-                next="await_delivery",
-                description="Создание отправления",
-            ),
-            "await_delivery": _step(
-                "confirm_delivery",
-                description="Ожидание доставки: durable-таймер, а не sleep",
-            ),
+            **_delivery_tail(),
         },
     }
 

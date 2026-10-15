@@ -44,6 +44,9 @@ const forceComplete = vi.fn()
 const retryCompensation = vi.fn()
 
 vi.mock('@/api/client', () => ({
+  // Склад читается страницей процесса: без заглушки панель ушла бы в ошибку,
+  // и страница выглядела бы целой при неработающем блоке.
+  demo: { inventory: async () => ({ items: [] }) },
   instances: {
     get: (...args: unknown[]) => get(...args),
     state: (...args: unknown[]) => state(...args),
@@ -249,6 +252,16 @@ describe('кнопки решения', () => {
     expect(await screen.findByRole('heading', { name: 'order_demo' })).toBeTruthy()
     expect(screen.queryByText('Граф шагов')).toBeNull()
     expect(screen.getByText('Выполнено')).toBeTruthy()
+  })
+
+  it('показывает склад: резерв виден глазами, а не только в базе', async () => {
+    // Возврат резерва после доставки — половина утверждения ADR-0020, и без
+    // панели на странице оно проверялось бы только скриптом.
+    get.mockResolvedValue(instance('COMPLETED'))
+
+    renderPage()
+
+    expect(await screen.findByRole('heading', { name: 'Склад' })).toBeTruthy()
   })
 
   it('собирает отчёт из уже загруженного, без второго запроса', async () => {

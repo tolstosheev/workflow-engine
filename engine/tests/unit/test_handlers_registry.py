@@ -115,10 +115,18 @@ async def test_validate_cart_handles_empty_order() -> None:
     assert (await validate_cart(_ctx(input={})))["valid"] is False
 
 
-async def test_confirm_delivery_is_positive() -> None:
+def test_confirm_delivery_is_registered() -> None:
+    """Обработчик доставки разрешается по имени.
+
+    Раньше здесь проверялся вызов, и обработчик был единственным, который не
+    ходил в базу: подтверждение ничего не меняло. Теперь оно отпускает резерв
+    (ADR-0020), и проверка эффекта живёт в интеграционных тестах, где есть
+    настоящий склад, — а на отсутствующей базе вызов падал бы с чужой ошибкой.
+    """
     from app.demo.handlers import confirm_delivery
 
-    assert await confirm_delivery(_ctx()) == {"confirmed": True}
+    assert callable(confirm_delivery)
+    assert resolve_handler("app.demo.handlers:confirm_delivery") is confirm_delivery
 
 
 def test_context_defaults_are_not_shared() -> None:

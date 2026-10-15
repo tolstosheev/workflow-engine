@@ -207,6 +207,40 @@ async def cancel_shipment(ctx: StepContext) -> dict[str, Any]:
 
 
 async def confirm_delivery(ctx: StepContext) -> dict[str, Any]:
-    # Обратимость по умолчанию: подтверждение не меняет состояние, которое
-    # пришлось бы отменять, поэтому компенсация ему не нужна (ADR-0006).
-    return {"confirmed": True}
+    """Подтверждает доставку и отпускает резерв (ADR-0020).
+
+    Товар доставлен, поэтому холд на складе больше не нужен. Раньше резерв
+    снимался только откатом, и каждый успешный заказ навсегда уменьшал склад:
+    за месяц показа демонстрация работала на пустом остатке.
+
+    Шаг стал необратимым, поэтому у него появилась компенсация — повторный
+    резерв (`reserve_inventory` под именем шага доставки). При отмене доставки
+    товар возвращается в холд, иначе склад считал бы его свободным, хотя он уехал.
+    """
+    requested = _requested(_items(ctx))
+
+    async def effect(session: AsyncSession) -> None:
+        for sku, qty in requested:
+            row = await session.scalar(
+                select(DemoInventoryItem).where(DemoInventoryItem.sku == sku)
+            )
+            if row is None:  # pragma: no cover - доставка без товара
+                continue
+            # `max(0, …)`: резерв мог быть снят чужой отменой, и второй раз
+            # списывать нечего. Отрицательный остаток нарушил бы ограничение
+            # таблицы и уронил бы весь откат.
+            row.reserved = max(0, row.reserved - qty)
+
+    await _apply_once(ctx, effect)
+    return {"confirmed": True, "released_units": sum(qty for _, qty in requested)}
+
+
+async def notify_customer(ctx: StepContext) -> dict[str, Any]:
+    """Уведомление о доставке.
+
+    Внешнего эффекта в демо-области нет: письма не отправляются, push не
+    уходит. Шагу он нужен не ради эффекта, а чтобы компенсация доставки была
+    достижима — откат строится по успешно завершённым шагам, а шаг последний
+    ничем не сорвать (ADR-0020).
+    """
+    return {"notified": True, "step": ctx.step_name}

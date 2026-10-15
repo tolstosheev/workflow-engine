@@ -184,6 +184,16 @@ export interface WorkerRecord {
   lease_lost: number
 }
 
+export interface InventoryItem {
+  sku: string
+  available: number
+  reserved: number
+}
+
+export interface InventoryOut {
+  items: InventoryItem[]
+}
+
 export interface WorkerList {
   items: WorkerRecord[]
   /** Через сколько секунд молчания воркер объявляется не отвечающим. */

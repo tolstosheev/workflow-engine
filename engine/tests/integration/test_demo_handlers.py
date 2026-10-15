@@ -65,6 +65,24 @@ async def instance(db_engine: None) -> AsyncIterator[str]:
     yield instance_id
 
 
+async def _other_instance() -> str:
+    """Второй инстанс: резерв конфликтующего заказа должен быть настоящим."""
+    flow = {
+        "start": "validate_cart",
+        "steps": {"validate_cart": {"action": "app.demo.handlers:validate_cart"}},
+    }
+    async with get_session_factory()() as session:
+        definition = WorkflowDefinition(name=f"probe-{uuid.uuid4().hex[:8]}", definition=flow)
+        session.add(definition)
+        await session.flush()
+        row = WorkflowInstance(definition_id=definition.id, input={}, variables={})
+        session.add(row)
+        await session.flush()
+        await append_event(session, row.id, EventType.INSTANCE_CREATED, {"start": flow["start"]})
+        await session.commit()
+        return str(row.id)
+
+
 @pytest.fixture
 async def db_session(db_engine: None) -> AsyncIterator[AsyncSession]:
     session = get_session_factory()()
@@ -251,6 +269,87 @@ async def test_shipment_is_not_created_twice(instance: str) -> None:
 
 
 # --- Откат целиком ---------------------------------------------------------
+
+
+# --- Доставка и её отмена ---------------------------------------------------
+#
+# Подтверждение доставки отпускает резерв (ADR-0020): товар доставлен, и холд
+# на складе больше не нужен. Раньше резерв держался до бесконечности, и склад
+# на стенде пустел после каждого успешного заказа.
+
+
+async def test_confirmation_releases_reserved_stock(instance: str) -> None:
+    ctx = _ctx(instance, "reserve_inventory", input={"items": [{"sku": SKU, "qty": 3}]})
+    await handlers.reserve_inventory(ctx)
+    assert await _reserved() == 3
+
+    await handlers.confirm_delivery(_ctx(instance, "await_delivery", input=ctx.input))
+
+    # Товар доставлен: резерв возвращается на склад.
+    assert await _reserved() == 0
+
+
+async def test_confirmation_releases_reserved_stock_only_once(instance: str) -> None:
+    ctx = _ctx(instance, "reserve_inventory", input={"items": [{"sku": SKU, "qty": 2}]})
+    await handlers.reserve_inventory(ctx)
+    delivery = _ctx(instance, "await_delivery", input=ctx.input)
+
+    await handlers.confirm_delivery(delivery)
+    await handlers.confirm_delivery(delivery)
+
+    # Повтор шага не должен снять чужой резерв: тот же ключ операции, второй
+    # раз эффект не применяется.
+    assert await _reserved() == 0
+
+
+async def test_rollback_of_confirmation_reserves_again(instance: str) -> None:
+    ctx = _ctx(instance, "reserve_inventory", input={"items": [{"sku": SKU, "qty": 3}]})
+    await handlers.reserve_inventory(ctx)
+    await handlers.confirm_delivery(_ctx(instance, "await_delivery", input=ctx.input))
+    assert await _reserved() == 0
+
+    # Отмена доставки возвращает товар в холд: компенсация шага обязана
+    # занять резерв обратно, иначе склад считает товар свободным, хотя он
+    # уехал.
+    await handlers.reserve_inventory(
+        _ctx(
+            instance,
+            "await_delivery",
+            input=ctx.input,
+            operation_id=f"{instance}:compensate:await_delivery:1",
+        )
+    )
+
+    assert await _reserved() == 3
+
+
+async def test_reserve_after_release_can_conflict(instance: str) -> None:
+    """Возврат резерва может упереться в чужой заказ — это видно, а не тихо.
+
+    Товар забрал другой процесс, освободившийся остаток при откате меньше
+    нужного. Обработчик обязан сказать об этом постоянной ошибкой, а не
+    записать отрицательный остаток или промолчать.
+    """
+    ctx = _ctx(instance, "reserve_inventory", input={"items": [{"sku": SKU, "qty": 4}]})
+    await handlers.reserve_inventory(ctx)
+    await handlers.confirm_delivery(_ctx(instance, "await_delivery", input=ctx.input))
+
+    # Чужой заказ занимает почти весь склад, и возврату резерва места не
+    # остаётся: свободного места меньше, чем нужно вернуть.
+    other = await _other_instance()
+    await handlers.reserve_inventory(
+        _ctx(other, "reserve_inventory", input={"items": [{"sku": SKU, "qty": 10_000}]})
+    )
+
+    with pytest.raises(handlers.PermanentStepError):
+        await handlers.reserve_inventory(
+            _ctx(
+                instance,
+                "await_delivery",
+                input=ctx.input,
+                operation_id=f"{instance}:compensate:await_delivery:1",
+            )
+        )
 
 
 async def test_full_order_then_rollback_restores_stock(instance: str) -> None:

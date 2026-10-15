@@ -41,7 +41,7 @@ Neutral) / Alternatives considered / References. Раздел **Negative** об�
 | [0017](0017-arhivirovanie-zavershonnyh-processov.md) | Архивирование завершённых процессов вместо удаления | Accepted |
 | [0018](0018-reestr-vorkerov.md) | Реестр воркеров | Accepted |
 | [0019](0019-hranenie-zhurnala-po-vozrastu.md) | Хранение журнала: уборка по возрасту | Proposed |
-| [0020](0020-kogda-rezerv-pokidaet-sklad.md) | Когда резерв покидает склад | Proposed |
+| [0020](0020-kogda-rezerv-pokidaet-sklad.md) | Когда резерв покидает склад | Accepted |
 | [0021](0021-chto-panel-reestra-pokazyvaet.md) | Что панель реестра показывает | Accepted |
 
 Реализация: ADR-0001 — в Фазе 0, ADR-0002…0006 — в Фазе 1 (схема данных и

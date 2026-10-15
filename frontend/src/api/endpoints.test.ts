@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { chaos, definitions, instances } from '@/api/client'
+import { chaos, definitions, demo, instances } from '@/api/client'
 
 interface Call {
   url: string
@@ -32,6 +32,18 @@ afterEach(() => {
 function last(): Call {
   return calls[calls.length - 1]
 }
+
+describe('склад демонстрационной области', () => {
+  it('читается одним GET без параметров', async () => {
+    // Путь проверяется здесь, а не в стражде путей: страж читает исходник
+    // клиента, а вызов — единственное место, где опечатка в адресе
+    // превращается в 404 на живом стенде.
+    await demo.inventory()
+
+    expect(last().url).toContain('/api/demo/inventory')
+    expect(last().init?.method ?? 'GET').toBe('GET')
+  })
+})
 
 describe('определения', () => {
   const cases: [string, () => Promise<unknown>, string, string][] = [

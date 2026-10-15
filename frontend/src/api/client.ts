@@ -10,6 +10,7 @@ import type {
   ChaosResult,
   DefinitionSummary,
   InstanceState,
+  InventoryOut,
   Paginated,
   TimelineEntry,
   ValidationResult,
@@ -185,6 +186,16 @@ export const workers = {
    */
   list: (params: { departed?: boolean } = {}) =>
     request<WorkerList>(`/api/workers?departed=${params.departed === true}`),
+}
+
+export const demo = {
+  /**
+   * Склад демонстрационной области: только чтение.
+   *
+   * Ручки изменения нет и не будет: человек не должен освобождать резерв
+   * кнопкой и наблюдать «успех» там, где демонстрируется компенсация.
+   */
+  inventory: () => request<InventoryOut>('/api/demo/inventory'),
 }
 
 export const chaos = {

@@ -37,6 +37,9 @@ const PRESETS = [
   'charge_payment',
   'create_shipment',
   'confirm_delivery',
+  // Шаг после доставки нужен, чтобы показать возврат резерва: откат строится по
+  // завершённым шагам, а сорвать последний нечем (ADR-0020).
+  'notify_customer',
 ] as const
 
 /**
