@@ -166,6 +166,31 @@ test('сценарий приводит к откату через интерф�
   expect(json.active).toEqual([])
 })
 
+test('страница состояния показывает метрики, а не нули', async ({ page, request }) => {
+  // Регрессия: браузер ходит в свой origin, а прокси знал только /api. Метрики
+  // лежат по /metrics, запрос уходил в дев-сервер, тот отвечал 404, и разбор
+  // принимал его за «метрик нет». Страница показывала нули при живой системе.
+  const definitionId = await demoDefinition(request)
+  await startInstance(request, definitionId)
+  await page.goto(`/metrics`)
+
+  // Проверяется текст, который человек видел на экране: обе пустые заглушки
+  // означают «данных нет», а данные есть.
+  await expect(page.getByText('Метрики ещё не собраны')).toHaveCount(0, { timeout: 30_000 })
+  await expect(page.getByText('Шаги ещё не выполнялись')).toHaveCount(0, { timeout: 30_000 })
+
+  // И в разбивке по состояниям хотя бы одна строка не ноль: все нули при
+  // живом процессе — это тот же дефект, только посимвольнее.
+  const breakdown = page.getByRole('table', { name: 'Инстансы по состояниям' })
+  await expect(breakdown).toBeVisible({ timeout: 30_000 })
+  await expect
+    .poll(async () => {
+      const text = (await breakdown.innerText()).replace(/[^0-9]/g, '')
+      return /[1-9]/.test(text)
+    }, { timeout: 30_000 })
+    .toBe(true)
+})
+
 test('пауза называется на странице одним и тем же', async ({ page, request }) => {
   // Дефект: планирование срока пишет TIMER_SCHEDULED, разбор принимал его за
   // ожидание шага, и карточка называла паузу «Ожидание», а шапка — «Ждёт
