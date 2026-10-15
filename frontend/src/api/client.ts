@@ -175,8 +175,16 @@ export const instances = {
 // --- Инъекция отказов ------------------------------------------------------
 
 export const workers = {
-  /** Реестр воркеров (ADR-0018): отдаёт и не отвечающих. */
-  list: (signal?: AbortSignal) => request<WorkerList>('/api/workers', { signal }),
+  /**
+   * Реестр воркеров (ADR-0018): отдаёт и не отвечающих.
+   *
+   * `departed` включает записи старше суток. По умолчанию они скрыты: на стенде
+   * их набирается за неделю, и панель из них состояла из одних давно ушедших.
+   * Параметр уходит всегда — иначе переключатель менял бы выдачу, а сервер молчал
+   * бы о скрытых строках.
+   */
+  list: (params: { departed?: boolean } = {}) =>
+    request<WorkerList>(`/api/workers?departed=${params.departed === true}`),
 }
 
 export const chaos = {

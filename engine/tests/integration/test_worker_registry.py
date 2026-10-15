@@ -192,3 +192,62 @@ async def test_worker_loop_registers_itself(session: AsyncSession) -> None:
     rows = await service.list_workers(session, timedelta(seconds=3))
     assert len(rows) == 1
     assert rows[0].stopped_at is not None
+
+
+# --- Давно завершённые -------------------------------------------------------
+
+
+async def test_departed_rows_are_hidden_by_default(
+    session: AsyncSession, client: httpx.AsyncClient
+) -> None:
+    # Идентификатор воркера включает случайную часть, а имя узла у контейнера
+    # меняется при каждом пересоздании: за неделю стенда реестр набирает строки
+    # всех, кто когда-либо запускался. Панель из них состояла «12 в системе»,
+    # хотя отвечали трое.
+    await _register(session, "worker-reg-old")
+    await _age_heartbeat(session, "worker-reg-old", 3 * 24 * 3600)
+
+    items = (await client.get("/api/workers")).json()["items"]
+
+    assert [item["worker_id"] for item in items] == []
+
+
+async def test_departed_rows_come_back_on_request(
+    session: AsyncSession, client: httpx.AsyncClient
+) -> None:
+    await _register(session, "worker-reg-old2")
+    await _age_heartbeat(session, "worker-reg-old2", 3 * 24 * 3600)
+
+    items = (await client.get("/api/workers?departed=true")).json()["items"]
+
+    # Данные не удаляются (ADR-0018): за переключателем строка на месте.
+    assert [item["worker_id"] for item in items] == ["worker-reg-old2"]
+
+
+async def test_hidden_rows_are_counted(session: AsyncSession, client: httpx.AsyncClient) -> None:
+    # Без числа переключатель выглядел бы пустым, и человек решил бы, что
+    # никто никогда не выходил из строя.
+    await _register(session, "worker-reg-old3")
+    await _age_heartbeat(session, "worker-reg-old3", 3 * 24 * 3600)
+
+    body = (await client.get("/api/workers")).json()
+
+    assert body["departed_total"] == 1
+
+
+async def test_recent_stopped_worker_is_not_hidden(
+    session: AsyncSession, client: httpx.AsyncClient
+) -> None:
+    # Только что остановленный воркер — часть картины: он объясняет, почему
+    # процессы перестали продвигаться.
+    await _register(session, "worker-reg-recent")
+    await service.mark_stopped(session, "worker-reg-recent")
+    await session.commit()
+
+    items = (await client.get("/api/workers")).json()["items"]
+
+    assert [item["worker_id"] for item in items] == ["worker-reg-recent"]
+
+
+async def test_departed_threshold_is_a_day() -> None:
+    assert timedelta(hours=24) == service.DEPARTED_AFTER

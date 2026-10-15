@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,20 @@ def stale_after(poll_interval_seconds: float) -> timedelta:
     бы мёртвым; длиннее — зависший числился бы живым.
     """
     return timedelta(seconds=poll_interval_seconds * 3)
+
+
+#: Сколько живёт запись реестра в выдаче по умолчанию.
+#:
+#: Идентификатор воркера включает случайную часть, а имя узла у контейнера
+#: меняется при каждом пересоздании, поэтому каждое переподключение добавляет
+#: строку. Записи старше суток по умолчанию не отдаются — они никуда не удаляются
+#: (ADR-0018), а лишь скрыты за переключателем вместе со своим числом.
+DEPARTED_AFTER = timedelta(hours=24)
+
+
+def departed_before(now: datetime | None = None) -> datetime:
+    """Момент, раньше которого запись считается ушедшей надолго."""
+    return (now or datetime.now(UTC)) - DEPARTED_AFTER
 
 
 async def register(session: AsyncSession, worker_id: str) -> None:
@@ -89,13 +103,31 @@ async def mark_stopped(session: AsyncSession, worker_id: str) -> None:
     )
 
 
-async def list_workers(session: AsyncSession, fresh_for: timedelta) -> list[Worker]:
-    """Все строки реестра, свежие сверху.
+async def list_workers(
+    session: AsyncSession, fresh_for: timedelta, include_departed: bool = False
+) -> list[Worker]:
+    """Строки реестра, свежие сверху.
 
     Сортировка по сердцу, а не по идентификатору: список открывают, когда что-то
     пошло не так, и первым там нужен тот, кто молчит дольше всех.
+
+    Ушедшие надолго по умолчанию не отдаются. Данные остаются в базе — реестр
+    ничего не удаляет (ADR-0018), — но панель показывает то, о чём в ней можно
+    принять решение, а не список всех, кто когда-либо запускался.
     """
-    return list(await session.scalars(select(Worker).order_by(Worker.heartbeat_at.desc())))
+    statement = select(Worker)
+    if not include_departed:
+        statement = statement.where(Worker.heartbeat_at >= departed_before())
+    return list(await session.scalars(statement.order_by(Worker.heartbeat_at.desc())))
+
+
+async def count_departed(session: AsyncSession) -> int:
+    """Сколько записей скрыто за переключателем."""
+    return (
+        await session.scalar(
+            select(func.count()).select_from(Worker).where(Worker.heartbeat_at < departed_before())
+        )
+    ) or 0
 
 
 def worker_state(worker: Worker, now: datetime, fresh_for: timedelta) -> str:

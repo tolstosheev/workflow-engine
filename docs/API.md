@@ -381,6 +381,11 @@ curl -X POST http://localhost:8000/api/instances/{id}/complete \
 не удаляется из реестра, иначе падение выглядело бы как отсутствие воркера, а
 вопрос был как раз в том, жив ли он.
 
+Параметр `departed` (по умолчанию `false`) включает записи старше суток.
+Скрытие — только в выдаче: в базе строки на месте и возвращаются по
+`?departed=true` (ADR-0021). Их количество отдаётся всегда полем
+`departed_total`, чтобы переключатель не выглядел пустым.
+
 ```json
 {
   "items": [
@@ -395,7 +400,8 @@ curl -X POST http://localhost:8000/api/instances/{id}/complete \
       "lease_lost": 0
     }
   ],
-  "fresh_for_seconds": 3.0
+  "fresh_for_seconds": 3.0,
+  "departed_total": 0
 }
 ```
 

@@ -5,12 +5,17 @@
  * воркеров в системе и кто из них молчит. Второе важнее первого — раньше
  * воркер был виден только пока держал аренду, то есть пока делал что-то, и
  * зависший выглядел так же, как отсутствующий.
+ *
+ * Заголовок называет то, что в списке, а не то, что было когда-то: надпись «в
+ * системе» означала всех, кто когда-либо запускался, и на стенде доходила до
+ * двенадцати при трёх отвечающих. Записи старше суток скрыты за переключателем
+ * вместе со своим числом — они не удалены, но и в принятии решения не участвуют.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { workers as workersApi } from '@/api/client'
-import { ErrorState, StatusBadge } from '@/components/ui'
+import { Button, ErrorState, StatusBadge } from '@/components/ui'
 import { formatDateTime } from '@/lib/status'
 import type { WorkerRecord, WorkerState } from '@/types/api'
 
@@ -31,59 +36,82 @@ function age(iso: string): string {
   const seconds = ageSeconds(iso)
   if (seconds === null) return '—'
   if (seconds < 60) return `${seconds} с назад`
-  return `${Math.round(seconds / 60)} мин назад`
+  if (seconds < 3600) return `${Math.round(seconds / 60)} мин назад`
+  return `${Math.round(seconds / 3600)} ч назад`
 }
+
+const POLL_MS = 5000
 
 export function WorkerRegistry() {
   const [items, setItems] = useState<WorkerRecord[] | null>(null)
   const [freshFor, setFreshFor] = useState(0)
+  const [departedTotal, setDepartedTotal] = useState(0)
+  const [showDeparted, setShowDeparted] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const page = await workersApi.list()
-        if (cancelled) return
-        setItems(page.items)
-        setFreshFor(page.fresh_for_seconds)
-        setError(null)
-      } catch (cause) {
-        if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : 'Реестр воркеров не прочитан')
-        }
-      }
+  const load = useCallback(async () => {
+    try {
+      // Параметр уходит всегда: иначе переключатель менял бы выдачу, а сервер
+      // молчал бы о скрытых строках, и число на панели расходилось бы с её
+      // содержимым.
+      const page = await workersApi.list({ departed: showDeparted })
+      setItems(page.items)
+      setFreshFor(page.fresh_for_seconds)
+      setDepartedTotal(page.departed_total ?? 0)
+      setError(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Реестр воркеров не прочитан')
     }
+  }, [showDeparted])
+
+  useEffect(() => {
     void load()
     // Опрос непрерывный: реестр живёт тем, что сердце воркера перестало или
     // снова идёт, а без обновления «не отвечает» застыло бы навсегда.
-    const timer = window.setInterval(() => void load(), 5000)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [])
+    const timer = window.setInterval(() => void load(), POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [load])
 
+  const answering = items?.filter((worker) => worker.state === 'active').length ?? 0
   const silent = items?.filter((worker) => worker.state === 'stale').length ?? 0
+  const stopped = items?.filter((worker) => worker.state === 'stopped').length ?? 0
 
   return (
     <section className="rounded-lg border border-surface-border bg-surface-raised p-4">
-      <header className="mb-3 flex items-center justify-between">
+      <header className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold text-white">Воркеры</h2>
         <span className="text-xs text-white/40">
-          {items === null ? '…' : `${items.length} в системе`}
-          {silent > 0 && ` · ${silent} не отвечает`}
+          {items === null
+            ? '…'
+            : `${answering} отвечают${silent ? ` · ${silent} молчат` : ''}${
+                stopped ? ` · ${stopped} остановлены` : ''
+              }`}
         </span>
       </header>
 
       {error && <ErrorState message={error} />}
 
+      {departedTotal > 0 && (
+        <Button
+          aria-pressed={showDeparted}
+          onClick={() => setShowDeparted((value) => !value)}
+        >
+          {showDeparted
+            ? 'Скрыть завершённых'
+            : `Показать завершённых (${departedTotal})`}
+        </Button>
+      )}
+
       {items !== null && items.length === 0 && (
-        <p className="text-sm text-white/50">Воркеров нет ни одного</p>
+        <p className="mt-3 text-sm text-white/50">
+          {departedTotal > 0
+            ? 'Сейчас в системе нет ни одного воркера; завершённые скрыты за переключателем'
+            : 'Воркеров нет ни одного'}
+        </p>
       )}
 
       {items !== null && items.length > 0 && (
-        <ul className="space-y-2">
+        <ul className="mt-3 space-y-2">
           {items.map((worker) => (
             <li key={worker.worker_id} className="flex flex-wrap items-center gap-2 text-xs">
               <span className="font-mono text-white/80">{worker.worker_id}</span>

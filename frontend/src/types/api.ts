@@ -188,6 +188,8 @@ export interface WorkerList {
   items: WorkerRecord[]
   /** Через сколько секунд молчания воркер объявляется не отвечающим. */
   fresh_for_seconds: number
+  /** Сколько записей скрыто за переключателем «показать завершённых». */
+  departed_total: number
 }
 
 export interface ChaosResult {
