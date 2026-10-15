@@ -135,19 +135,22 @@ describe('список инстансов', () => {
     it('кладёт выбранный статус в адрес', async () => {
       renderPage()
 
-      await fireEvent.click(screen.getByRole('button', { name: 'Завершённые' }))
+      await fireEvent.click(screen.getByRole('button', { name: /^Завершённые/ }))
 
-      expect(address()).toContain('status=COMPLETED')
+      // Вкладка кладёт в адрес своё имя, а не состояние процесса: под
+      // вкладкой лежит группа состояний, и «Завершённые» — это про
+      // четыре из них сразу.
+      expect(address()).toContain('filter=finished')
     })
 
     it('открывается по адресу уже отфильтрованной', () => {
-      renderPage('/?status=COMPLETED')
+      renderPage('/?filter=finished')
 
       // Ссылка, отправленная товарищу, обязана открыть то же, что видит
       // отправитель: иначе это просто ссылка, а состояние живёт в браузере.
-      expect(screen.getByRole('button', { name: 'Завершённые' }).getAttribute('aria-pressed')).toBe(
-        'true',
-      )
+      expect(
+        screen.getByRole('button', { name: /^Завершённые/ }).getAttribute('aria-pressed'),
+      ).toBe('true')
     })
 
     it('кладёт набранный поиск в адрес', async () => {
@@ -187,9 +190,11 @@ describe('список инстансов', () => {
 
     it('забывает незнакомый статус, а не падает', () => {
       // Адрес мог остаться от прежней версии или быть дописан вручную.
-      renderPage('/?status=ВЫДУМАННЫЙ')
+      renderPage('/?filter=ВЫДУМАННЫЙ')
 
-      expect(screen.getByRole('button', { name: 'Все' }).getAttribute('aria-pressed')).toBe('true')
+      expect(screen.getByRole('button', { name: /^Все/ }).getAttribute('aria-pressed')).toBe(
+        'true',
+      )
     })
   })
 
@@ -343,12 +348,12 @@ describe('список инстансов', () => {
     expect(rows()).toHaveLength(3)
   })
 
-  it('фильтр по статусу и поиск складываются, а не заменяют друг друга', async () => {
-    renderPage('/?status=COMPLETED')
+  it('вкладка и поиск складываются, а не заменяют друг друга', async () => {
+    renderPage('/?filter=finished')
     await search('order')
 
-    // Поиск не должен возвращать то, что фильтр статуса уже отсек: обе
-    // части условия применяются одновременно.
+    // Поиск не должен возвращать то, что вкладка уже отсекла: обе части
+    // условия применяются одновременно.
     expect(rows()).toHaveLength(0)
   })
 })

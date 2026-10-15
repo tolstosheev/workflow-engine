@@ -7,49 +7,41 @@ import { WorkerLeases, StreamStatus } from '@/components/WorkerLeases'
 import { WorkerRegistry } from '@/components/WorkerRegistry'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useInstancesFeed } from '@/hooks/useInstancesFeed'
-import { countRunning, selectInstances } from '@/lib/instanceList'
+import {
+  INSTANCE_FILTERS,
+  countByFilter,
+  countRunning,
+  filterInstances,
+  readFilterId,
+  selectInstances,
+} from '@/lib/instanceList'
 import { formatDateTime, statusLabel, statusTone } from '@/lib/status'
-import type { InstanceStatus, WorkflowInstance } from '@/types/api'
-
-const FILTERS: Array<{ value: InstanceStatus | 'ALL'; label: string }> = [
-  { value: 'ALL', label: 'Все' },
-  { value: 'RUNNING', label: 'Выполняются' },
-  { value: 'COMPENSATING', label: 'Откат' },
-  { value: 'COMPENSATION_FAILED', label: 'Откат не удался' },
-  { value: 'COMPLETED', label: 'Завершённые' },
-]
-
-/** Статусы, которые адрес вправе называть. Всё прочее — опечатка, а не выбор. */
-const KNOWN = new Set<string>(FILTERS.map((item) => item.value))
-
-function readStatus(value: string | null): InstanceStatus | 'ALL' {
-  return value !== null && KNOWN.has(value) ? (value as InstanceStatus | 'ALL') : 'ALL'
-}
+import type { WorkflowInstance } from '@/types/api'
 
 export default function InstancesPage() {
   // Состояние списка живёт в адресе, а не в полях страницы: без него фильтр и
   // порядок терялись при перезагрузке, ссылка была негодной, а кнопка «назад»
   // возвращала на список, который человек уже отфильтровал.
   const [params, setParams] = useSearchParams()
-  const statusFilter = readStatus(params.get('status'))
+  const filterId = readFilterId(params.get('filter'))
   const query = params.get('q') ?? ''
   const newestFirst = params.get('sort') !== 'old'
 
   function patch(next: Record<string, string>): void {
     const merged = new URLSearchParams(params)
     for (const [key, value] of Object.entries(next)) merged.set(key, value)
-    // Пустые и равные умолчанию значения убираются, а не пишутся: `?q=&status=ALL`
+    // Пустые и равные умолчанию значения убираются, а не пишутся: `?q=&filter=all`
     // — это шум в ссылке, и две ссылки на одно состояние разъезжаются.
     for (const key of [...merged.keys()]) {
       const value = merged.get(key)
-      if (value === '' || (key === 'status' && value === 'ALL')) merged.delete(key)
+      if (value === '' || (key === 'filter' && value === 'all')) merged.delete(key)
     }
     setParams(merged, { replace: true })
   }
 
   const showArchive = params.get('archive') === '1'
   const { items, all, loading, error, connected, lastEventAt, load, archivedTotal } =
-    useInstancesFeed(statusFilter)
+    useInstancesFeed()
 
   // Архивный список грузится отдельно от основного: стор держит только живые
   // процессы, и мешать ему архивные строки значило бы заставить его помнить,
@@ -113,9 +105,12 @@ export default function InstancesPage() {
   // видно сейчас, без запроса на каждый ввод. Отбор и порядок считаются в
   // чистой функции: правило проверяется тестом, а страница — отрисовать.
   const visible = useMemo(
-    () => selectInstances(items, { search: query, newestFirst }),
-    [items, query, newestFirst],
+    () => selectInstances(filterInstances(items, filterId), { search: query, newestFirst }),
+    [items, filterId, query, newestFirst],
   )
+  // Числа на вкладках: пустая вкладка без числа выглядит поломкой, хотя
+  // означает всего лишь «сейчас таких нет».
+  const counts = useMemo(() => countByFilter(items), [items])
   const runningCount = useMemo(() => countRunning(visible), [visible])
 
   return (
@@ -126,14 +121,15 @@ export default function InstancesPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {FILTERS.map((filter) => (
+        {INSTANCE_FILTERS.map((filter) => (
           <Button
-            key={filter.value}
-            variant={statusFilter === filter.value ? 'primary' : 'secondary'}
-            aria-pressed={statusFilter === filter.value}
-            onClick={() => patch({ status: filter.value })}
+            key={filter.id}
+            variant={filterId === filter.id ? 'primary' : 'secondary'}
+            aria-pressed={filterId === filter.id}
+            onClick={() => patch({ filter: filter.id })}
           >
             {filter.label}
+            {counts[filter.id] > 0 && ` (${counts[filter.id]})`}
           </Button>
         ))}
 

@@ -5,7 +5,6 @@ import { useAbortable } from '@/hooks/useAbortable'
 import { usePolling } from '@/hooks/usePolling'
 import { pollingIntervalMs } from '@/lib/polling'
 import { useInstancesStore } from '@/store/instances'
-import type { InstanceStatus } from '@/types/api'
 
 /**
  * Живая лента инстансов: события потока плюс подстраховка опросом.
@@ -17,10 +16,10 @@ import type { InstanceStatus } from '@/types/api'
  * Из стора берутся только нужные поля: подписка на весь стор перерисовывала
  * бы страницу при каждой записи `loading` и `connected`.
  *
- * Фильтр по статусу приходит снаружи, а не берётся из стора: он живёт в
- * адресе, и адрес — единственное место, где он переживает перезагрузку.
+ * Отбор по вкладкам делает страница, а не хук: правило «что показывать»
+ * проверяется тестом на чистой функции, а хук только приносит данные.
  */
-export function useInstancesFeed(statusFilter: InstanceStatus | 'ALL') {
+export function useInstancesFeed() {
   const items = useInstancesStore((state) => state.items)
   const loading = useInstancesStore((state) => state.loading)
   const error = useInstancesStore((state) => state.error)
@@ -44,11 +43,8 @@ export function useInstancesFeed(statusFilter: InstanceStatus | 'ALL') {
   usePolling(reload, pollingIntervalMs(null, connected))
   useEffect(() => abort, [abort])
 
-  const visible =
-    statusFilter === 'ALL' ? items : items.filter((item) => item.status === statusFilter)
-
   return {
-    items: visible,
+    items,
     all: items,
     loading,
     error,
