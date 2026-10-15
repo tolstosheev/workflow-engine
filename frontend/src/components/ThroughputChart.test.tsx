@@ -108,7 +108,13 @@ describe('график темпа', () => {
     const { container } = render(<ThroughputChart />)
     await screen.findByText(/пик:/)
 
-    const chart = container.querySelector('[role="img"]')
-    expect(chart?.getAttribute('aria-label')).toMatch(/максимум 1/)
+    // Опрашиваем с ожиданием: компонент перерисовывается по своему таймеру, и
+    // под нагрузкой полного прогона между поиском подписи и поиском узла графика
+    // успевал отрисоваться другой кадр. Проверка без ожидания падала случайно —
+    // то есть утверждала «графика нет» в момент, когда он есть.
+    await vi.waitFor(() => {
+      const chart = container.querySelector('[role="img"]')
+      expect(chart?.getAttribute('aria-label')).toMatch(/максимум 1/)
+    })
   })
 })

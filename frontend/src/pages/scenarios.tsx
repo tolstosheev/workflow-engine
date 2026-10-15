@@ -1,82 +1,196 @@
 /**
  * Сценарии показа.
  *
- * Демонстрация на защите — это не «нажать кнопку и посмотреть», а «доказать
- * свойство»: сбой шага приводит к откату, провал отката не прячется, обычный
- * заказ проходит целиком. Страница собирает каждый сценарий из уже существующих
- * ручек — новых ручек бэкенда здесь нет.
+ * Страница собирает каждый сценарий из уже существующих ручек бэкенда: новых
+ * эндпоинтов здесь нет. Её работа — ждать и **проверять утверждение**, а не
+ * сообщать о факте запуска: «запустилось» говорит о кнопке, а не о движке.
  *
- * Правило инъекции снимается и до запуска, и после: оставленное правило сломало
- * бы следующий сценарий, и виноват был бы уже он.
+ * Проверка состоит из двух частей. Первая — ожидаемое состояние процесса.
+ * Вторая — свидетельства из журнала и прогонов шагов: компенсация реально
+ * завершилась, шаг выполнялся дважды и завершился один раз, цикл исчерпан.
+ * Одного статуса мало: `COMPENSATED` бывает и при неоткатанном резерве.
+ *
+ * Правила инъекции снимаются всегда — до запуска, после проверки, при уходе со
+ * страницы и при ошибке. Оставленное правило ломает следующий сценарий, и
+ * виноват окажется он.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { chaos as chaosApi, definitions as definitionsApi, instances as instancesApi } from '@/api/client'
 import { Button, Card, ErrorState, StatusBadge } from '@/components/ui'
-import { finishScenario, runScenario, SCENARIOS, type ScenarioSpec } from '@/lib/scenarios'
+import {
+  applyAction,
+  finishScenario,
+  isObserved,
+  runScenario,
+  SCENARIOS,
+  shouldStop,
+  type EvidenceNote,
+  type ScenarioSpec,
+} from '@/lib/scenarios'
 import { statusLabel, statusTone } from '@/lib/status'
 import type { WorkflowInstance } from '@/types/api'
 
 const DEPS = { definitions: definitionsApi, chaos: chaosApi, instances: instancesApi }
 
-/** Состояния, в которых процесс уже не изменится. */
-const TERMINAL = new Set(['COMPLETED', 'COMPENSATED', 'CANCELLED', 'FAILED', 'COMPENSATION_FAILED'])
+const POLL_MS = 1500
+
+/**
+ * Предельный срок показа сценария.
+ *
+ * Без него опрос шёл бы вечно: процесс, застрявший в состоянии, которое
+ * сценарий считает проходным, выглядел бы так же, как идущий. Превращение
+ * «ждём» в «не пришёл» обязано происходить по часам, а не по терпению.
+ */
+const DEADLINE_MS = 180_000
+
+type Phase = 'running' | 'observed' | 'done' | 'failed'
 
 interface Started {
   instanceId: string
   instance: WorkflowInstance | null
-  note: string | null
-  matched: boolean | null
+  phase: Phase
+  notes: EvidenceNote[]
+  /** Утверждение подтверждено: и состояние, и свидетельства. */
+  proven: boolean | null
+  message: string | null
+  /** Когда запущен: по часам решается, что сценарий не придёт. */
+  startedAt: number
+}
+
+function idle(id: string): Started {
+  return {
+    instanceId: id,
+    instance: null,
+    phase: 'running',
+    notes: [],
+    proven: null,
+    message: null,
+    startedAt: Date.now(),
+  }
+}
+
+function ruleLabel(spec: ScenarioSpec): string {
+  if (!spec.rules || spec.rules.length === 0) return 'не нужны'
+  return spec.rules
+    .map((rule) => {
+      const what = rule.kind === 'step' ? `сломать шаг ${rule.target}` : `сломать откат ${rule.target}`
+      return rule.mode === 'once' ? `${what} (одна попытка)` : `${what} (всегда)`
+    })
+    .join('; ')
+}
+
+function actionLabel(spec: ScenarioSpec): string {
+  const action = spec.action
+  if (!action) return 'не требуется'
+  const when = action.after.map((value) => statusLabel(value)).join(' или ')
+  if (action.kind === 'cancel') return `отменить, дойдя до «${when}»`
+  if (action.kind === 'resume') return `продолжить, дойдя до «${when}»`
+  if (action.kind === 'retry-compensation') return `снять правило и повторить откат, дойдя до «${when}»`
+  return `остановить продление аренды, дойдя до «${when}»`
 }
 
 export default function ScenariosPage() {
   const [running, setRunning] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [started, setStarted] = useState<Record<string, Started>>({})
+  // Правила, снятые при уходе со страницы: без этого инъекция пережила бы
+  // вкладку и досталась следующему прогону.
+  const dirty = useRef(false)
 
   const start = useCallback(async (spec: ScenarioSpec) => {
     setRunning(spec.id)
     setError(null)
     try {
       const outcome = await runScenario(spec, DEPS)
-      setStarted((prev) => ({
-        ...prev,
-        [spec.id]: { instanceId: outcome.instanceId, instance: null, note: null, matched: null },
-      }))
+      dirty.current = spec.rules !== undefined && spec.rules.length > 0
+      setStarted((prev) => ({ ...prev, [spec.id]: idle(outcome.instanceId) }))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Сценарий не запустился')
       // Правило могло остаться: снимаем здесь, иначе следующий сценарий
       // начнётся под чужой инъекцией, и виноват окажется не он.
+      dirty.current = false
       await chaosApi.clear().catch(() => undefined)
     } finally {
       setRunning(null)
     }
   }, [])
 
-  // Наблюдение за запущенным процессом: без него страница показала бы только
-  // факт запуска, а доказательство свойства — это конечное состояние.
   const watch = useCallback(async (spec: ScenarioSpec, entry: Started) => {
     const instance = await instancesApi.get(entry.instanceId)
-    setStarted((prev) => ({ ...prev, [spec.id]: { ...entry, instance } }))
-    if (!TERMINAL.has(instance.status)) return
-    const matched = await finishScenario(DEPS, spec, instance)
-    setStarted((prev) => ({
-      ...prev,
-      [spec.id]: {
-        ...prev[spec.id],
-        matched,
-        note: matched
-          ? 'Процесс пришёл в ожидаемое состояние, правило инъекции снято.'
-          : `Ожидалось одно из: ${spec.expect.map((value) => statusLabel(value)).join(', ')}, а процесс в состоянии «${statusLabel(instance.status)}».`,
-      },
-    }))
+
+    // Действие по ходу процесса — один раз на сценарий: повторная отмена
+    // затормозила бы его, а повторное возобновление падало бы.
+    let actionNote: string | null = null
+    if (entry.phase === 'running' && spec.action) {
+      const applied = await applyAction(DEPS, spec, instance)
+      if (applied) actionNote = `сценарий выполнил действие при «${statusLabel(instance.status)}»`
+    }
+
+    // Срок вышел: процесс не пришёл. Молчаливое ожидание читалось бы как
+    // «идёт», а это ровно то, чего на защите ждать нельзя.
+    if (Date.now() - entry.startedAt > DEADLINE_MS) {
+      await finishScenario(DEPS, spec, instance)
+      setStarted((prev) => ({
+        ...prev,
+        [spec.id]: {
+          ...entry,
+          instance,
+          phase: 'failed',
+          proven: false,
+          message: `Процесс не пришёл к ожидаемому состоянию за ${DEADLINE_MS / 60_000} минут и остался в «${statusLabel(instance.status)}».`,
+        },
+      }))
+      dirty.current = false
+      return
+    }
+
+    if (shouldStop(spec, instance.status)) {
+      const verdict = await finishScenario(DEPS, spec, instance)
+      const proven = verdict.stateMatched && verdict.evidencePassed
+      setStarted((prev) => ({
+        ...prev,
+        [spec.id]: {
+          ...entry,
+          instance,
+          phase: 'done',
+          notes: verdict.notes,
+          proven,
+          message: proven
+            ? 'Утверждение подтверждено состоянием и данными журнала.'
+            : verdict.stateMatched
+              ? 'Состояние верное, но свидетельство не подтвердилось.'
+              : `Ожидалось одно из: ${spec.expect.map((value) => statusLabel(value)).join(', ')}.`,
+        },
+      }))
+      dirty.current = false
+      return
+    }
+
+    // Наблюдаемое состояние — конец показа для этого сценария: процесс стоит и
+    // сам не пойдёт дальше, пока не придёт решение. Ждать тут нечего.
+    if (isObserved(spec, instance.status) && !(spec.action && spec.action.after.includes(instance.status))) {
+      setStarted((prev) => ({
+        ...prev,
+        [spec.id]: {
+          ...entry,
+          instance,
+          phase: 'observed',
+          message: `Процесс в «${statusLabel(instance.status)}» и ждёт решения. Продолжение — вручную.`,
+        },
+      }))
+      dirty.current = false
+      return
+    }
+
+    setStarted((prev) => ({ ...prev, [spec.id]: { ...entry, instance, message: actionNote } }))
   }, [])
 
   useEffect(() => {
     const pending = Object.entries(started).filter(
-      ([, entry]) => entry.instanceId && entry.matched === null,
+      ([, entry]) => entry.phase === 'running',
     )
     if (pending.length === 0) return
     const timer = window.setInterval(() => {
@@ -84,17 +198,25 @@ export default function ScenariosPage() {
         const spec = SCENARIOS.find((item) => item.id === id)
         if (spec) void watch(spec, entry).catch(() => undefined)
       }
-    }, 1500)
+    }, POLL_MS)
     return () => window.clearInterval(timer)
   }, [started, watch])
+
+  // Уход со страницы снимает правила: забытая инъекция ломает всё, что дальше.
+  useEffect(() => {
+    return () => {
+      if (dirty.current) void chaosApi.clear().catch(() => undefined)
+    }
+  }, [])
 
   return (
     <section className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-white">Сценарии</h1>
         <p className="mt-1 text-sm text-white/60">
-          Каждый сценарий ставит правило инъекции, запускает процесс и ждёт конца. Новых ручек
-          бэкенда здесь нет — всё собрано из существующих вызовов.
+          Каждый сценарий ставит правило инъекции, запускает процесс, ждёт конца и сверяет
+          утверждение с журналом. Новых ручек бэкенда здесь нет — всё собрано из
+          существующих вызовов.
         </p>
       </div>
 
@@ -108,12 +230,9 @@ export default function ScenariosPage() {
             <p className="mb-3 text-sm text-white/60">{spec.proves}</p>
 
             <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-white/40">
-              <span>
-                Правило:{' '}
-                {spec.rule
-                  ? `${spec.rule.kind === 'step' ? `сломать шаг ${spec.rule.target}` : `сломать откат ${spec.rule.target}`}`
-                  : 'не нужно'}
-              </span>
+              <span>Определение: {spec.definition}</span>
+              <span>Правило: {ruleLabel(spec)}</span>
+              <span>Действие: {actionLabel(spec)}</span>
               <span>Ожидается: {spec.expect.map((value) => statusLabel(value)).join(', ')}</span>
             </div>
 
@@ -122,19 +241,38 @@ export default function ScenariosPage() {
             </Button>
 
             {entry && (
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-                <StatusBadge
-                  label={instance ? statusLabel(instance.status) : 'запущен'}
-                  toneClass={instance ? statusTone(instance.status) : 'bg-white/10 text-white/60 border-white/20'}
-                />
-                {instance?.current_step && (
-                  <span className="font-mono text-xs text-white/50">{instance.current_step}</span>
+              <div className="mt-3 space-y-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge
+                    label={instance ? statusLabel(instance.status) : 'запущен'}
+                    toneClass={
+                      instance
+                        ? statusTone(instance.status)
+                        : 'bg-white/10 text-white/60 border-white/20'
+                    }
+                  />
+                  {instance?.current_step && (
+                    <span className="font-mono text-xs text-white/50">{instance.current_step}</span>
+                  )}
+                  <Link to={`/instances/${entry.instanceId}`} className="text-accent hover:underline">
+                    Открыть процесс
+                  </Link>
+                  {entry.message && (
+                    <span className={entry.proven === false ? 'text-warning' : 'text-white/50'}>
+                      {entry.message}
+                    </span>
+                  )}
+                </div>
+
+                {entry.notes.length > 0 && (
+                  <ul className="space-y-1 text-xs">
+                    {entry.notes.map((note) => (
+                      <li key={note.label} className={note.passed ? 'text-white/50' : 'text-warning'}>
+                        {note.passed ? '✓' : '✗'} {note.label} — {note.detail}
+                      </li>
+                    ))}
+                  </ul>
                 )}
-                <Link to={`/instances/${entry.instanceId}`} className="text-accent hover:underline">
-                  Открыть процесс
-                </Link>
-                {entry.matched === false && <span className="text-warning">{entry.note}</span>}
-                {entry.matched === true && <span className="text-white/50">{entry.note}</span>}
               </div>
             )}
           </Card>
