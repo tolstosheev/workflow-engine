@@ -108,8 +108,9 @@ SSE-поток `/api/stream`, Prometheus-метрики, React-интерфей�
 | Один воркер на инстанс | Lease с heartbeat, `FOR UPDATE SKIP LOCKED` | `test_lease.py`, chaos-тесты |
 | Повтор шага безопасен | `processed_operations` + ключ операции наружу | `test_idempotency.py` |
 | Откат идёт в обратном порядке | План строится по `step_runs`, а не по структуре графа | `test_saga_and_timers.py` |
+| Каждый проход цикла откатывается | План берёт все прогоны шага, ключ различает проходы | `test_execution.py::test_loop_rollback_releases_stock_of_every_pass` |
 | Отмена откатывает выполненные шаги | Запрос отмены отделён от её завершения | `test_execution.py` |
-| Повтор компенсации безопасен | Ключ `compensate:{шаг}` в `processed_operations` | `test_execution.py` |
+| Повтор компенсации безопасен | Ключ `compensate:{шаг}:{прогон}` в `processed_operations` | `test_execution.py` |
 | Провал компенсации виден | `COMPENSATION_FAILED` и ручной повтор | `test_saga_and_timers.py` |
 | Ожидание переживает рестарт | Таймер в БД, срабатывание одной транзакцией | `test_durable_timers.py` |
 | Шаг не выполнится дважды | Идемпотентный ключ проверяется до эффекта | `test_execution.py` |
