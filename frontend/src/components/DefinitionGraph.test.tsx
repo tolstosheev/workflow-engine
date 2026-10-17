@@ -239,7 +239,7 @@ describe('схема шагов', () => {
   })
 
   it('оставляет шаг без компенсации без пометки', () => {
-    const { container } = render(<DefinitionGraph definition={DEFINITION} steps={[]} />)
+    render(<DefinitionGraph definition={DEFINITION} steps={[]} />)
 
     // Пометка обязана означать «компенсируется», а не «есть любая информация»:
     // в определении четыре шага и компенсация объявлена у двух.
