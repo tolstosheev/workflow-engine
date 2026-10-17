@@ -192,12 +192,6 @@ async function runCatalogScenario(page: Page, title: string): Promise<void> {
   })
 }
 
-/** Снимок резервов по складу: сравнение «до и после» вместо требования нуля. */
-async function reservedSnapshot(request: APIRequestContext): Promise<number[]> {
-  const { json } = await api(request, 'get', '/api/demo/inventory')
-  return (json.items as Array<{ reserved: number }>).map((item) => item.reserved)
-}
-
 test('откат, который не прошёл, остаётся разбираемым', async ({ page }) => {
   // Провал компенсации обязан быть виден как разбор: процесс стоит в
   // COMPENSATION_FAILED, а не тихо завершается. Раньше интерфейс об этом молчал.
@@ -224,29 +218,43 @@ test('ворота согласования ждут человека и про�
 })
 
 test('склад показывает, что резерв вернулся после доставки', async ({ page, request }) => {
-  // Возврат резерва (ADR-0020) — половина утверждения о доставке, и увидеть
-  // его можно только на панели склада: в журнале остаётся лишь факт шага.
-  //
-  // Ссылка берётся из карточки сценария, а не из списка: это ровно тот процесс,
-  // который только что отработал, и проверка не зависит от порядка строк.
-  // Утверждение — «своим заказом не оставил резерва», то есть снимок до и
-  // после. Требование «весь резерв равен нулю» проходило только на пустом
-  // стенде: сценарий «откат не проходит» по замыслу оставляет резерв в силе
-  // (ADR-0020, отрицательное следствие), и проверка объявляла чужой заказ
-  // утечкой своего.
-  const before = await reservedSnapshot(request)
+  // Возврат резерва (ADR-0020) — половина утверждения о доставке, и увидеть его
+  // можно на панели склада.
   await runCatalogScenario(page, 'Заказ проходит целиком')
-  await page
+
+  // Идентификатор берётся из карточки до перехода: это ровно тот процесс,
+  // который только что отработал, и проверка не зависит от порядка строк.
+  const card = page
     .getByRole('heading', { name: 'Заказ проходит целиком' })
     .locator('xpath=ancestor::section[1]')
-    .getByRole('link', { name: 'Открыть процесс' })
-    .click()
+  const href = await card.getByRole('link', { name: 'Открыть процесс' }).getAttribute('href')
+  const instanceId = (href ?? '').split('/').pop() ?? ''
+  expect(instanceId).not.toBe('')
 
+  await page.goto(`/instances/${instanceId}`)
   await expect(page.getByRole('table', { name: 'Остатки склада' })).toBeVisible()
   await expect(page.getByText(/снимок склада/i)).toBeVisible()
 
-  // Под таблицей — и данные: возврат резерва проверяется не только глазами.
-  expect(await reservedSnapshot(request)).toEqual(before)
+  // Свидетельство берётся из журнала этого процесса, а не из склада целиком.
+  // Снимок «до и после» тоже пробовал и не годится: резерв держат чужие
+  // незакрытые процессы — их откаты движок повторяет, и между двумя чтениями
+  // склада резерв освобождается сам. Тогда проверка видела движение не своего
+  // заказа и падала на верном поведении.
+  //
+  // Требование «весь резерв равен нулю» было хуже: оно проходило только на
+  // пустом стенде, а сценарий «откат не проходит» оставляет резерв в силе по
+  // замыслу (отрицательное следствие ADR-0020).
+  const { json } = await api(request, 'get', `/api/instances/${instanceId}/events?limit=200`)
+  const items = json.items as Array<{
+    type: string
+    payload: { step?: string; output?: { released_units?: number } }
+  }>
+  const delivery = items.find(
+    (event) => event.type === 'STEP_COMPLETED' && event.payload.step === 'await_delivery',
+  )
+  expect(delivery, 'подтверждение доставки нет в журнале').toBeDefined()
+  // Ровно столько единиц, сколько заказано: 1 и 2 из входа сценария.
+  expect(delivery?.payload.output?.released_units).toBe(3)
 })
 
 test('страница состояния показывает метрики, а не нули', async ({ page, request }) => {
