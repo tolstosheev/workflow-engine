@@ -13,11 +13,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-const SOURCES = import.meta.glob('/src/**/*.{ts,tsx}', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>
+import { SOURCES } from './sources'
 
 /**
  * Слово, которого не должно быть в надписях, и чем оно заменено.

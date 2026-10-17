@@ -18,7 +18,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 afterEach(cleanup)
 
 beforeEach(() => {
-  // Компонент пишет ошибку в консоль: без заглушки выполнение шага засорялся бы
+  // Компонент пишет ошибку в консоль: без заглушки прогон засорялся бы
   // сообщениями, неотличимыми от сбоя самого теста.
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
 })
