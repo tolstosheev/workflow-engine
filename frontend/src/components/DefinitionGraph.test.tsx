@@ -220,6 +220,40 @@ describe('схема шагов', () => {
 
     expect(screen.getByText('обратное ребро цикла')).toBeTruthy()
     expect(screen.getByText('компенсирован')).toBeTruthy()
+    expect(screen.getByText('есть компенсация')).toBeTruthy()
+  })
+
+  it('помечает компенсируемый шаг точкой на рамке, а не стрелкой в себя', () => {
+    const { container } = render(<DefinitionGraph definition={DEFINITION} steps={[]} />)
+
+    // Стрелка «шаг → тот же шаг» означала повтор шага, то есть цикл, и на
+    // вопрос «почему шаг указывает сам на себя» рисунок ответа не давал.
+    expect(container.querySelectorAll('[marker-end="url(#arrow-warning)"]')).toHaveLength(0)
+    expect(container.querySelectorAll('path[stroke-dasharray="3 3"]')).toHaveLength(0)
+
+    const markers = container.querySelectorAll('[data-compensation-marker]')
+    expect(markers).toHaveLength(2)
+    const hints = [...container.querySelectorAll('title')].map((node) => node.textContent)
+    expect(hints).toContain('Компенсация: app.demo.handlers:refund_payment')
+    expect(hints).toContain('Компенсация: app.demo.handlers:release_inventory')
+  })
+
+  it('оставляет шаг без компенсации без пометки', () => {
+    const { container } = render(<DefinitionGraph definition={DEFINITION} steps={[]} />)
+
+    // Пометка обязана означать «компенсируется», а не «есть любая информация»:
+    // в определении четыре шага и компенсация объявлена у двух.
+    const withoutMarker = screen.getByLabelText(/^Шаг finish:/)
+    expect(withoutMarker.querySelectorAll('[data-compensation-marker]')).toHaveLength(0)
+  })
+
+  it('объявляет компенсацию в подписи узла для скринридера', () => {
+    // Иначе точка остаётся безымянным кружком, и карта снова становится
+    // недоступной с клавиатуры.
+    render(<DefinitionGraph definition={DEFINITION} steps={[]} />)
+
+    expect(screen.getByLabelText(/^Шаг charge:.*есть компенсация$/)).toBeTruthy()
+    expect(screen.getByLabelText(/^Шаг finish:/).getAttribute('aria-label')).not.toContain('компенсация')
   })
 
   it('зовёт выбранный шаг, когда он передан', () => {

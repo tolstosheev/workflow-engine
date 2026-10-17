@@ -28,7 +28,7 @@ export interface GraphNode {
 export interface GraphEdge {
   from: string
   to: string
-  kind: 'next' | 'branch' | 'compensation' | 'back'
+  kind: 'next' | 'branch' | 'back'
   label?: string
 }
 
@@ -217,14 +217,12 @@ export function layoutGraph(
     edges.push({ from, to, kind: 'back' })
   }
 
-  // Компенсация рисуется от шага, а не от обработчика: обработчик — это не
-  // узел графа, и стрелка к нему уводила бы в пустоту.
-  for (const name of names) {
-    const compensation = steps[name]?.compensation
-    if (compensation) edges.push({ from: name, to: name, kind: 'compensation', label: compensation })
-  }
-
-  const layers = assignLayers(names, edges.filter((edge) => edge.kind !== 'compensation'), start)
+  // Компенсация — свойство шага, а не ребро. Раньше она рисовалась петлёй
+  // «шаг → тот же шаг», потому что обработчик не является узлом графа; на
+  // схеме такая стрелка читалась как «шаг повторяет себя», то есть как цикл, и
+  // два знака с разным смыслом выглядели одинаково. Пометка на самом узле
+  // (DefinitionGraph) говорит то же и не путается с обратным ребром.
+  const layers = assignLayers(names, edges, start)
 
   const nodes: GraphNode[] = names.map((name) => ({
     name,

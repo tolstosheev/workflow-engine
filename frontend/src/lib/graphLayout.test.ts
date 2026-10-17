@@ -110,21 +110,28 @@ describe('layoutGraph', () => {
     expect(layout.edges.some((edge) => edge.to === 'missing')).toBe(false)
   })
 
-  it('изображает компенсацию на самом шаге, а не ребром в пустоту', () => {
+  it('не рисует компенсацию ребром в самого себя', () => {
     const layout = layoutGraph(
       definition('a', {
         a: { action: `${DEMO}:reserve_inventory`, compensation: `${DEMO}:release_inventory` },
       }),
     )
 
-    const compensation = layout.edges.find((edge) => edge.kind === 'compensation')
+    // Стрелка «шаг → тот же шаг» читалась как повтор шага, то есть как цикл, и
+    // спрашивающий «почему шаг указывает сам на себя» получал ответ, которого
+    // рисунок не давал. Обработчик компенсации — свойство узла, а не ребро.
+    expect(layout.edges).toHaveLength(0)
+    expect(layout.edges.every((edge) => edge.from !== edge.to)).toBe(true)
+  })
 
-    // Обработчик компенсации не узел графа, поэтому ребро ведёт в себя же.
-    expect(compensation).toMatchObject({
-      from: 'a',
-      to: 'a',
-      label: `${DEMO}:release_inventory`,
-    })
+  it('компенсация остаётся видна на узле', () => {
+    const layout = layoutGraph(
+      definition('a', {
+        a: { action: `${DEMO}:reserve_inventory`, compensation: `${DEMO}:release_inventory` },
+      }),
+    )
+
+    expect(layout.nodes[0].step.compensation).toBe(`${DEMO}:release_inventory`)
   })
 
   it('разводит узлы одного слоя по вертикали', () => {
