@@ -39,7 +39,7 @@ check-frontend:  ## eslint + tsc
 	cd frontend && npm run lint && npm run typecheck
 
 test:  ## Unit + integration с порогом покрытия 90% (нужна БД)
-	cd engine && pytest -q -m "not chaos" --cov-fail-under=90
+	cd engine && pytest -q -m "not chaos" --cov-fail-under=92
 
 test-fast:  ## Только unit-тесты, без БД и без порога покрытия
 	cd engine && pytest -q -m "not integration and not chaos" --no-cov
@@ -51,7 +51,7 @@ test-chaos:  ## Тесты отказоустойчивости (нужна БД
 	cd engine && pytest -q -m chaos --no-cov
 
 test-full:  ## Все тесты с проверкой покрытия
-	cd engine && pytest -q --cov-fail-under=90
+	cd engine && pytest -q --cov-fail-under=92
 
 coverage:  ## HTML-отчёт покрытия
 	cd engine && coverage html && echo "engine/htmlcov/index.html"

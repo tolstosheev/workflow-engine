@@ -50,7 +50,7 @@ Heartbeat обновлялся только между шагами, поэто�
 
 ```bash
 make check   # ruff, ruff format, mypy, eslint, tsc
-make test    # pytest, порог покрытия 90% (branch)
+make test    # pytest, порог покрытия 92% (branch)
 ```
 
 Красные проверки — повод чинить код, а не ослаблять правила. Понижать порог

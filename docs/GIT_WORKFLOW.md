@@ -211,7 +211,7 @@ Semantic Versioning:
 
 ```bash
 make check   # ruff check, ruff format --check, mypy, eslint, tsc
-make test    # pytest с порогом покрытия 90%
+make test    # pytest с порогом покрытия 92%
 ```
 
 Коммит с красными проверками не делается. Исключение — `docs`-коммиты:
