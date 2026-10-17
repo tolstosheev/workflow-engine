@@ -308,7 +308,7 @@ async def _fire_due_timers() -> int:
 async def run_cycle(
     worker_id: str, cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]]
 ) -> CycleResult:
-    """Один цикл: подбор инстанса и исполнение одного шага.
+    """Один шаг: разбуждение таймеров, захват одного инстанса и его обработка.
 
     Разбуждение спящих инстансов идёт до подбора: иначе ожидание просыпалось бы
     только в те циклы, когда очередь пуста.
@@ -323,6 +323,64 @@ async def run_cycle(
         # пустые циклы, в которых никто ничего не взял.
         LEASE_ACQUIRED.inc()
 
+    return await _handle_claimed(claimed, worker_id, cache)
+
+
+async def run_batch_cycle(
+    worker_id: str, cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]]
+) -> CycleResult:
+    """Пачка шагов за один проход по базе (ADR-0023).
+
+    Замер показал, что шаг занимает около 30 % времени цикла, а остальное —
+    повторяющийся на каждом шаге захват, разбор и проверка таймеров. Здесь всё
+    это делается один раз на `WORKER_CLAIM_BATCH` инстансов.
+
+    Обработка идёт по очереди, и каждый инстанс доводится до конца с
+    освобождением аренды: пачка «в запас» висела бы до истечения TTL.
+
+    Возвращается итог по **последнему** обработанному инстансу и сумме по
+    шагам: цикл воркера решает по нему, продолжать ли, и «пачка не вышла»
+    означало бы, что один инстанс сорвал остальные.
+    """
+    await _fire_due_timers()
+
+    async with session_scope() as session:
+        claimed_batch = await lease.claim_batch(
+            session, worker_id, get_settings().worker_claim_batch
+        )
+        for _ in claimed_batch:
+            # Метрика считает удачные захваты, а не пустые циклы.
+            LEASE_ACQUIRED.inc()
+    if not claimed_batch:
+        return CycleResult(handled=False, step_executed=False, terminal=False, lease_lost=False)
+
+    last = CycleResult(handled=False, step_executed=False, terminal=False, lease_lost=False)
+    steps = 0
+    lost = False
+    for claimed in claimed_batch:
+        # Провал одного не должен остановить пачку: иначе один испорченный
+        # процесс блокировал бы очередь до конца цикла.
+        result = await _handle_claimed(claimed, worker_id, cache)
+        last = result
+        steps += 1 if result.step_executed else 0
+        lost = lost or result.lease_lost
+
+    return CycleResult(
+        handled=True,
+        step_executed=steps > 0,
+        terminal=last.terminal,
+        lease_lost=lost,
+        instance_id=last.instance_id,
+    )
+
+
+async def _handle_claimed(
+    claimed: lease.ClaimedInstance,
+    worker_id: str,
+    cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]],
+) -> CycleResult:
+    """Обрабатывает уже захваченный инстанс до конца: шаг, откат или завершение."""
+    async with session_scope() as session:
         instance_row = await session.get(
             WorkflowInstance, claimed.instance_id, with_for_update=True
         )
@@ -523,7 +581,7 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
             cycles = 0
             lease_lost = 0
             while steps_done < settings.worker_max_steps_per_cycle and not stop_event.is_set():
-                result = await run_cycle(worker_id, definition_cache)
+                result = await run_batch_cycle(worker_id, definition_cache)
                 if not result.handled:
                     break
                 cycles += 1
