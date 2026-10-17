@@ -1,5 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 
+import { fetchWithRetry } from './http'
+
 /**
  * Сквозные проверки стенда.
  *
@@ -24,16 +26,7 @@ async function api(
   path: string,
   body?: unknown,
 ): Promise<{ status: number; json: Record<string, unknown> }> {
-  const response = await request.fetch(`${API}${path}`, {
-    method: method.toUpperCase(),
-    data: body === undefined ? undefined : JSON.stringify(body),
-    headers: { 'Content-Type': 'application/json' },
-  })
-  const text = await response.text()
-  return {
-    status: response.status(),
-    json: text ? (JSON.parse(text) as Record<string, unknown>) : {},
-  }
+  return fetchWithRetry(request, `${API}${path}`, method, body)
 }
 
 interface Instance {

@@ -1,5 +1,7 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
 
+import { fetchWithRetry } from './http'
+
 /**
  * Каталог сценариев целиком, подряд, в одной сессии браузера.
  *
@@ -44,7 +46,7 @@ const CATALOG: Expectation[] = [
 ]
 
 async function clearRules(request: APIRequestContext): Promise<void> {
-  await request.fetch(`${API}/api/chaos`, { method: 'DELETE' })
+  await fetchWithRetry(request, `${API}/api/chaos`, 'delete')
 }
 
 test('все сценарии каталога проходят подряд, не завися друг от друга', async ({
