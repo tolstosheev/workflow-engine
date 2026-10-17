@@ -257,7 +257,7 @@ class ChaosStepRequest(BaseModel):
     instance_id: uuid.UUID | None = None
     step: str | None = None
     mode: Literal["once", "always", "timeout"] = "always"
-    error: str = "сбой шага (инъекция)"
+    error: str = "сбой шага (неисправность)"
 
 
 class ChaosCompensationRequest(BaseModel):
@@ -268,7 +268,7 @@ class ChaosCompensationRequest(BaseModel):
     # возмещение», а это не демонстрация сбоя, а порча стенда целиком.
     handler: str = Field(min_length=3, max_length=256, pattern=r"^[\w.]+:[\w]+$")
     mode: Literal["once", "always"] = "always"
-    error: str = "сбой компенсации (инъекция)"
+    error: str = "сбой компенсации (неисправность)"
 
 
 class ChaosServiceRequest(BaseModel):

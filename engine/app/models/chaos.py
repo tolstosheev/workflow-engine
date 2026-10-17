@@ -41,7 +41,7 @@ class ChaosRule(Base):
     # правило адресует ровно одно действие (ADR-0015).
     handler_ref: Mapped[str | None] = mapped_column(String(256), nullable=True, index=True)
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
-    error: Mapped[str] = mapped_column(Text, nullable=False, default="сбой шага (инъекция)")
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="сбой шага (неисправность)")
     used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -78,7 +78,7 @@ async def add_rule(
     error: str,
 ) -> ChaosRule:
     if mode not in MODES:
-        raise ValueError(f"неизвестный режим инъекции: {mode}")
+        raise ValueError(f"неизвестный режим неисправности: {mode}")
 
     rule = ChaosRule(instance_id=instance_id, step_name=step_name, mode=mode, error=error)
     db_session.add(rule)
@@ -97,7 +97,7 @@ async def add_rule_for_handler(
     if mode not in MODES or mode == "timeout":
         # Зависание проверяется на прямом шаге: там есть продление аренды, и
         # именно его проверяет режим. Для отката нужен отказ, а не ожидание.
-        raise ValueError(f"недопустимый режим инъекции компенсации: {mode}")
+        raise ValueError(f"недопустимый режим неисправности компенсации: {mode}")
 
     rule = ChaosRule(instance_id=instance_id, handler_ref=handler_ref, mode=mode, error=error)
     db_session.add(rule)

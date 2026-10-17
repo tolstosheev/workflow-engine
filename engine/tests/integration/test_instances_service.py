@@ -305,7 +305,7 @@ async def test_retry_compensation_rejects_running_instance(db_session: AsyncSess
     instance = await _instance(db_session)
     instance.status = InstanceStatus.RUNNING
 
-    with pytest.raises(ConflictError, match="откат не требовался"):
+    with pytest.raises(ConflictError, match="компенсация не требовалась"):
         await service.retry_compensation(db_session, instance.id)
     await db_session.rollback()
 
