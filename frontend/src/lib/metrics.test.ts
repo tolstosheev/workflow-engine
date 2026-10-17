@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { labelsOf, parseMetrics, parseSample, sumBy, valueOf } from '@/lib/metrics'
 
 const SAMPLE = `
-# HELP workflow_instances Инстансы по состояниям
+# HELP workflow_instances Процессы по состояниям
 # TYPE workflow_instances gauge
 workflow_instances{status="RUNNING"} 3
 workflow_instances{status="COMPLETED"} 12

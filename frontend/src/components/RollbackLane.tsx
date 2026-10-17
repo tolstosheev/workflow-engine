@@ -1,13 +1,11 @@
 /**
  * Порядок компенсаций: фактический, а не предполагаемый.
  *
- * Важное различие этого подхода: список к откату берётся из того, что шаги
- * действительно выполнились, а не из структуры определения. Определение не
- * знает, какие шаги успели выполниться до сбоя, и рисовать по нему откат
- * значило бы показывать то, чего не было.
- *
- * Порядок обратный: зависимости между шагами обратимы только так.
+ * Список берётся из того, что шаги действительно выполнились, а не из схемы:
+ * схема не знает, какие шаги успели выполниться до сбоя. Порядок обратный —
+ * зависимости между шагами обратимы только так.
  */
+
 
 import { STATUS_LABELS } from '@/lib/status'
 import { useEffect, useState } from 'react'
@@ -37,10 +35,10 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
   return (
     <section className="rounded-lg border border-surface-border bg-surface-raised p-4">
       <header className="mb-3">
-        <h2 className="text-sm font-semibold text-white">Порядок отката</h2>
+        <h2 className="text-sm font-semibold text-white">Порядок компенсации</h2>
         <p className="mt-1 text-xs text-white/50">
-          Список к откату взят из выполненных шагов, а не из определения: определение не знает, что
-          успело выполниться. Откат идёт в обратном порядке — иначе зависимости между шагами не
+          Список компенсаций взят из выполненных шагов, а не из схемы: схема не знает, что
+          успело выполниться. Компенсация идёт в обратном порядке — иначе зависимости между шагами
           обратимы.
         </p>
       </header>
@@ -48,11 +46,15 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
       <p className="mb-3 text-xs text-white/40">
         {rollingBack
           ? `Сейчас: ${STATUS_LABELS[instance.status]}`
-          : 'Откат запускается при сбое шага, отмене процесса или нехватке проходов цикла'}
+          : 'Компенсация запускается при сбое шага, отмене процесса или нехватке проходов цикла'}
       </p>
 
       <ol className="space-y-1.5">
-        {done.map((name, index) => {
+        {/* Список показывается в том порядке, в котором откат пойдёт, а не в том,
+            в котором шаги выполнялись. Порядок выполнения приходилось читать
+            снизу вверх: нумерация была правильной, а строки шли прямые, и
+            верхняя строка — первый выполненный — читалась как первый к откату. */}
+        {[...done].reverse().map((name, index) => {
           const already = compensatedOf(name)
           const planned = pending.includes(name)
           const marker: Marker = already ? 'compensated' : planned ? 'planned' : 'kept'
@@ -60,11 +62,11 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
 
           return (
             <li key={name} className="flex items-center gap-2 text-xs">
-              <span className="w-5 shrink-0 text-right text-white/30">{done.length - index}</span>
+              <span className="w-5 shrink-0 text-right text-white/30">{index + 1}</span>
               <span
                 className={`w-24 shrink-0 rounded border px-2 py-0.5 text-center ${MARKER_STYLES[marker]}`}
               >
-                {already ? 'откатан' : planned ? 'откат' : 'остаётся'}
+                {already ? 'компенсирован' : planned ? 'компенсация' : 'остаётся'}
               </span>
               <span className="font-mono text-white/80">{name}</span>
               {failed && <span className="text-danger/70">упал, компенсации нет</span>}
@@ -83,7 +85,16 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
  * забыт, а это противоположные ситуации. Данные берутся из события
  * TIMER_SCHEDULED: таймер лежит в базе, поэтому и срок известен точно.
  */
-export function TimerCountdown({ timeline, waiting }: { timeline: TimelineEntry[]; waiting: boolean }) {
+export function TimerCountdown({
+  timeline,
+  waiting,
+  kind = 'step',
+}: {
+  timeline: TimelineEntry[]
+  waiting: boolean
+  /** Какого ожидания касается отсчёт: шага или срока паузы (ADR-0016). */
+  kind?: 'step' | 'pause_deadline'
+}) {
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -94,8 +105,14 @@ export function TimerCountdown({ timeline, waiting }: { timeline: TimelineEntry[
 
   if (!waiting) return null
 
+  // Отсчёт берёт своё ожидание, а не первое попавшееся: в журнале процесса
+  // их может быть несколько, и срок уже отбывшего ожидания шага показывал бы
+  // неверное время до отмены.
   const scheduled = timeline.find(
-    (entry) => entry.kind === 'event' && entry.type === 'TIMER_SCHEDULED',
+    (entry) =>
+      entry.kind === 'event' &&
+      entry.type === 'TIMER_SCHEDULED' &&
+      (entry.payload?.kind ?? 'step') === kind,
   )
   const fired = timeline.some((entry) => entry.kind === 'event' && entry.type === 'TIMER_FIRED')
 
@@ -110,7 +127,13 @@ export function TimerCountdown({ timeline, waiting }: { timeline: TimelineEntry[
 
   const remaining = new Date(dueAt).getTime() - now
   if (remaining <= 0) {
-    return <p className="mt-1 text-xs text-warning">Ожидание истекло, воркер поднимет инстанс на ближайшем цикле</p>
+    return (
+      <p className="mt-1 text-xs text-warning">
+        {kind === 'pause_deadline'
+          ? 'Срок ожидания истёк, процесс отменится и уйдёт в компенсацию'
+          : 'Ожидание истекло, исполнитель поднимет процесс на ближайшем цикле'}
+      </p>
+    )
   }
 
   return (

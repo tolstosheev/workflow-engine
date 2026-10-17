@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { chaos as chaosApi } from '@/api/client'
 import { Button, Card, EmptyState, ErrorState } from '@/components/ui'
 
+const DEMO_MODULE = 'app.demo.handlers'
+
 const MODES = [
   { value: 'once', label: 'Один раз' },
   { value: 'always', label: 'Всегда' },
@@ -15,6 +17,19 @@ const SERVICES = [
   { value: 'shipment', label: 'Доставка' },
 ] as const
 
+/**
+ * Обработчики отката демо-области.
+ *
+ * Список ведётся вручную: компенсации принадлежат определению, а не коду, и
+ * вывести их из реестра обработчиков нельзя — там нет обратной связи от шага к
+ * его компенсации.
+ */
+const COMPENSATION_HANDLERS = [
+  { value: `${DEMO_MODULE}:release_inventory`, label: 'Отменить резерв' },
+  { value: `${DEMO_MODULE}:refund_payment`, label: 'Вернуть оплату' },
+  { value: `${DEMO_MODULE}:cancel_shipment`, label: 'Отменить доставку' },
+] as const
+
 /** Шаги заказа: подставляются по имени, без правки текста вручную. */
 const PRESETS = [
   'validate_cart',
@@ -22,6 +37,9 @@ const PRESETS = [
   'charge_payment',
   'create_shipment',
   'confirm_delivery',
+  // Шаг после доставки нужен, чтобы показать возврат резерва: откат строится по
+  // завершённым шагам, а сорвать последний нечем (ADR-0020).
+  'notify_customer',
 ] as const
 
 /**
@@ -35,14 +53,19 @@ export default function ChaosPage() {
   const [active, setActive] = useState<string[]>([])
   const [mode, setMode] = useState<(typeof MODES)[number]['value']>('always')
   const [step, setStep] = useState('charge_payment')
-  const [instanceId, setInstanceId] = useState('')
+  // Инстанс указывается для двух разных действий, и одно поле не годится на
+  // оба: адресат инъекции и инстанс с остановленной арендой — разные вещи,
+  // а одно значение на оба поля означало бы, что введённый адрес молча
+  // применяется к действию, о котором оператор не думал.
+  const [failInstanceId, setFailInstanceId] = useState('')
+  const [leaseInstanceId, setLeaseInstanceId] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
       setActive((await chaosApi.list()).active)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Не удалось получить список инъекций')
+      setError(cause instanceof Error ? cause.message : 'Не удалось получить список неисправностей')
     }
   }, [])
 
@@ -63,10 +86,10 @@ export default function ChaosPage() {
   return (
     <section className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold">Инъекция отказов</h1>
+        <h1 className="text-xl font-semibold">Внесение неисправностей</h1>
         <p className="mt-1 text-sm text-white/60">
           Правила применяются исполнителем шага до вызова обработчика. Режим
-          «Зависание» проверяет, что аренда продлевается во время долгой работы.
+          «Зависание» проверяет, что закрепление продлевается во время долгой работы.
         </p>
       </div>
 
@@ -75,7 +98,7 @@ export default function ChaosPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Сломать шаг">
           <p className="mb-3 text-sm text-white/60">
-            Пресет ломает шаг на любом инстансе: правило адресное, параллельные прогоны не мешают
+            Пресет ломает шаг на любом процессе: правило адресное, параллельные проверки не мешают
             друг другу.
           </p>
           <div className="mb-3 flex flex-wrap gap-2">
@@ -83,6 +106,7 @@ export default function ChaosPage() {
               <Button
                 key={preset}
                 variant="secondary"
+                aria-pressed={step === preset}
                 onClick={() => setStep(preset)}
                 className="font-mono"
               >
@@ -91,23 +115,25 @@ export default function ChaosPage() {
             ))}
           </div>
 
-          <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">
+          <label htmlFor="chaos-step" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
             Шаг
           </label>
           <input
+            id="chaos-step"
             value={step}
             onChange={(event) => setStep(event.target.value)}
             className="mb-3 w-full rounded-md border border-surface-border bg-surface px-3 py-1.5 font-mono text-sm"
           />
 
-          <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">
+          <div className="mb-1 text-xs uppercase tracking-wide text-white/40" id="chaos-mode-label">
             Режим
-          </label>
-          <div className="mb-3 flex gap-2">
+          </div>
+          <div role="group" aria-labelledby="chaos-mode-label" className="mb-3 flex gap-2">
             {MODES.map((option) => (
               <Button
                 key={option.value}
                 variant={mode === option.value ? 'primary' : 'secondary'}
+                aria-pressed={mode === option.value}
                 onClick={() => setMode(option.value)}
               >
                 {option.label}
@@ -115,13 +141,17 @@ export default function ChaosPage() {
             ))}
           </div>
 
-          <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">
-            Инстанс (необязательно)
+          {/* Подписи различают поля намеренно: два поля «Процесс» на одной
+              странице скринридер объявляет одинаково, и к какому из них относится
+              действие рядом — остаётся угадать. */}
+          <label htmlFor="chaos-instance-fail" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
+            Процесс для неисправности (необязательно)
           </label>
           <input
-            value={instanceId}
-            onChange={(event) => setInstanceId(event.target.value)}
-            placeholder="любой инстанс"
+            id="chaos-instance-fail"
+            value={failInstanceId}
+            onChange={(event) => setFailInstanceId(event.target.value)}
+            placeholder="любой процесс"
             className="mb-3 w-full rounded-md border border-surface-border bg-surface px-3 py-1.5 font-mono text-xs"
           />
 
@@ -132,14 +162,41 @@ export default function ChaosPage() {
                 chaosApi.failStep({
                   step: step || null,
                   mode,
-                  instance_id: instanceId || null,
-                  error: 'сбой шага (инъекция)',
+                  instance_id: failInstanceId || null,
+                  error: 'сбой шага (неисправность)',
                 }),
               )
             }
           >
             Сломать шаг
           </Button>
+        </Card>
+
+        <Card title="Сломать компенсацию">
+          <p className="mb-3 text-sm text-white/60">
+            Отказ при компенсации. Saga обещает, что возврат может не пройти, и без
+            этого правила показать провал компенсации было нечем: прямой шаг ломается и без
+            него. Правило адресовано обработчику, а не шагу.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {COMPENSATION_HANDLERS.map((item) => (
+              <Button
+                key={item.value}
+                variant="danger"
+                onClick={() =>
+                  void run(() =>
+                    chaosApi.failCompensation({
+                      instance_id: failInstanceId || null,
+                      handler: item.value,
+                      mode,
+                    }),
+                  )
+                }
+              >
+                {item.label}
+              </Button>
+            ))}
+          </div>
         </Card>
 
         <Card title="Отключить сервис">
@@ -160,31 +217,32 @@ export default function ChaosPage() {
           </div>
         </Card>
 
-        <Card title="Остановить воркер">
+        <Card title="Остановить исполнителя">
           <p className="mb-3 text-sm text-white/60">
-            Продление аренды прекращается, инстанс освобождается по TTL, и его
-            подхватывает другой воркер — это и есть проверка восстановления.
+            Продление закрепления прекращается, процесс освобождается по TTL, и его
+            подхватывает другой исполнитель — это и есть проверка восстановления.
           </p>
-          <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">
-            Инстанс
+          <label htmlFor="chaos-instance-lease" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
+            Процесс для закрепления
           </label>
           <input
-            value={instanceId}
-            onChange={(event) => setInstanceId(event.target.value)}
-            placeholder="идентификатор инстанса"
+            id="chaos-instance-lease"
+            value={leaseInstanceId}
+            onChange={(event) => setLeaseInstanceId(event.target.value)}
+            placeholder="идентификатор процесса"
             className="mb-3 w-full rounded-md border border-surface-border bg-surface px-3 py-1.5 font-mono text-xs"
           />
           <div className="flex gap-2">
             <Button
               variant="danger"
-              disabled={!instanceId}
-              onClick={() => void run(() => chaosApi.stopLease(instanceId, 40))}
+              disabled={!leaseInstanceId}
+              onClick={() => void run(() => chaosApi.stopLease(leaseInstanceId, 40))}
             >
               Остановить на 40 с
             </Button>
             <Button
-              disabled={!instanceId}
-              onClick={() => void run(() => chaosApi.resumeLease(instanceId))}
+              disabled={!leaseInstanceId}
+              onClick={() => void run(() => chaosApi.resumeLease(leaseInstanceId))}
             >
               Возобновить
             </Button>
@@ -193,7 +251,7 @@ export default function ChaosPage() {
 
         <Card title="Активные правила">
           {active.length === 0 ? (
-            <EmptyState message="Инъекций нет" />
+            <EmptyState message="Неисправностей нет" />
           ) : (
             <>
               <ul className="space-y-1 font-mono text-xs">

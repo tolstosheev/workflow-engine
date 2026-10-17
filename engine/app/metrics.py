@@ -7,8 +7,19 @@ Gauge'ы читаются из БД при каждом сборе, а не ве
 
 from __future__ import annotations
 
-from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
-from prometheus_client.openmetrics.exposition import CONTENT_TYPE_LATEST as _OM_CONTENT_TYPE
+import os
+from typing import Literal
+
+from prometheus_client import CONTENT_TYPE_LATEST as _PROM_CONTENT_TYPE
+from prometheus_client import (
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+    multiprocess,
+)
+from prometheus_client.registry import Collector
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,11 +30,28 @@ from app.models.workflow import CompensationLog, StepRun, WorkflowInstance
 # в одном процессе тестов.
 REGISTRY = CollectorRegistry()
 
+# Воркер и API — разные процессы, и записанное воркером оставалось бы в самом
+# воркере: единственная точка экспорта — `/metrics` в API. Поэтому при заданном
+# `PROMETHEUS_MULTIPROC_DIR` значения пишутся в общий каталог, а отдача
+# собирает их из файлов (ADR-0012).
+#
+# Собирать файлы в этот же реестр нельзя: тогда отдача выводила бы и файлы, и
+# собственные значения процесса API, и одна метрика выходила бы двумя рядами.
+IS_MULTIPROCESS = bool(os.getenv("PROMETHEUS_MULTIPROC_DIR"))
+
+# Метрики, пересчитываемые из БД. Все процессы считают одно и то же по общей
+# базе, поэтому в multiprocess-режиме режим по умолчанию не годится: gauge
+# разворачивается в серии с меткой `pid`, и запрос
+# `workflow_instances{status="RUNNING"}` перестаёт работать — приходит только
+# один ряд из нескольких.
+_DB_GAUGE_MODE: Literal["mostrecent"] = "mostrecent"
+
 INSTANCES_BY_STATUS = Gauge(
     "workflow_instances",
     "Инстансы по состояниям",
     ["status"],
     registry=REGISTRY,
+    multiprocess_mode=_DB_GAUGE_MODE,
 )
 
 INSTANCES_TOTAL = Counter(
@@ -37,6 +65,7 @@ STEPS_BY_RESULT = Gauge(
     "Исполнения шагов по результату",
     ["step", "result"],
     registry=REGISTRY,
+    multiprocess_mode=_DB_GAUGE_MODE,
 )
 
 STEP_DURATION = Histogram(
@@ -52,6 +81,7 @@ COMPENSATIONS_BY_RESULT = Gauge(
     "Попытки компенсаций по результату",
     ["step", "result"],
     registry=REGISTRY,
+    multiprocess_mode=_DB_GAUGE_MODE,
 )
 
 LEASE_ACQUIRED = Counter(
@@ -126,6 +156,18 @@ def _compensation_result(status: str) -> str:
     return "success" if status == CompensationStatus.COMPLETED else "failure"
 
 
+def _collector() -> Collector:
+    """Отдаёт ли данные для одного из файлов общего каталога."""
+    if not IS_MULTIPROCESS:
+        return REGISTRY
+    return multiprocess.MultiProcessCollector(CollectorRegistry())
+
+
 def render() -> tuple[bytes, str]:
-    """Текст метрик в формате OpenMetrics."""
-    return generate_latest(REGISTRY), _OM_CONTENT_TYPE
+    """Текст метрик в экспозиционном формате Prometheus.
+
+    Формат и заголовок должны совпадать: `generate_latest` пишет
+    классический текст (`text/plain; version=0.0.4`), а не OpenMetrics. Раньше здесь объявлялся
+    тип содержимый правильной только, и скрайер, дайт это разбирая парсень, ошибка ли неверный.
+    """
+    return generate_latest(_collector()), _PROM_CONTENT_TYPE

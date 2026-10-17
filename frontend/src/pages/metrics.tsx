@@ -1,25 +1,25 @@
 /**
  * Состояние системы по метрикам.
  *
- * Страница переносит в интерфейс таблицу «что считать нормой» из
- * `docs/OPERATIONS.md` §2: инцидент виден не по подписи, а по тому, что
- * счётчик ненулевой. Ненулевой откат и потерянная аренда подсвечиваются
- * красным — это те два значения, которые в норме равны нулю.
+ * Переносит в интерфейс таблицу «что считать нормой» из `OPERATIONS.md` §2:
+ * инцидент виден не по подписи, а по ненулевому счётчику.
  */
 
-import { useEffect, useState } from 'react'
+
+import { useCallback, useState } from 'react'
 
 import { service } from '@/api/client'
+import { ThroughputChart } from '@/components/ThroughputChart'
 import { Card, EmptyState, ErrorState } from '@/components/ui'
-import { labelsOf, parseMetrics, sumBy, valueOf } from '@/lib/metrics'
+import { usePolling } from '@/hooks/usePolling'
+import { BREAKDOWN_STATUSES, labelsOf, parseMetrics, sumBy, valueOf } from '@/lib/metrics'
 import type { Sample } from '@/lib/metrics'
-import type { InstanceStatus } from '@/types/api'
 
 /** Значения, ненулевые в которых означают инцидент. */
 const ALARMS: Array<{ test: (samples: Sample[]) => number; text: string }> = [
   {
     test: (samples) => sumBy(samples, 'workflow_instances', ['status', 'COMPENSATION_FAILED']),
-    text: 'откат не удался — процесс остался с частично применённым эффектом',
+    text: 'компенсация не выполнена — процесс остался с частично применённым эффектом',
   },
   {
     test: (samples) => valueOf(samples, 'workflow_compensations', { result: 'failure' }),
@@ -27,54 +27,43 @@ const ALARMS: Array<{ test: (samples: Sample[]) => number; text: string }> = [
   },
   {
     test: (samples) => valueOf(samples, 'workflow_lease_lost_total', {}),
-    text: 'потеряно аренд — воркер перегружен или срок аренды мал',
+    text: 'потеряно закреплений — исполнитель перегружен или срок закрепления мал',
   },
 ]
 
-/** Статусы, показываются всегда: нулевое значение тоже информативно. */
-const STATUSES: InstanceStatus[] = [
-  'RUNNING',
-  'WAITING',
-  'COMPENSATING',
-  'COMPENSATION_FAILED',
-  'COMPLETED',
-  'COMPENSATED',
-  'CANCELLED',
-  'FAILED',
-]
+/**
+ * Список живёт в `lib/metrics`, а не здесь: он проверяется тестом на стороне
+ * движка, который сверяет его с перечислением статусов, а тест из файла
+ * компонента прочитать не может.
+ */
+const STATUSES = BREAKDOWN_STATUSES
+
+/**
+ * Частота опроса метрик. Значение короткое: метрики собираются из БД при
+ * каждом запросе, и редкий опрос показывал бы устаревшую картину.
+ */
+const METRICS_POLL_MS = 5000
 
 export function MetricsPage() {
   const [samples, setSamples] = useState<Sample[]>([])
   const [error, setError] = useState<string | null>(null)
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-
-    const poll = async () => {
-      try {
-        const text = await service.metrics()
-        if (!cancelled) {
-          setSamples(parseMetrics(text))
-          setError(null)
-          setUpdatedAt(new Date().toLocaleTimeString('ru-RU', { hour12: false }))
-        }
-      } catch (cause) {
-        if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : 'Метрики недоступны')
-        }
-      }
-    }
-
-    void poll()
-    // Метрики собираются из БД при каждом запросе, поэтому и опрос частый:
-    // редкий опрос показывал бы устаревшую картину.
-    const timer = setInterval(() => void poll(), 5000)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
+  // Метрики собираются из БД при каждом запросе, поэтому и опрос частый:
+  // редкий опрос показывал бы устаревшую картину. Следующий запуск
+  // планируется после ответа предыдущего — наложения запросов не будет.
+  const load = useCallback(async () => {
+    try {
+      const text = await service.metrics()
+      setSamples(parseMetrics(text))
+      setError(null)
+      setUpdatedAt(new Date().toLocaleTimeString('ru-RU', { hour12: false }))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Метрики недоступны')
     }
   }, [])
+
+  usePolling(load, METRICS_POLL_MS)
 
   const alarms = ALARMS.map((alarm) => ({ ...alarm, value: alarm.test(samples) })).filter(
     (alarm) => alarm.value > 0,
@@ -91,12 +80,21 @@ export function MetricsPage() {
 
       {error && <ErrorState message={error} />}
 
+      <ThroughputChart />
+
       <Card title="Тревоги">
-        {samples.length === 0 ? (
+        {/* Панель появляется и меняется сама: без объявления скринридер
+            не узнает ни о появлении тревоги, ни о том, что она прошла. */}
+        <div aria-live="polite">
+        {error ? (
+          // При ошибке запроса важно сказать, что именно не удалось: иначе пустой
+          // ответ панели тревоги читается как «инцидентов нет».
+          <p className="text-sm text-white/40">Тревоги показать нельзя: запрос метрик не удался, причина выше.</p>
+        ) : samples.length === 0 ? (
           <EmptyState message="Метрики ещё не собраны" />
         ) : alarms.length === 0 ? (
           <p className="text-sm text-success">
-            Инцидентов нет: откаты проходят, компенсации не проваливаются, аренды не теряются.
+            Инцидентов нет: компенсации выполняются, закрепления не теряются.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -110,14 +108,15 @@ export function MetricsPage() {
             ))}
           </ul>
         )}
+        </div>
         <p className="mt-3 text-[11px] text-white/30">
           Правила взяты из таблицы «что считать нормой» в docs/OPERATIONS.md §2.
         </p>
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Инстансы по состояниям">
-          <table className="w-full text-left text-sm">
+        <Card title="Заказы по состояниям">
+          <table aria-label="Заказы по состояниям" className="w-full text-left text-sm">
             <tbody>
               {STATUSES.map((status) => (
                 <tr key={status} className="border-t border-surface-border/60">
@@ -135,12 +134,12 @@ export function MetricsPage() {
           {steps.length === 0 ? (
             <EmptyState message="Шаги ещё не выполнялись" />
           ) : (
-            <table className="w-full text-left text-sm">
+            <table aria-label="Шаги: успех и провал" className="w-full text-left text-sm">
               <thead className="text-xs uppercase tracking-wide text-white/40">
                 <tr>
-                  <th className="pb-2">Шаг</th>
-                  <th className="pb-2 text-right">успех</th>
-                  <th className="pb-2 text-right">провал</th>
+                  <th scope="col" className="pb-2">Шаг</th>
+                  <th scope="col" className="pb-2 text-right">успех</th>
+                  <th scope="col" className="pb-2 text-right">провал</th>
                 </tr>
               </thead>
               <tbody>

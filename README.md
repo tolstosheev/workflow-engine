@@ -96,8 +96,11 @@ cd engine && python -m scripts.seed && cd ..
 
 ```bash
 API_PORT=8001
-VITE_API_URL=http://localhost:8001
 ```
+
+Одной переменной достаточно: браузер ходит в свой origin, а прокси Vite внутри
+сети compose знает бэкенда по имени `api`. Раньше адрес запроса и порт публикации
+задавались двумя переменными, и смена одной молча ломала вторую.
 
 Тот же адрес передаётся скриптам: `make smoke API_URL=http://localhost:8001`.
 
@@ -181,6 +184,7 @@ workflow-engine/
 | [`docs/API.md`](docs/API.md) | REST-эндпоинты, SSE-события, примеры запросов |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Окружение, запуск, отладка, тесты |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Эксплуатация, наблюдаемость, типовые сбои |
+| [`docs/UI-GLOSSARY.md`](docs/UI-GLOSSARY.md) | Словарь надписей интерфейса |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Замеры производительности и условия их получения |
 | [`docs/DEPLOYMENT-ACT.md`](docs/DEPLOYMENT-ACT.md) | Акт внедрения: состав, испытания, границы применимости |
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records |

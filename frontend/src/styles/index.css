@@ -30,3 +30,25 @@ code,
 pre {
   font-family: ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
 }
+
+/* Видимый фокус. Без него обход с клавиатуры работает, но человек не видит,
+   где находится: на тёмном фоне штатное кольцо браузера почти сливается с
+   панелью, а `outline: none` в компонентах его и убирает совсем. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Анимации подчиняются настройке системы: у человека, который её включил,
+   движение вызывает тошноту, и интерфейс без него остаётся понятным. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

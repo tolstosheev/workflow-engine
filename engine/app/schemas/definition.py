@@ -7,9 +7,9 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Имя шага используется как ключ словаря steps и попадает в SQL-запросы
 # выборки, поэтому ограничение защищает не только от опечаток.
@@ -28,6 +28,10 @@ class RetryPolicy(BaseModel):
     max_attempts: int = Field(default=3, ge=1, le=100)
     backoff_seconds: float = Field(default=1.0, ge=0, le=3600)
     backoff_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
+    # Потолок задержки. Без него `backoff_seconds * multiplier**(n-1)` при
+    # разрешённых границах даёт ожидание на миллиарды секунд: процесс ушёл бы
+    # в таймер за пределы срока службы.
+    max_backoff_seconds: float = Field(default=300.0, ge=0, le=86_400)
 
 
 class Step(BaseModel):
@@ -44,10 +48,31 @@ class Step(BaseModel):
     next: StepName | dict[str, StepName] | None = None
     retry: RetryPolicy | None = None
     wait_before_seconds: float = Field(default=0, ge=0, le=86_400)
+    # `manual` — шаг ждёт решения человека: процесс встаёт и возобновляется
+    # командой оператора (ADR-0014). Срок такого ожидания неизвестен заранее,
+    # и выражать его числом означало бы выдумывать длительность.
+    wait_for: Literal["manual"] | None = None
+    # Срок ожидания человека. По истечении процесс отменяется и уходит в
+    # откат: действие шага необратимо, и «ждал и пошёл дальше» для ворот
+    # согласования означало бы согласие, которого не было (ADR-0016).
+    pause_timeout_seconds: float | None = Field(default=None, ge=1, le=86_400)
     timeout_seconds: float = Field(default=30, ge=0.1, le=86_400)
     loop: bool = False
     max_iterations: int | None = Field(default=None, ge=1, le=10_000)
     description: str | None = None
+
+    @model_validator(mode="after")
+    def _pause_timeout_requires_pause(self) -> Step:
+        # Срок без паузы означал бы ожидание, которого не будет: шаг выполнится
+        # сразу, а таймер сработает вхолостую и отменит уже завершившийся
+        # процесс.
+        if self.pause_timeout_seconds is not None and self.wait_for != "manual":
+            raise ValueError(
+                "pause_timeout_seconds имеет смысл только вместе с "
+                "wait_for: manual — срок без паузы означал бы ожидание, "
+                "которого не будет"
+            )
+        return self
 
     @field_validator("max_iterations")
     @classmethod
@@ -90,15 +115,6 @@ class WorkflowDefinitionSchema(BaseModel):
     steps: dict[StepName, ForkStep | JoinStep | Step] = Field(min_length=1)
     description: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("steps")
-    @classmethod
-    def _key_matches_name(
-        cls, value: dict[str, ForkStep | JoinStep | Step]
-    ) -> dict[str, ForkStep | JoinStep | Step]:
-        # Ключ словаря — идентичность шага для переходов. Расхождение ключа и
-        # шага делало бы граф неоднозначным, и поиск переходов молчал бы.
-        return value
 
 
 class DefinitionCreate(BaseModel):

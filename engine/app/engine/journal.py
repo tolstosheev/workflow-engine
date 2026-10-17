@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import EventType, InstanceStatus, StepRunStatus
+from app.models.enums import PAUSE_DEADLINE, EventType, InstanceStatus, StepRunStatus
 from app.models.workflow import WorkflowEvent, WorkflowInstance
 
 
@@ -46,6 +46,11 @@ class InstanceState:
     `ready_step` — шаг, готовый к исполнению. `None` означает, что процесс либо
     завершён, либо ждёт таймера, либо откатывается.
 
+    `resumed_step` — шаг, ожидание которого уже снято человеком. Существует,
+    чтобы воркер, дойдя до того же шага снова, не встал в ту же паузу: без него
+    возобновление превращалось бы в бесконечный цикл «пауза — возобновление».
+    Обнуляется, когда шаг начинается: возобновление относится к одному проходу.
+
     `step_iterations` — сколько раз шаг успешно завершился. Отдельный от
     `completed_steps`: тот хранит порядок для компенсации и уникален по имени,
     а циклу нужен именно счётчик. Живёт здесь, а не в `step_runs`, потому что
@@ -58,6 +63,7 @@ class InstanceState:
     variables: dict[str, Any] = field(default_factory=dict)
     completed_steps: list[str] = field(default_factory=list)
     failed_step: str | None = None
+    resumed_step: str | None = None
     compensation_for: str | None = None
     step_iterations: dict[str, int] = field(default_factory=dict)
     cancel_requested: bool = False
@@ -129,6 +135,43 @@ async def read_events(
     ]
 
 
+async def read_events_page(
+    db_session: AsyncSession, instance_id: uuid.UUID, from_seq: int = 0, limit: int = 0
+) -> tuple[list[RecordedEvent], int]:
+    """Читает страницу журнала и общее число событий инстанса.
+
+    Страница, а не весь журнал: у долгого процесса события копятся месяцами, и
+    выборка для экрана не должна тянуть в память всю историю. `limit` ноль
+    означает «без предела» — так ведёт себя и сам `read_events`.
+    """
+    rows_query = (
+        select(WorkflowEvent)
+        .where(WorkflowEvent.instance_id == instance_id, WorkflowEvent.seq >= from_seq)
+        .order_by(WorkflowEvent.seq)
+    )
+    total_query = (
+        select(func.count())
+        .select_from(WorkflowEvent)
+        .where(WorkflowEvent.instance_id == instance_id)
+    )
+
+    if limit > 0:
+        rows_query = rows_query.limit(limit)
+
+    rows = await db_session.scalars(rows_query)
+    total = await db_session.scalar(total_query)
+    events = [
+        RecordedEvent(
+            seq=row.seq,
+            type=EventType(row.type),
+            payload=row.payload,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+    return events, total or len(events)
+
+
 def _apply(state: InstanceState, event: RecordedEvent) -> None:
     """Применяет одно событие к состоянию.
 
@@ -142,13 +185,12 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.status = InstanceStatus.PENDING
             state.current_step = payload.get("start")
 
-        case EventType.INSTANCE_STARTED:
-            state.status = InstanceStatus.RUNNING
-            state.current_step = payload.get("step", state.current_step)
-
         case EventType.STEP_STARTED:
             state.status = InstanceStatus.RUNNING
             state.current_step = payload.get("step")
+            # Возобновление израсходовано: шаг начат, и повторно спрашивать
+            # перед ним не нужно.
+            state.resumed_step = None
 
         case EventType.STEP_COMPLETED:
             state.variables.update(payload.get("output") or {})
@@ -177,9 +219,9 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
                 InstanceStatus.COMPENSATING if payload.get("terminal") else InstanceStatus.RUNNING
             )
             if payload.get("terminal"):
-                # Откат восил по проводилению: если откат подадается из отказа,
-                # инстанс закончивается отказом, а не отменой. Воркер различает
-                # эти состояния по поля механизма.
+                # Откат восстанавливается по журналу: если компенсация пошла из
+                # отказа, инстанс закончится отказом, а не отменой. Различие
+                # хранится в самом механизме, а не догадывается по колонке.
                 state.cancel_requested = False
             # Переход по объявленной ветке `on_failure`. Терминальный отказ
             # означает откат, а не продолжение, поэтому в нём шага нет.
@@ -190,8 +232,22 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.status = InstanceStatus.RUNNING
             state.current_step = payload.get("step")
 
+        case EventType.INSTANCE_PAUSED:
+            # Процесс встал и ждёт человека. Шаг не начат: `STEP_STARTED` не
+            # написан, эффекта не было, откатывать нечего.
+            state.status = InstanceStatus.PAUSED
+            state.current_step = payload.get("step")
+
+        case EventType.INSTANCE_RESUMED:
+            state.status = InstanceStatus.RUNNING
+            state.resumed_step = payload.get("step")
+
         case EventType.TIMER_SCHEDULED:
-            state.status = InstanceStatus.WAITING
+            # Срок ожидания человека планируется тем же событием, и без оглядки
+            # на вид он переводил паузу в `WAITING`: страница называла одно
+            # состояние двумя словами — «Ждёт решения» и «Ожидание» (ADR-0016).
+            if payload.get("kind") != PAUSE_DEADLINE:
+                state.status = InstanceStatus.WAITING
             state.current_step = payload.get("step")
 
         case EventType.TIMER_FIRED:
@@ -207,9 +263,6 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
 
         case EventType.COMPENSATION_FAILED:
             state.status = InstanceStatus.COMPENSATION_FAILED
-
-        case EventType.COMPENSATION_SKIPPED:
-            state.status = InstanceStatus.COMPENSATING
 
         case EventType.INSTANCE_COMPLETED:
             state.status = InstanceStatus.COMPLETED
@@ -237,13 +290,12 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
             state.status = InstanceStatus.CANCELLED
             state.current_step = None
 
-        case EventType.LEASE_EXPIRED:
-            # Само по себе истечение аренды ничего не меняет: подхват должен
-            # продолжить с того же места.
+        case _:  # pragma: no cover - событие из более новой версии движка
+            # Неизвестный тип не останавливает разбор: событие появилось в
+            # более новой версии движка, и старый воркер обязан продолжить
+            # работу с журналом, а не упасть на каждом чтении состояния.
+            # Известные типы перечислены выше явно, опечатка в enum невозможна.
             pass
-
-        case _:  # pragma: no cover - все типы перечислены выше
-            raise ValueError(f"неизвестный тип события: {event.type}")
 
 
 def replay(events: list[RecordedEvent]) -> InstanceState:

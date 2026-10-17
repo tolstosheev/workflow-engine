@@ -24,21 +24,21 @@ from app.schemas.definition import DefinitionCreate, DefinitionUpdate, WorkflowD
 from app.services import definitions as definition_service
 from app.services.definition_validation import validate_definition
 from scripts.definitions import (
-    DEFINITION_NAME,
+    DEMO_FLOWS,
     DEMO_INVENTORY,
     DEMO_VERSION,
-    order_fulfillment,
+    demo_flow,
 )
 
 
-async def seed_definition(wait_before_seconds: float) -> tuple[WorkflowDefinition, str]:
-    """Создаёт или обновляет демонстрационное определение и активирует его."""
-    body = WorkflowDefinitionSchema.model_validate(order_fulfillment(wait_before_seconds))
+async def seed_definition(name: str, wait_before_seconds: float) -> tuple[WorkflowDefinition, str]:
+    """Создаёт или обновляет одно демонстрационное определение и активирует его."""
+    body = WorkflowDefinitionSchema.model_validate(demo_flow(name, wait_before_seconds))
 
     async with session_scope() as session:
         existing = await session.scalar(
             select(WorkflowDefinition).where(
-                WorkflowDefinition.name == DEFINITION_NAME,
+                WorkflowDefinition.name == name,
                 WorkflowDefinition.version == DEMO_VERSION,
             )
         )
@@ -47,7 +47,7 @@ async def seed_definition(wait_before_seconds: float) -> tuple[WorkflowDefinitio
             created = await definition_service.create_definition(
                 session,
                 DefinitionCreate(
-                    name=DEFINITION_NAME,
+                    name=name,
                     version=DEMO_VERSION,
                     definition=body,
                     is_active=True,
@@ -66,9 +66,7 @@ async def seed_definition(wait_before_seconds: float) -> tuple[WorkflowDefinitio
 
         # Остальные версии того же имени выключаются: активных должно быть
         # ровно одно, иначе запуск по имени стал бы неоднозначным.
-        await definition_service.deactivate_all_with_name(
-            session, DEFINITION_NAME, except_id=created.id
-        )
+        await definition_service.deactivate_all_with_name(session, name, except_id=created.id)
 
         return created, action
 
@@ -96,22 +94,30 @@ def _report(issues: list[ValidationIssue]) -> None:
 
 
 async def main_async(wait_before_seconds: float) -> int:
-    definition, action = await seed_definition(wait_before_seconds)
+    # Все определения, а не только основное: сценарии показа идут по имени,
+    # и без ожидания, паузы и цикла запускать было бы нечего.
+    seeded: list[WorkflowDefinition] = []
+    for name in DEMO_FLOWS:
+        definition, action = await seed_definition(name, wait_before_seconds)
 
-    result = validate_definition(WorkflowDefinitionSchema.model_validate(definition.definition))
-    if not result.valid:
-        print("дефинишен не прошёл валидацию:", file=sys.stderr)
-        _report(result.errors)
-        return 1
-    if result.warnings:
-        print("предупреждения валидации:")
-        _report(result.warnings)
+        result = validate_definition(WorkflowDefinitionSchema.model_validate(definition.definition))
+        if not result.valid:
+            print(f"дефинишен {name!r} не прошёл валидацию:", file=sys.stderr)
+            _report(result.errors)
+            return 1
+        if result.warnings:
+            print(f"предупреждения валидации {name!r}:")
+            _report(result.warnings)
+
+        print(
+            f"определение {definition.name!r} v{definition.version} ({action}): id={definition.id}"
+        )
+        print(f"  шагов: {len(definition.definition.get('steps', {}))}")
+        seeded.append(definition)
+
+    print(f"  ожидание доставки у основного: {wait_before_seconds} с")
 
     inventory_count = await seed_inventory()
-
-    print(f"определение {definition.name!r} v{definition.version} ({action}): id={definition.id}")
-    print(f"  шагов: {len(definition.definition.get('steps', {}))}")
-    print(f"  ожидание доставки: {wait_before_seconds} с")
     print(f"  склад: {inventory_count} SKU")
     print("\nготово: запустите инстанс через интерфейс или POST /api/instances")
     return 0

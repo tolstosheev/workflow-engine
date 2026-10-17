@@ -68,9 +68,13 @@ async def mark_applied(db_session: AsyncSession, key: OperationKey) -> bool:
     )
     try:
         await db_session.flush()
-    except IntegrityError:
+    except IntegrityError as exc:
         # Гонка: другой воркер успел зарегистрировать тот же ключ. Откат
         # нужен, чтобы транзакция осталась пригодной.
+        # Но нарушение внешнего ключа — это не гонка: так был бы отказ из-за
+        # неверных данных, и проглатывать его как гонку нельзя.
+        if not _is_unique_violation(exc):
+            raise
         await db_session.rollback()
         return False
     return True
@@ -152,13 +156,3 @@ def _is_unique_violation(exc: IntegrityError) -> bool:
         return constraint == "uq_processed_operations_key"
     text = str(orig)
     return "uq_processed_operations_key" in text or "duplicate key" in text.lower()
-
-
-async def list_applied(db_session: AsyncSession, instance_id: uuid.UUID) -> list[str]:
-    """Список применённых операций инстанса — для диагностики и отладки."""
-    rows = await db_session.scalars(
-        select(ProcessedOperation.op_key)
-        .where(ProcessedOperation.instance_id == instance_id)
-        .order_by(ProcessedOperation.created_at)
-    )
-    return list(rows)

@@ -295,3 +295,131 @@ async def test_failed_injection_writes_step_failed_event(
 
     assert EventType.STEP_FAILED in types
     await db_session.rollback()
+
+
+async def test_once_rule_expires_after_single_use(db_session: AsyncSession) -> None:
+    """Разовый раз более один раз.
+
+    Раньше счётчик `used` инкрементился, но не участвовал в выборке и не
+    фильтровался, поэтому «сломать один раз» срабатывал на всех последующие
+    попытки шага.
+    """
+    instance_id = uuid.uuid4()
+    await chaos.add_rule(db_session, instance_id, "b", "once", "сбой ораз")
+
+    first = await chaos.find_rule(db_session, instance_id, "b")
+    second = await chaos.find_rule(db_session, instance_id, "b")
+
+    assert first is not None
+    assert second is None
+
+
+async def test_once_rule_still_blocks_other_steps(db_session: AsyncSession) -> None:
+    """Исчерпание не делает правило целиком: оно только для своего шага."""
+    instance_id = uuid.uuid4()
+    await chaos.add_rule(db_session, instance_id, "b", "once", "сбой ораз")
+
+    assert await chaos.find_rule(db_session, instance_id, "b") is not None
+    assert await chaos.find_rule(db_session, instance_id, "a") is None
+
+
+# --- Компенсация как адресат инъекции (ADR-0015) ---------------------------
+#
+# Правило по имени шага не может уронить откат: шаг уже выполнен, и такое
+# правило сработало бы на прямом шаге, а не на его компенсации. У правила есть
+# собственный адрес — ссылка на обработчик, — и ниже проверяется, что он не
+# смешивается с шагом, что «один раз» срабатывает один раз, а провал отката
+# приводит к COMPENSATION_FAILED, а не к тихому повтору.
+
+RELEASE_REF = f"{DEMO}:release_inventory"
+CANCEL_REF = f"{DEMO}:cancel_shipment"
+
+
+# Правило сопоставляется по идентификатору инстанса, и наличие самой строки
+# не требуется: инстанс нужен там, где правило действительно применяется.
+INSTANCE = uuid.UUID("11111111-1111-1111-1111-111111111111")
+OTHER = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+
+async def test_handler_rule_is_not_a_step_rule(db_session: AsyncSession) -> None:
+    # Ссылка на обработчик содержит двоеточие и модуль, а имя шага — голый
+    # идентификатор. Одно поле шага, значившее бы два разных действия, и была
+    # бы причина заменить этот столбец одним полем с префиксом.
+    await chaos.add_rule_for_handler(db_session, None, RELEASE_REF, "always", "сбой")
+    await db_session.commit()
+
+    assert await chaos.find_rule(db_session, INSTANCE, "b") is None
+    assert await chaos.find_rule(db_session, INSTANCE, RELEASE_REF) is None
+
+
+async def test_handler_rule_is_found_only_by_its_handler(
+    db_session: AsyncSession,
+) -> None:
+    await chaos.add_rule_for_handler(db_session, None, RELEASE_REF, "always", "сбой")
+    await db_session.commit()
+
+    assert await chaos.find_rule_for_handler(db_session, INSTANCE, RELEASE_REF) is not None
+    assert await chaos.find_rule_for_handler(db_session, INSTANCE, CANCEL_REF) is None
+
+
+async def test_handler_rule_respects_the_instance_scope(
+    db_session: AsyncSession,
+) -> None:
+    await chaos.add_rule_for_handler(db_session, INSTANCE, RELEASE_REF, "always", "сбой")
+    await db_session.commit()
+
+    assert await chaos.find_rule_for_handler(db_session, OTHER, RELEASE_REF) is None
+
+
+async def test_handler_rule_in_once_mode_fires_exactly_once(
+    db_session: AsyncSession,
+) -> None:
+    # Без счётчика «сломать один раз» ломался бы каждый откат, и процесс
+    # застрял в COMPENSATION_FAILED навсегда.
+    await chaos.add_rule_for_handler(db_session, None, RELEASE_REF, "once", "сбой")
+    await db_session.commit()
+
+    first = await chaos.find_rule_for_handler(db_session, INSTANCE, RELEASE_REF)
+    second = await chaos.find_rule_for_handler(db_session, INSTANCE, RELEASE_REF)
+
+    assert first is not None
+    assert second is None
+
+
+async def test_rule_label_shows_what_it_targets(db_session: AsyncSession) -> None:
+    # Подпись идёт в ответ панели, и по ней оператор должен понять, что сломано.
+    rule = await chaos.add_rule_for_handler(db_session, None, RELEASE_REF, "always", "сбой")
+    await db_session.commit()
+
+    assert RELEASE_REF in rule.label()
+
+
+async def test_a_rule_needs_a_handler(client: httpx.AsyncClient) -> None:
+    # Пустой адрес означал бы «сломать любое возмещение», а это не демонстрация
+    # сбоя, а порча стенда целиком.
+    response = await client.post("/api/chaos/fail-compensation", json={"mode": "always"})
+
+    assert response.status_code == 422
+
+
+async def test_unknown_handler_is_refused(client: httpx.AsyncClient) -> None:
+    # Имя обработчика проверяется: правило, которое никогда не сработает,
+    # выглядит на панели как работающая инъекция.
+    response = await client.post(
+        "/api/chaos/fail-compensation",
+        json={"handler": f"{DEMO}:выдуманный", "mode": "always"},
+    )
+
+    assert response.status_code in {404, 422}
+
+
+async def test_registered_rule_shows_up_in_the_list(client: httpx.AsyncClient) -> None:
+    # Панель показывает действующие правила, и правило отката должно быть среди
+    # них наравне с правилом шага.
+    await client.post(
+        "/api/chaos/fail-compensation", json={"handler": RELEASE_REF, "mode": "always"}
+    )
+
+    body = (await client.get("/api/chaos")).json()
+
+    assert any(RELEASE_REF in rule for rule in body["active"])

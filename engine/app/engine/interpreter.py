@@ -109,8 +109,8 @@ def decide_after_failure(
         return StepDecision(step_name=on_failure, kind="run")
 
     if permanent:
-        # Отказ по сути дела: товар не появится, и ещё несколько попыток
-        # только отдалит откат в себя уже выполненного шага.
+        # Отказ по существу дела: товар не появится, и ещё несколько попыток
+        # только отложат откат уже выполненного шага.
         return StepDecision(
             step_name=None, kind="stop", reason="постоянная ошибка, повтор не поможет"
         )
@@ -131,9 +131,32 @@ def backoff_for(step: Step, attempt: int, fallback_max: int) -> float:
 
     Рост задержки обязателен: немедленные повторы при недоступном сервисе
     только добивают его, не оставляя времени на восстановление.
+
+    Рост ограничен потолком политики: без него степень растёт до величин,
+    которые переводят ожидание за пределы срока службы процесса.
     """
     policy = _default_retry(step, fallback_max)
-    return policy.backoff_seconds * (policy.backoff_multiplier ** max(attempt - 1, 0))
+    delay = policy.backoff_seconds * (policy.backoff_multiplier ** max(attempt - 1, 0))
+    return min(delay, policy.max_backoff_seconds)
+
+
+def waits_for_person(step: Step) -> bool:
+    """Шаг требует решения человека перед своим началом.
+
+    Отдельная проверка, а не сравнение с `wait_before_seconds`: у таймера есть
+    срок, у решения человека — нет, и смешивать их в одном числе значило бы
+    терять различие.
+    """
+    return step.wait_for == "manual"
+
+
+def pause_deadline(step: Step) -> float | None:
+    """Срок ожидания человека, если он задан (ADR-0016).
+
+    `None` — срока нет, и пауза живёт, пока не придёт команда. Это поведение
+    по умолчанию: срок выдумывать нельзя, он меняет смысл паузы.
+    """
+    return step.pause_timeout_seconds
 
 
 def wait_before(step: Step) -> float:

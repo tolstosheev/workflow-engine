@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.journal import append_event
@@ -370,6 +371,55 @@ async def test_metrics_report_zero_for_absent_statuses(client: httpx.AsyncClient
     assert 'workflow_instances{status="COMPENSATED"} 0.0' in response.text
 
 
+async def test_created_instance_is_counted(client: httpx.AsyncClient) -> None:
+    # Объявленная сама себя счётчик обязана прописывается,
+    # но никто не меняется: счётчик выглядел бы работающий, и метрика
+    # показывала бы обязывалась только для себя.
+    from app.metrics import INSTANCES_TOTAL
+
+    before = INSTANCES_TOTAL._value.get()
+    definition = await _active_definition(client)
+
+    response = await client.post("/api/instances", json={"definition_id": definition["id"]})
+
+    assert response.status_code == 201
+    assert INSTANCES_TOTAL._value.get() == before + 1
+
+
+async def test_failed_creation_is_not_counted(client: httpx.AsyncClient) -> None:
+    # Счётчик растёт после коммита: откат не создаёт инстанса, и считать
+    # его было бы не когда.
+    from app.metrics import INSTANCES_TOTAL
+
+    before = INSTANCES_TOTAL._value.get()
+
+    response = await client.post("/api/instances", json={"definition_id": str(uuid.uuid4())})
+
+    assert response.status_code == 404
+    assert INSTANCES_TOTAL._value.get() == before
+
+
+async def test_db_gauges_have_no_pid_series() -> None:
+    # ? multiprocess-режиме gauge по умолчанию разворается в серии с меткой `pid`,
+    # и запрос вида `workflow_instances{{status="RUNNING"}}` перестаёт один ряд из нескольких.
+    # Режим `mostrecent` задан явно текстово и не заситит следующего.
+    from app.metrics import COMPENSATIONS_BY_RESULT, INSTANCES_BY_STATUS, STEPS_BY_RESULT
+
+    for gauge in (INSTANCES_BY_STATUS, STEPS_BY_RESULT, COMPENSATIONS_BY_RESULT):
+        assert gauge._multiprocess_mode == "mostrecent"
+
+
+async def test_metrics_content_type_matches_body_format() -> None:
+    # Тело отдаётся в экспозиционном формате Prometheus, а заголовок объявлял
+    # OpenMetrics: строгий скрайпер отвергал бы весь ответ.
+    from app.metrics import render
+
+    _, content_type = render()
+
+    assert content_type.startswith("text/plain")
+    assert "openmetrics" not in content_type
+
+
 async def test_metrics_report_steps_and_compensations(client: httpx.AsyncClient) -> None:
     definition = await _active_definition(client)
     created = await client.post("/api/instances", json={"definition_id": definition["id"]})
@@ -472,15 +522,21 @@ async def test_chaos_clear(client: httpx.AsyncClient) -> None:
 # --- SSE -------------------------------------------------------------------
 
 
-async def test_stream_emits_events_and_heartbeat(client: httpx.AsyncClient) -> None:
+async def test_stream_emits_new_events(client: httpx.AsyncClient) -> None:
     definition = await _active_definition(client)
     created = await client.post("/api/instances", json={"definition_id": definition["id"]})
+    instance_id = uuid.UUID(created.json()["id"])
 
-    chunks = await _first_chunks(count=1)
+    async def emit() -> None:
+        from app.core.db import session_scope
 
-    joined = "".join(chunks)
-    assert "event: INSTANCE_CREATED" in joined
-    assert created.json()["id"] in joined
+        async with session_scope() as session:
+            await append_event(session, instance_id, EventType.STEP_COMPLETED, {"step": "a"})
+
+    joined = await _chunks_after(emit)
+
+    assert "event: STEP_COMPLETED" in joined
+    assert str(instance_id) in joined
 
 
 async def _first_chunks(count: int = 1) -> list[str]:
@@ -492,7 +548,7 @@ async def _first_chunks(count: int = 1) -> list[str]:
     from app.routers.stream import event_stream
 
     chunks: list[str] = []
-    generator = event_stream()
+    generator = event_stream(None)
     try:
 
         async def take() -> None:
@@ -507,27 +563,65 @@ async def _first_chunks(count: int = 1) -> list[str]:
 
 async def test_stream_payload_is_valid_json(client: httpx.AsyncClient) -> None:
     definition = await _active_definition(client)
-    await client.post("/api/instances", json={"definition_id": definition["id"]})
+    created = await client.post("/api/instances", json={"definition_id": definition["id"]})
+    instance_id = uuid.UUID(created.json()["id"])
 
-    chunks = await _first_chunks(count=1)
-    data_line = next(line for line in chunks[0].splitlines() if line.startswith("data: "))
+    async def emit() -> None:
+        from app.core.db import session_scope
+
+        async with session_scope() as session:
+            await append_event(session, instance_id, EventType.STEP_COMPLETED, {"step": "a"})
+
+    joined = await _chunks_after(emit)
+    data_line = next(
+        line
+        for line in joined.splitlines()
+        if line.startswith("data: ") and "STEP_COMPLETED" in line
+    )
 
     parsed = json.loads(data_line[6:])
-    assert parsed["type"] == "INSTANCE_CREATED"
+    assert parsed["type"] == "STEP_COMPLETED"
     assert "payload" in parsed
+    assert "created_at" in parsed
+
+
+async def _chunks_after(action, count: int = 3) -> str:
+    """Собирает кадруги потока после выполнения `action`.
+
+    Порядок сначала событие, потом вызываем событие: поток стартует с момента
+    подключения и заведенные события в него не попадут.
+    """
+    from app.routers.stream import event_stream
+
+    generator = event_stream(None)
+
+    async def take() -> str:
+        chunks: list[str] = []
+        for _ in range(count):
+            chunks.append(await generator.__anext__())
+        return "".join(chunks)
+
+    task = asyncio.create_task(take())
+    try:
+        await asyncio.sleep(0.3)
+        await action()
+        return await asyncio.wait_for(task, timeout=25)
+    finally:
+        task.cancel()
+        await generator.aclose()
 
 
 async def test_stream_emits_heartbeat_when_idle() -> None:
     # Heartbeat нужен, чтобы прокси не закрывали соединение по таймауту простоя.
-    import app.routers.stream as stream_module
+    from app.routers.stream import event_stream
 
-    generator = stream_module.event_stream()
-    original = stream_module._EPOCH
-    stream_module._EPOCH = _FUTURE
+    # Курсор в будущем: событий созданы быть не могут, пока
+    # пока устанется сосединение. Раньше не реплейтируем всю
+    # историю журнала.
+    generator = event_stream(_FUTURE.isoformat())
     try:
         chunk = await asyncio.wait_for(generator.__anext__(), timeout=25)
     finally:
-        stream_module._EPOCH = original
         await generator.aclose()
 
     assert chunk == ": heartbeat\n\n"
@@ -540,9 +634,11 @@ async def test_stream_endpoint_disables_buffering() -> None:
     # Буферизация прокси иначе соберёт события в пачку, и интерфейс перестанет
     # быть живым. Проверяются заголовки ответа: тело потока бесконечно, и
     # читать его через тестовый транспорт бессмысленно.
+    from starlette.requests import Request
+
     from app.routers.stream import stream
 
-    response = await stream()
+    response = await stream(Request({"type": "http", "headers": []}))
 
     assert response.media_type == "text/event-stream"
     assert response.headers["x-accel-buffering"] == "no"
@@ -575,3 +671,39 @@ async def test_definition_created_via_api_is_executable(client: httpx.AsyncClien
         stored = await session.get(WorkflowDefinition, uuid.UUID(definition["id"]))
         assert stored is not None
         assert stored.definition["start"] == "validate_cart"
+
+
+async def test_stream_resumes_from_last_event_id() -> None:
+    """Повторное подключение не прогоныет старую историю.
+
+    Раньше курсор стартовал с эпохи, и каждое подключение воркера возвращало всю
+    журнал и прогоняло его через редуктора.
+
+    Всё создаётся в одной сессии: события теста откатывается в транзакции,
+    которая откатывается пользовательским рабочие и не видна в другой сессии.
+    """
+    from app.core.db import session_scope
+    from app.routers.stream import _read_after
+
+    async with session_scope() as session:
+        definition = WorkflowDefinition(
+            name=f"sse-{uuid.uuid4().hex[:8]}",
+            definition={
+                "start": "a",
+                "steps": {"a": {"action": "app.demo.handlers:validate_cart"}},
+            },
+        )
+        session.add(definition)
+        await session.flush()
+        instance = WorkflowInstance(definition_id=definition.id, input={}, variables={})
+        session.add(instance)
+        await session.flush()
+
+        marker = (await session.execute(text("SELECT now() - interval '1 hour'"))).scalar_one()
+        await append_event(session, instance.id, EventType.STEP_COMPLETED, {"step": "a"})
+
+    older = await _read_after(marker)
+    assert len(older) == 1
+
+    resumed = await _read_after(older[0][0])
+    assert resumed == [], "повторное подключение вернуло то же отданное"

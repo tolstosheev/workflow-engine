@@ -17,9 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import metrics
 from app.core.db import get_db
 from app.core.errors import NotFoundError
+from app.handlers.registry import is_handler_importable
 from app.models import chaos
 from app.models.workflow import WorkflowInstance
 from app.schemas.api import (
+    ChaosCompensationRequest,
     ChaosLeaseRequest,
     ChaosLeaseStop,
     ChaosResult,
@@ -32,7 +34,7 @@ router = APIRouter(tags=["service"])
 
 @router.get("/metrics")
 async def prometheus_metrics(db_session: AsyncSession = Depends(get_db)) -> Response:
-    """Метрики в формате OpenMetrics."""
+    """Метрики в экспозиционном формате Prometheus."""
     await metrics.collect_from_db(db_session)
     body, content_type = metrics.render()
     return Response(content=body, media_type=content_type)
@@ -86,6 +88,36 @@ async def fail_service(
     return ChaosResult(active=[f"service:{payload.service}"], message="сервис помечен недоступным")
 
 
+@router.post("/api/chaos/fail-compensation", response_model=ChaosResult)
+async def fail_compensation(
+    payload: ChaosCompensationRequest, db_session: AsyncSession = Depends(get_db)
+) -> ChaosResult:
+    """Помечает обработчик компенсации отказывающим (ADR-0015).
+
+    Правило адресовано обработчику отката, а не шагу: шаг уже выполнен, и
+    правило по его имени сработало бы на прямом шаге, а не на возврате.
+    """
+    if payload.instance_id is not None and not await chaos.existing_instance(
+        db_session, payload.instance_id
+    ):
+        raise NotFoundError(f"инстанс не найден: {payload.instance_id}")
+
+    # Обработчик резолвится сразу: правило, которое никогда не сработает,
+    # выглядит на панели как работающая инъекция, и оператор будет искать,
+    # почему откат не падает.
+    if not is_handler_importable(payload.handler):
+        raise NotFoundError(f"обработчик не найден: {payload.handler}")
+
+    await chaos.add_rule_for_handler(
+        db_session, payload.instance_id, payload.handler, payload.mode, payload.error
+    )
+    await db_session.commit()
+    return ChaosResult(
+        active=[f"compensation:{payload.handler}:{payload.mode}"],
+        message="инъекция сбоя компенсации зарегистрирована",
+    )
+
+
 @router.get("/api/chaos", response_model=ChaosResult)
 async def list_chaos(db_session: AsyncSession = Depends(get_db)) -> ChaosResult:
     """Активные инъекции — чтобы панель в интерфейсе показывала их состояние."""
@@ -128,6 +160,8 @@ async def resume_lease(
     if instance is None:
         raise NotFoundError(f"инстанс {payload.instance_id} не найден")
 
+    # Продление отключают с намерением сдвинуть heartbeat в прошлое:
+    # инстанс проверен, и без такой проверки сдвигать было бы вслепую.
     await db_session.execute(
         update(WorkflowInstance)
         .where(WorkflowInstance.id == payload.instance_id)

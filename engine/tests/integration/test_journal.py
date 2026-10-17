@@ -78,7 +78,7 @@ def test_empty_journal_gives_pending_state() -> None:
 def test_replay_is_deterministic() -> None:
     events = [
         _event(0, EventType.INSTANCE_CREATED, start="a"),
-        _event(1, EventType.INSTANCE_STARTED, step="a"),
+        _event(1, EventType.STEP_STARTED, step="a"),
         _event(2, EventType.STEP_COMPLETED, step="a", output={"x": 1}, next="b"),
         _event(3, EventType.STEP_STARTED, step="b"),
     ]
@@ -213,20 +213,6 @@ def test_timer_fired_returns_to_running() -> None:
     assert state.current_step == "later"
 
 
-def test_lease_expired_does_not_change_state() -> None:
-    # Истечение аренды — событие для наблюдаемости, а не изменение состояния:
-    # подхват обязан продолжить с того же места.
-    state = replay(
-        [
-            _event(0, EventType.INSTANCE_STARTED, step="a"),
-            _event(1, EventType.LEASE_EXPIRED),
-        ]
-    )
-
-    assert state.status is InstanceStatus.RUNNING
-    assert state.current_step == "a"
-
-
 def test_compensation_started_switches_mode() -> None:
     state = replay([_event(0, EventType.COMPENSATION_STARTED, for_step="reserve")])
 
@@ -239,12 +225,6 @@ def test_compensation_failed_is_visible_state() -> None:
     state = replay([_event(0, EventType.COMPENSATION_FAILED, error="сервис недоступен")])
 
     assert state.status is InstanceStatus.COMPENSATION_FAILED
-
-
-def test_compensation_skipped_keeps_compensating() -> None:
-    state = replay([_event(0, EventType.COMPENSATION_SKIPPED, step="validate")])
-
-    assert state.status is InstanceStatus.COMPENSATING
 
 
 def test_retry_scheduled_returns_to_running() -> None:
@@ -264,7 +244,7 @@ def test_cancel_requested_is_not_terminal() -> None:
     # Терминальный статус здесь оставлял бы резерв товара висеть навсегда.
     state = replay(
         [
-            _event(0, EventType.INSTANCE_STARTED, step="a"),
+            _event(0, EventType.STEP_STARTED, step="a"),
             _event(1, EventType.INSTANCE_CANCEL_REQUESTED),
         ]
     )
@@ -296,7 +276,7 @@ def test_terminal_events_clear_current_step() -> None:
     ]:
         state = replay(
             [
-                _event(0, EventType.INSTANCE_STARTED, step="a"),
+                _event(0, EventType.STEP_STARTED, step="a"),
                 _event(1, event_type),
             ]
         )
@@ -305,24 +285,27 @@ def test_terminal_events_clear_current_step() -> None:
         assert state.is_terminal
 
 
-def test_unknown_event_type_is_rejected() -> None:
-    # Тип события закрыт: неизвестный означал бы, что читающий код не знает о
-    # произошедшем и молча построит неверное состояние.
+def test_unknown_event_type_is_ignored() -> None:
+    # Событие из более новой версии движка не должно останавливать разбор:
+    # старый воркер обязан продолжить работу с журналом, а не упасть на
+    # каждом чтении состояния. Известные типы перечислены в разборе явно,
+    # поэтому опечатка в enum невозможна, а потерянных событий не будет —
+    # их по-прежнему видно в самом журнале.
     broken = RecordedEvent(
         seq=0,
         type="SOMETHING_NEW",  # type: ignore[arg-type]
         payload={},
         created_at=datetime.now(UTC),
     )
+    known = _event(1, EventType.STEP_STARTED, step="a")
 
-    with pytest.raises(ValueError, match="неизвестный тип события"):
-        replay([broken])
+    state = replay([broken, known])
+
+    assert state.status is InstanceStatus.RUNNING
+    assert state.current_step == "a"
 
 
-# --- Порядок компенсаций ---------------------------------------------------
-
-
-def test_steps_to_compensate_is_reverse_order() -> None:
+def test_steps_to_compensate_reverses_execution_order() -> None:
     state = replay(
         [
             _event(0, EventType.STEP_COMPLETED, step="a", next="b"),
@@ -357,7 +340,7 @@ async def test_append_assigns_sequential_seq(db_session: AsyncSession) -> None:
     instance_id = await _new_instance(db_session)
 
     first = await append_event(db_session, instance_id, EventType.INSTANCE_CREATED, {"start": "a"})
-    second = await append_event(db_session, instance_id, EventType.INSTANCE_STARTED, {"step": "a"})
+    second = await append_event(db_session, instance_id, EventType.STEP_STARTED, {"step": "a"})
 
     assert first.seq == 0
     assert second.seq == 1
@@ -379,7 +362,7 @@ async def test_events_are_readable_in_order(db_session: AsyncSession) -> None:
 async def test_read_events_supports_offset(db_session: AsyncSession) -> None:
     instance_id = await _new_instance(db_session)
     for seq in range(3):
-        await append_event(db_session, instance_id, EventType.INSTANCE_STARTED, {"step": f"s{seq}"})
+        await append_event(db_session, instance_id, EventType.STEP_STARTED, {"step": f"s{seq}"})
 
     events = await read_events(db_session, instance_id, from_seq=2)
 
@@ -463,7 +446,7 @@ def test_failure_after_cancel_clears_origin() -> None:
 
 def test_instance_failed_event_marks_terminal_failure() -> None:
     events = [
-        _event(1, EventType.INSTANCE_STARTED, step="a"),
+        _event(1, EventType.STEP_STARTED, step="a"),
         _event(2, EventType.INSTANCE_FAILED),
     ]
 

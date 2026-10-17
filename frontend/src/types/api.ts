@@ -4,6 +4,7 @@ export type InstanceStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'WAITING'
+  | 'PAUSED'
   | 'CANCELLING'
   | 'COMPENSATING'
   | 'COMPENSATION_FAILED'
@@ -16,7 +17,8 @@ export type StepRunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CO
 
 export type EventType =
   | 'INSTANCE_CREATED'
-  | 'INSTANCE_STARTED'
+  | 'INSTANCE_PAUSED'
+  | 'INSTANCE_RESUMED'
   | 'STEP_STARTED'
   | 'STEP_COMPLETED'
   | 'STEP_FAILED'
@@ -27,13 +29,11 @@ export type EventType =
   | 'COMPENSATION_STARTED'
   | 'COMPENSATION_COMPLETED'
   | 'COMPENSATION_FAILED'
-  | 'COMPENSATION_SKIPPED'
   | 'INSTANCE_COMPLETED'
   | 'INSTANCE_COMPENSATED'
   | 'INSTANCE_FAILED'
   | 'INSTANCE_CANCEL_REQUESTED'
   | 'INSTANCE_CANCELLED'
-  | 'LEASE_EXPIRED'
 
 export interface DefinitionRef {
   id: string
@@ -98,6 +98,10 @@ export interface WorkflowInstance {
   lease_owner: string | null
   lease_expires_at: string | null
   heartbeat_at: string | null
+  // Отметка архива (ADR-0017): процесс убран из списка, но не удалён.
+  archived_at: string | null
+  /** Убран ли журнал процесса уборкой (ADR-0019). */
+  journal_pruned_at: string | null
   created_at: string
   updated_at: string
 }
@@ -164,6 +168,40 @@ export interface Paginated<T> {
   total: number
   limit: number
   offset: number
+  /** Сколько процессов в архиве: без этого кнопка уборки не знает, что убирает. */
+  archived_total?: number
+}
+
+export type WorkerState = 'active' | 'stale' | 'stopped'
+
+/** Строка реестра воркеров (ADR-0018). */
+export interface WorkerRecord {
+  worker_id: string
+  state: WorkerState
+  started_at: string
+  heartbeat_at: string
+  stopped_at: string | null
+  cycles_completed: number
+  steps_executed: number
+  lease_lost: number
+}
+
+export interface InventoryItem {
+  sku: string
+  available: number
+  reserved: number
+}
+
+export interface InventoryOut {
+  items: InventoryItem[]
+}
+
+export interface WorkerList {
+  items: WorkerRecord[]
+  /** Через сколько секунд молчания воркер объявляется не отвечающим. */
+  fresh_for_seconds: number
+  /** Сколько записей скрыто за переключателем «показать завершённых». */
+  departed_total: number
 }
 
 export interface ChaosResult {
@@ -178,6 +216,14 @@ export interface ActionResult {
 
 export interface StreamEvent {
   instance_id: string
+  /**
+   * Номер события в журнале инстанса, строго возрастающий.
+   *
+   * Нужен, чтобы отличить новое событие от повторного: поток переподключается
+   * с последнего события и присылает его снова, а поздний кадр приходит
+   * позже нового. Без номера повтор применялся поверх свежего состояния.
+   */
+  seq: number
   type: EventType
   payload: Record<string, unknown>
   created_at: string

@@ -45,12 +45,20 @@ async def test_worker_disposes_engine_on_stop() -> None:
     capture = _Capture()
     logger = logging.getLogger(worker.__name__)
     logger.addHandler(capture)
+    # Уровень задаётся явно. Раньше тест проходил только если кто-то до него в
+    # прогоне вызвал `configure_logging`: без этого корень остаётся на WARNING,
+    # запись INFO не создаётся, и проверка молча ничего не утверждала — а в
+    # одиночном запуске падала. Порядок тестов не должен решать, проверяется ли
+    # что-нибудь.
+    previous_level = logger.level
+    logger.setLevel(logging.INFO)
     stop_event = asyncio.Event()
     stop_event.set()
     try:
         await asyncio.wait_for(worker.run_worker(stop_event), timeout=5)
         assert stopped.is_set()
     finally:
+        logger.setLevel(previous_level)
         logger.removeHandler(capture)
 
 
