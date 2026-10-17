@@ -107,19 +107,60 @@ async function expectStatus(page: Page, id: string, wanted: string[]): Promise<v
   })
 }
 
+/** Состояния, из которых процесс больше не меняется. */
+const TERMINAL = ['COMPLETED', 'COMPENSATED', 'CANCELLED', 'FAILED', 'COMPENSATION_FAILED']
+
 /**
- * Выключает определение, созданное для паузы.
+ * Выключает определение, созданное для паузы, и убирает его процессы.
  *
  * Активных определений на стенде может быть несколько, и инструменты вроде
  * замерщика берут «первое активное». Оставленное включённым определение с паузой
- * переставляет их порядок, и замер тихо измеряет не то. Уборка здесь — не
- * аккуратность, а условие того, что последующий замер вообще что-то значит.
+ * переставляет их порядок, и замер тихо измеряет не то.
+ *
+ * Процессы уходят не просто из списка, а через отмену: пауза ждёт человека, а
+ * человека не будет, и такой процесс остаётся на стенде навсегда. Он стоит на
+ * шаге после резерва, то есть держит резерв на складе, — и панель склада перед
+ * показом показывает чужое удержание без объяснения (ADR-0014, ADR-0017).
+ * Отмена приводит его к компенсации и возвращает резерв.
  */
 test.afterAll(async ({ request }) => {
   const { json } = await api(request, 'get', '/api/definitions?limit=200')
   const items = json.items as Array<{ id: string; name: string }>
-  for (const item of items.filter((entry) => entry.name === MANUAL_GATE)) {
-    await api(request, 'post', `/api/definitions/${item.id}/deactivate`)
+  const schemes = items.filter((entry) => entry.name === MANUAL_GATE)
+
+  for (const scheme of schemes) {
+    await api(request, 'post', `/api/definitions/${scheme.id}/deactivate`)
+  }
+
+  const mine: string[] = []
+  for (const scheme of schemes) {
+    const listed = await api(
+      request,
+      'get',
+      `/api/instances?limit=200&definition_id=${scheme.id}&archived=all`,
+    )
+    for (const item of listed.json.items as Array<{ id: string; status: string }>) {
+      if (!TERMINAL.includes(item.status)) {
+        await api(request, 'post', `/api/instances/${item.id}/cancel`)
+      }
+      mine.push(item.id)
+    }
+  }
+
+  // Отмена отрабатывает асинхронно, и следующая проверка увидела бы процесс в
+  // CANCELLING. Архив недоступен поимённо (эндпоинт берёт только возраст), поэтому
+  // убранное остаётся в списке терминальным — его снимает кнопка уборки, и это
+  // ровно то, что делает человек перед показом.
+  const deadline = Date.now() + 60_000
+  while (Date.now() < deadline && mine.length > 0) {
+    const states = await Promise.all(
+      mine.map(async (id) => {
+        const got = await api(request, 'get', `/api/instances/${id}`)
+        return String((got.json as unknown as { status: string }).status)
+      }),
+    )
+    if (states.every((status) => TERMINAL.includes(status))) break
+    await new Promise((resolve) => setTimeout(resolve, 500))
   }
 })
 
