@@ -340,6 +340,47 @@ describe('страница сценариев', () => {
     expect(screen.getByText('Открыть процесс')).toBeTruthy()
   })
 
+  it('не даёт начать второй сценарий, пока идёт первый', async () => {
+    // Правило инъекции на стенде одно на всех, и снятие у нового сценария —
+    // общее: запущенный поверх идущего снимал поломку первого, и тот проходил
+    // «корректно» вместо объявленного. На защите это читалось бы как «движок
+    // работает», а означало бы ровно обратное.
+    get.mockResolvedValue({ id: 'inst-9', status: 'RUNNING', current_step: 'charge_payment' })
+
+    renderPage()
+    await fireEvent.click((await buttons())[1])
+    await screen.findByText('Открыть процесс')
+
+    // Заблокированы все, а не только следующий по каталогу: иначе порядок
+    // запуска зависел бы от того, куда человек посмотрел.
+    await vi.waitFor(
+      () => {
+        for (const button of screen.getAllByRole('button', { name: 'Запустить' })) {
+          expect(button.hasAttribute('disabled')).toBe(true)
+        }
+      },
+      { timeout: 6000 },
+    )
+    expect(await screen.findByText(/Идёт сценарий/)).toBeTruthy()
+  })
+
+  it('освобождает кнопки после итога сценария', async () => {
+    // Блокировка без разблокировки оставила бы страницу мёртвой после первого
+    // же показа, и следующий сценарий нельзя было бы начать вовсе.
+    get.mockResolvedValue({ id: 'inst-9', status: 'COMPENSATED', current_step: null })
+    renderPage()
+
+    await fireEvent.click((await buttons())[1])
+    await vi.waitFor(() => expect(screen.getByText(/Утверждение подтверждено/)).toBeTruthy(), {
+      timeout: 6000,
+    })
+
+    for (const button of screen.getAllByRole('button', { name: 'Запустить' })) {
+      expect(button.hasAttribute('disabled')).toBe(false)
+    }
+    expect(screen.queryByText(/Идёт сценарий/)).toBeNull()
+  })
+
   it('называет ожидаемое состояние, когда процесс пришёл не туда', async () => {
     // Молчаливое «готово» здесь опаснее пустоты: докладчик решил бы, что откат
     // сработал, а он не сработал.

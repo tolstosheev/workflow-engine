@@ -11,8 +11,13 @@
  * Одного статуса мало: `COMPENSATED` бывает и при неоткатанном резерве.
  *
  * Правила инъекции снимаются всегда — до запуска, после проверки, при уходе со
- * страницы и при ошибке. Оставленное правило ломает следующий сценарий, и
+ * странице и при ошибке. Оставленное правило ломает следующий сценарий, и
  * виноват окажется он.
+ *
+ * **Один сценарий за раз.** Правило на стенде одно на всех, а снятие общее:
+ * начатый поверх идущего прогон снимал его поломку, и первый сценарий проходил
+ * «корректно» вместо объявленного. Поэтому кнопки блокируются, пока идёт
+ * другой, и страница говорит почему.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -103,6 +108,16 @@ export default function ScenariosPage() {
   // вкладку и досталась следующему прогону.
   const dirty = useRef(false)
 
+  // Один сценарий за раз — не вежливость, а устройство стенда: правило инъекции
+  // на ней одно на всех, и новый сценарий снимает его перед стартом. Запущенный
+  // поверх идущего прогон терял свою поломку и проходил «корректно» — то есть
+  // доказывал ровно противоположное заявленному (ADR-0022 про границу глобальной
+  // инъекции).
+  const inFlight = Object.entries(started).find(([, entry]) => entry.phase === 'running')
+  const inFlightTitle = inFlight
+    ? SCENARIOS.find((item) => item.id === inFlight[0])?.title
+    : undefined
+
   const start = useCallback(async (spec: ScenarioSpec) => {
     setRunning(spec.id)
     setError(null)
@@ -124,8 +139,10 @@ export default function ScenariosPage() {
   const watch = useCallback(async (spec: ScenarioSpec, entry: Started) => {
     const instance = await instancesApi.get(entry.instanceId)
 
-    // Действие по ходу процесса — один раз на сценарий: повторная отмена
-    // затормозила бы его, а повторное возобновление падало бы.
+    // Действие по ходу процесса. Повтор возможен, пока состояние прежнее:
+    // отмена меняет его быстрее опроса, и на стенде применялась один раз, но
+    // гарантии «ровно один раз» здесь нет — она обеспечивается тем, что
+    // состояние уезжает, а не флагом.
     let actionNote: string | null = null
     if (entry.phase === 'running' && spec.action) {
       const applied = await applyAction(DEPS, spec, instance)
@@ -248,6 +265,17 @@ export default function ScenariosPage() {
 
       {error && <ErrorState message={error} />}
 
+      {inFlightTitle && (
+        <p
+          role="status"
+          className="rounded-md border border-accent/40 bg-accent/10 p-3 text-xs text-accent"
+        >
+          Идёт сценарий «{inFlightTitle}». Следующий запускается после его итога: правило
+          инъекции на стенде одно на всех, и два сценария под ним шли бы вразнобой — второй
+          снял бы поломку первого, и тот прошёл бы «корректно».
+        </p>
+      )}
+
       {unresolved !== null && unresolved > 0 && (
         <p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
           На стенде {unresolved} незакрытых процессов: они ждут решения человека или повтора
@@ -270,7 +298,10 @@ export default function ScenariosPage() {
               <span>Ожидается: {spec.expect.map((value) => statusLabel(value)).join(', ')}</span>
             </div>
 
-            <Button disabled={running !== null} onClick={() => void start(spec)}>
+            <Button
+              disabled={running !== null || inFlight !== undefined}
+              onClick={() => void start(spec)}
+            >
               {running === spec.id ? 'Запускаем…' : 'Запустить'}
             </Button>
 

@@ -192,6 +192,12 @@ async function runCatalogScenario(page: Page, title: string): Promise<void> {
   })
 }
 
+/** Снимок резервов по складу: сравнение «до и после» вместо требования нуля. */
+async function reservedSnapshot(request: APIRequestContext): Promise<number[]> {
+  const { json } = await api(request, 'get', '/api/demo/inventory')
+  return (json.items as Array<{ reserved: number }>).map((item) => item.reserved)
+}
+
 test('откат, который не прошёл, остаётся разбираемым', async ({ page }) => {
   // Провал компенсации обязан быть виден как разбор: процесс стоит в
   // COMPENSATION_FAILED, а не тихо завершается. Раньше интерфейс об этом молчал.
@@ -223,6 +229,12 @@ test('склад показывает, что резерв вернулся по
   //
   // Ссылка берётся из карточки сценария, а не из списка: это ровно тот процесс,
   // который только что отработал, и проверка не зависит от порядка строк.
+  // Утверждение — «своим заказом не оставил резерва», то есть снимок до и
+  // после. Требование «весь резерв равен нулю» проходило только на пустом
+  // стенде: сценарий «откат не проходит» по замыслу оставляет резерв в силе
+  // (ADR-0020, отрицательное следствие), и проверка объявляла чужой заказ
+  // утечкой своего.
+  const before = await reservedSnapshot(request)
   await runCatalogScenario(page, 'Заказ проходит целиком')
   await page
     .getByRole('heading', { name: 'Заказ проходит целиком' })
@@ -234,9 +246,7 @@ test('склад показывает, что резерв вернулся по
   await expect(page.getByText(/снимок склада/i)).toBeVisible()
 
   // Под таблицей — и данные: возврат резерва проверяется не только глазами.
-  const { json } = await api(request, 'get', '/api/demo/inventory')
-  const reserved = (json.items as Array<{ reserved: number }>).map((item) => item.reserved)
-  expect(reserved.every((value) => value === 0)).toBe(true)
+  expect(await reservedSnapshot(request)).toEqual(before)
 })
 
 test('страница состояния показывает метрики, а не нули', async ({ page, request }) => {
