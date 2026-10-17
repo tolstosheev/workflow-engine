@@ -15,21 +15,40 @@ import { useEffect, useRef } from 'react'
 /**
  * Вызывает `load` сразу и затем с указанной частотой.
  *
- * Отложенный вызов, а не `setInterval`: интервалы накапливают погрешность и
+ * Отложенный вызов, а не `setInterval`: интервалы накапливают погрежность и
  * накладывают запросы, если предыдущий не успел ответить. Здесь следующий запуск
  * планируется после завершения предыдущего — так очередь не растёт.
+ *
+ * **Смена интервала не перезагружает страницу.** Немедленный вызов при каждом
+ * новом интервале означал бы лишний запрос на каждое изменение частоты: страница
+ * процесса начинает с двух секунд (статус ещё не прочитан) и переходит на «не
+ * опрашивать», как только статус известен, — и открытие страницы грузило данные
+ * дважды.
  */
 export function usePolling(load: () => void | Promise<void>, delayMs: number): void {
   const loadRef = useRef(load)
   loadRef.current = load
   const alive = useRef(false)
+  // Первый запуск — при появлении хука, дальше — по расписанию. Разница видна
+  // на странице процесса: её интервал меняется один раз, с двух секунд на ноль,
+  // и немедленная перезагрузка в этот момент удваивала четыре запроса.
+  const started = useRef(false)
 
   useEffect(() => {
     alive.current = true
     let timer: number | null = null
     let running = false
 
-    const tick = async () => {
+    // Объявления функций, а не констант с функциями: tick вызывает schedule, а
+    // schedule ставит tick на таймер, и порядок объявления здесь не должен
+    // ничего значить.
+    function schedule(wait: number): void {
+      if (alive.current && wait > 0) {
+        timer = window.setTimeout(() => void tick(), wait)
+      }
+    }
+
+    async function tick(): Promise<void> {
       // Запрос не дожидается предыдущего: страница и так получает данные
       // потоком событий, а второй запрос ничего не добавит.
       if (running) return
@@ -39,12 +58,18 @@ export function usePolling(load: () => void | Promise<void>, delayMs: number): v
       } finally {
         running = false
       }
-      if (alive.current && delayMs > 0) {
-        timer = window.setTimeout(() => void tick(), delayMs)
-      }
+      schedule(delayMs)
     }
 
-    void tick()
+    if (started.current) {
+      // Смена частоты: следующий запуск по новому расписанию, без запроса
+      // сейчас. Данные на экране устарели максимум на один интервал, а запрос
+      // не отменяет ничего из того, что человек уже прочитал.
+      schedule(delayMs)
+    } else {
+      started.current = true
+      void tick()
+    }
 
     return () => {
       alive.current = false
