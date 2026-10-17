@@ -56,7 +56,7 @@ def test_definition_invalid_is_validation_error() -> None:
 
 
 def test_message_is_available_on_instance() -> None:
-    error = NotFoundError("инстанс не найден")
+    error = NotFoundError("процесс не найден")
 
-    assert error.message == "инстанс не найден"
-    assert str(error) == "инстанс не найден"
+    assert error.message == "процесс не найден"
+    assert str(error) == "процесс не найден"

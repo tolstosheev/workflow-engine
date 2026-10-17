@@ -48,7 +48,7 @@ _DB_GAUGE_MODE: Literal["mostrecent"] = "mostrecent"
 
 INSTANCES_BY_STATUS = Gauge(
     "workflow_instances",
-    "Инстансы по состояниям",
+    "Процессы по состояниям",
     ["status"],
     registry=REGISTRY,
     multiprocess_mode=_DB_GAUGE_MODE,
@@ -56,7 +56,7 @@ INSTANCES_BY_STATUS = Gauge(
 
 INSTANCES_TOTAL = Counter(
     "workflow_instances_created_total",
-    "Создано инстансов",
+    "Создано процессов",
     registry=REGISTRY,
 )
 
@@ -86,13 +86,13 @@ COMPENSATIONS_BY_RESULT = Gauge(
 
 LEASE_ACQUIRED = Counter(
     "workflow_lease_acquired_total",
-    "Успешные захваты аренды",
+    "Успешные захваты закрепления",
     registry=REGISTRY,
 )
 
 LEASE_LOST = Counter(
     "workflow_lease_lost_total",
-    "Потерянные аренды: инстанс перехвачен другим воркером",
+    "Потерянные закрепления: процесс перехвачен другим исполнителем",
     registry=REGISTRY,
 )
 

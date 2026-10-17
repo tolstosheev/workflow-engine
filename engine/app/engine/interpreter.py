@@ -118,7 +118,7 @@ def decide_after_failure(
     if attempt < max_attempts:
         return StepDecision(step_name=step_name, kind="run", reason="повтор шага")
 
-    return StepDecision(step_name=None, kind="stop", reason="попытки исчерпаны, нужен откат")
+    return StepDecision(step_name=None, kind="stop", reason="попытки исчерпаны, нужна компенсация")
 
 
 def attempts_for(step: Step, fallback_max: int) -> int:

@@ -204,7 +204,7 @@ def _validate_compensation_coverage(
         if step.compensation is None and not isinstance(step, (ForkStep, JoinStep)):
             collector.warn(
                 "missing_compensation",
-                f"шаг {name!r} не имеет компенсации — при откате он выполнит "
+                f"шаг {name!r} не имеет компенсации — при компенсации он выполнит "
                 f"побочные эффекты безвозвратно",
                 name,
             )

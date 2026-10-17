@@ -21,7 +21,7 @@ OPERATIONS = ROOT / "docs" / "OPERATIONS.md"
 def _lease_scenario() -> str:
     text = SCENARIOS.read_text(encoding="utf-8")
     start = text.find("id: 'lease-expired'")
-    assert start != -1, "сценарий про аренду не найден"
+    assert start != -1, "сценарий про закрепление не найден"
     return text[start : start + 2000]
 
 

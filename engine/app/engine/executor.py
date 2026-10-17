@@ -282,7 +282,9 @@ async def execute_step(
     if not await lease.heartbeat(db_session, instance_id, worker_id):
         LEASE_LOST.inc()
         await db_session.rollback()
-        raise LeaseLostError(f"аренда инстанса {instance_id} утрачена: её забрал другой воркер")
+        raise LeaseLostError(
+            f"закрепление процесса {instance_id} утрачено: его забрал другой исполнитель"
+        )
 
     # --- Транзакция 2: результат шага ---------------------------------------
     if outcome.success:

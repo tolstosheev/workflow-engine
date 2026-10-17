@@ -62,7 +62,7 @@ async def test_injection_breaks_the_compensation_not_the_step(
     await db_session.commit()
 
     await chaos.add_rule_for_handler(
-        db_session, None, RELEASE_REF, "always", "сбой компенсации (инъекция)"
+        db_session, None, RELEASE_REF, "always", "сбой компенсации (неисправность)"
     )
     await db_session.commit()
 
@@ -118,7 +118,7 @@ async def test_manual_retry_clears_the_injection_backoff(
     await db_session.commit()
 
     await chaos.add_rule_for_handler(
-        db_session, instance_id, RELEASE_REF, "once", "сбой компенсации (инъекция)"
+        db_session, instance_id, RELEASE_REF, "once", "сбой компенсации (неисправность)"
     )
     await db_session.commit()
 

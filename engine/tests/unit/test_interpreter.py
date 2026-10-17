@@ -126,7 +126,7 @@ def test_failure_stops_after_last_attempt() -> None:
 
     assert decision.step_name is None
     assert decision.kind == "stop"
-    assert "откат" in decision.reason
+    assert "компенсация" in decision.reason
 
 
 def test_step_without_successor_completes() -> None:

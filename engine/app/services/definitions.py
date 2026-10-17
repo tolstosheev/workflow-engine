@@ -152,7 +152,7 @@ def _format_errors(result: ValidationResult) -> str:
     parts = [
         f"{issue.step}: {issue.message}" if issue.step else issue.message for issue in result.errors
     ]
-    return "дефинишен не прошёл валидацию:\n- " + "\n- ".join(parts)
+    return "схема процесса не прошла проверку:\n- " + "\n- ".join(parts)
 
 
 __all__ = [

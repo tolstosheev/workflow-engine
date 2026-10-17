@@ -57,13 +57,13 @@ async def fail_step(
     if payload.instance_id is not None and not await chaos.existing_instance(
         db_session, payload.instance_id
     ):
-        raise NotFoundError(f"инстанс {payload.instance_id} не найден")
+        raise NotFoundError(f"процесс {payload.instance_id} не найден")
 
     await chaos.add_rule(db_session, payload.instance_id, payload.step, payload.mode, payload.error)
     await db_session.commit()
     return ChaosResult(
         active=[f"step:{payload.step or '*'}:{payload.mode}"],
-        message="инъекция сбоя шага зарегистрирована",
+        message="неисправность шага зарегистрирована",
     )
 
 
@@ -100,7 +100,7 @@ async def fail_compensation(
     if payload.instance_id is not None and not await chaos.existing_instance(
         db_session, payload.instance_id
     ):
-        raise NotFoundError(f"инстанс не найден: {payload.instance_id}")
+        raise NotFoundError(f"процесс не найден: {payload.instance_id}")
 
     # Обработчик резолвится сразу: правило, которое никогда не сработает,
     # выглядит на панели как работающая инъекция, и оператор будет искать,
@@ -114,7 +114,7 @@ async def fail_compensation(
     await db_session.commit()
     return ChaosResult(
         active=[f"compensation:{payload.handler}:{payload.mode}"],
-        message="инъекция сбоя компенсации зарегистрирована",
+        message="неисправность компенсации зарегистрирована",
     )
 
 
@@ -124,7 +124,7 @@ async def list_chaos(db_session: AsyncSession = Depends(get_db)) -> ChaosResult:
     rules = await chaos.list_rules(db_session)
     return ChaosResult(
         active=[rule.label() for rule in rules],
-        message=f"активных инъекций: {len(rules)}",
+        message=f"активных неисправностей: {len(rules)}",
     )
 
 
@@ -135,7 +135,7 @@ async def stop_lease(
     """Останавливает продление аренды — имитация зависшего воркера."""
     instance = await db_session.get(WorkflowInstance, payload.instance_id)
     if instance is None:
-        raise NotFoundError(f"инстанс {payload.instance_id} не найден")
+        raise NotFoundError(f"процесс {payload.instance_id} не найден")
 
     # Продление остановлено сдвигом heartbeat в прошлое: heartbeat истекает
     # вместе с lease, и инстанс освобождается по TTL.
@@ -148,7 +148,7 @@ async def stop_lease(
 
     return ChaosResult(
         active=[f"lease:{payload.instance_id}"],
-        message=f"продление аренды остановлено на {payload.duration_seconds} с",
+        message=f"продление закрепления остановлено на {payload.duration_seconds} с",
     )
 
 
@@ -158,7 +158,7 @@ async def resume_lease(
 ) -> ChaosResult:
     instance = await db_session.get(WorkflowInstance, payload.instance_id)
     if instance is None:
-        raise NotFoundError(f"инстанс {payload.instance_id} не найден")
+        raise NotFoundError(f"процесс {payload.instance_id} не найден")
 
     # Продление отключают с намерением сдвинуть heartbeat в прошлое:
     # инстанс проверен, и без такой проверки сдвигать было бы вслепую.
@@ -168,14 +168,14 @@ async def resume_lease(
         .values(heartbeat_at=datetime.now(UTC))
     )
     await db_session.commit()
-    return ChaosResult(active=[], message="продление аренды возобновлено")
+    return ChaosResult(active=[], message="продление закрепления возобновлено")
 
 
 @router.delete("/api/chaos", response_model=ChaosResult)
 async def clear_chaos(db_session: AsyncSession = Depends(get_db)) -> ChaosResult:
     removed = await chaos.clear_rules(db_session)
     await db_session.commit()
-    return ChaosResult(active=[], message=f"снято инъекций: {removed}")
+    return ChaosResult(active=[], message=f"снято неисправностей: {removed}")
 
 
 @router.get("/api/instances/{instance_id}/exists")
