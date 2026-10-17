@@ -62,24 +62,30 @@ async def completed_steps(db_session: AsyncSession, instance_id: uuid.UUID) -> l
     return list(rows)
 
 
-async def find_step_run(
-    db_session: AsyncSession, instance_id: uuid.UUID, step_name: str
-) -> StepRun | None:
-    """Последнее успешное выполнение шага.
+async def runs_for_compensation(
+    db_session: AsyncSession, instance_id: uuid.UUID
+) -> dict[str, list[tuple[uuid.UUID, bool]]]:
+    """Прогоны шага, свежие сверху: идентификатор и отметка «уже откатан».
 
-    Поиск по факту выполнения, а не по предположению: если шага нет, компенсировать
-    нечего, и это не ошибка.
+    Именно прогоны, а не шаги: шаг цикла выполняется несколько раз, и каждому
+    выполнению нужна своя компенсация. Поиск «последнего выполнения по имени»
+    свёл бы обе итерации к одному прогону, вторая компенсация пришла бы под
+    занятым ключом и вернула бы успех, не отменив ничего.
     """
-    return await db_session.scalar(
-        select(StepRun)
-        .where(
-            StepRun.instance_id == instance_id,
-            StepRun.step_name == step_name,
-            StepRun.status == StepRunStatus.COMPLETED,
+    rows = (
+        await db_session.execute(
+            select(StepRun.id, StepRun.step_name, StepRun.compensated)
+            .where(
+                StepRun.instance_id == instance_id,
+                StepRun.status == StepRunStatus.COMPLETED,
+            )
+            .order_by(StepRun.finished_at.desc())
         )
-        .order_by(StepRun.finished_at.desc())
-        .limit(1)
-    )
+    ).all()
+    runs: dict[str, list[tuple[uuid.UUID, bool]]] = {}
+    for run_id, step_name, compensated in rows:
+        runs.setdefault(step_name, []).append((run_id, bool(compensated)))
+    return runs
 
 
 async def attempts_made(db_session: AsyncSession, step_run_id: uuid.UUID) -> int:
@@ -116,6 +122,12 @@ async def plan(
     `COMPENSATION_SKIPPED`. Уже компенсированные тоже: журнал хранит их
     навсегда, и второй проход отменил бы их повторно под новым ключом
     идемпотентности.
+
+    Повторяющиеся имена шагов получают все свои прогоны: цикл выполняет шаг
+    несколько раз, и откатывать нужно каждое выполнение. Порядок при этом
+    группирован по шагу: разбор журнала хранит выполненные шаги без повторов,
+    поэтому строгий обратный порядок по проходам недоступен, а внутри шага
+    обратный порядок сохраняется — свежий проход откатывается первым.
     """
     if executed_steps is None:
         # `completed_steps` уже развёрнут: сортировка по времени завершения
@@ -124,19 +136,23 @@ async def plan(
         order = await completed_steps(db_session, instance_id)
     else:
         order = list(reversed(executed_steps))
+    # Порядок задаёт только очерёдность шагов; число выполнений приходит из
+    # прогонов. Повтор имени в списке — это тот же самый шаг, и второй проход
+    # по нему вернул бы те же компенсации повторно.
+    order = list(dict.fromkeys(order))
 
+    available = await runs_for_compensation(db_session, instance_id)
     items: list[CompensationItem] = []
     for step_name in order:
         compensation_ref = compensation_refs.get(step_name)
         if not compensation_ref:
             continue
-        step_run = await find_step_run(db_session, instance_id, step_name)
-        if step_run is not None and step_run.compensated:
-            # Шаг откатан и лежит в `state.completed_steps`: план строим по
-            # порядку из журнала, и повторный проход откатывал бы его снова —
-            # уже под новым ключом идемпотентности.
-            continue
-        if step_run is None:
+        # Все неоткатанные прогоны шага, свежие сверху: шаг цикла выполнен
+        # несколько раз, и каждое выполнение отменяется отдельно. Раньше брался
+        # один «последний» прогон, вторая компенсация приходила под занятым
+        # ключом и объявляла успех, оставив резерв прохода на складе.
+        runs = available.get(step_name)
+        if not runs:
             # Шаг выполнен по журналу, но прогона нет: данных о нём нет, и
             # компенсировать нечего. Молча пропустить опаснее, чем упасть,
             # но это рассинхронизация, а не штатный путь.
@@ -145,14 +161,20 @@ async def plan(
                 extra={"step": step_name, "instance_id": str(instance_id)},
             )
             continue
-        items.append(
-            CompensationItem(
-                step_run_id=step_run.id,
-                step_name=step_name,
-                compensation_ref=compensation_ref,
-                attempts_made=await attempts_made(db_session, step_run.id),
+        for step_run_id, already_compensated in runs:
+            if already_compensated:
+                # Шаг откатан и лежит в `state.completed_steps`: план строим по
+                # порядку из журнала, и повторный проход откатывал бы его снова
+                # — уже под новым ключом идемпотентности.
+                continue
+            items.append(
+                CompensationItem(
+                    step_run_id=step_run_id,
+                    step_name=step_name,
+                    compensation_ref=compensation_ref,
+                    attempts_made=await attempts_made(db_session, step_run_id),
+                )
             )
-        )
     return items
 
 
@@ -245,13 +267,20 @@ def operation_key(instance_id: uuid.UUID, item: CompensationItem) -> OperationKe
     """Ключ идемпотентности для компенсации.
 
     Компенсация необратима, но повтор после сбоя обязан быть безопасным, и
-    повтор обязан узнать свою отметку. Поэтому ключ строится по шагу, а не по
+    повтор обязан узнать свою отметку. Поэтому ключ строится по прогону, а не по
     номеру попытки: попытки — это попытки, а операция одна. С ключом, растущим
     вместе с попыткой, падение воркера между эффектом и отметкой привело бы к
     повторному возврату средств.
+
+    И по имени шага — только в связке с прогоном. Шаг в цикле выполняется
+    несколько раз, и каждое выполнение отменяется отдельно: на одно имя без
+    прогона вторая компенсация пришла бы под занятым ключом, объявила бы успех
+    и оставила резерв второй итерации на складе навсегда.
     """
     return OperationKey(
-        instance_id=instance_id, step_name=f"compensate:{item.step_name}", attempt=0
+        instance_id=instance_id,
+        step_name=f"compensate:{item.step_name}:{item.step_run_id}",
+        attempt=0,
     )
 
 

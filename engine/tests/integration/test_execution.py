@@ -899,6 +899,29 @@ async def test_loop_limit_survives_worker_restart(db_session: AsyncSession) -> N
     assert passes == 3
 
 
+async def test_loop_rollback_releases_stock_of_every_pass(db_session: AsyncSession) -> None:
+    """Откат возвращает товар каждого прохода, а не последнего.
+
+    Регрессия, найденная на стенде: план отката искал «последнее выполнение
+    шага», поэтому все проходы цикла сводились к одному прогону. Вторая
+    компенсация приходила под уже занятый ключ идемпотентности, объявляла успех
+    и не отменяла ничего — резерв оставался на складе навсегда, а процесс
+    выглядел исправным.
+    """
+    from tests.conftest import reserved_units
+
+    before = await reserved_units(DEFAULT_SKU)
+    instance_id, _ = await _create_instance(db_session, LOOP_FLOW)
+    await _seed_journal(db_session, instance_id, LOOP_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1", count=40)
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+    # Три прохода по две единицы: резервировано шесть, вернуться обязаны все.
+    assert await reserved_units(DEFAULT_SKU) == before
+
+
 # --- Ошибки, которые повтор не исправит --------------------------------------
 
 PERMANENT_FLOW = {

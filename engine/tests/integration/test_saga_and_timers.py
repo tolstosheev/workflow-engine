@@ -228,6 +228,50 @@ async def test_compensated_steps_leave_the_plan(db_session: AsyncSession) -> Non
     assert plan == []
 
 
+async def test_plan_covers_every_execution_of_a_looped_step(db_session: AsyncSession) -> None:
+    """Шаг, выполненный дважды, откатывается дважды.
+
+    План строился по имени шага и брал «последнее выполнение»: обе итерации
+    цикла получали один прогон, а вторая компенсация приходила под занятым
+    ключом и не отменяла ничего. На стенде это оставляло резерв прохода на
+    складе навсегда.
+    """
+    instance_id = await _new_instance(db_session)
+    await _completed_step(db_session, instance_id, "reserve")
+    await _completed_step(db_session, instance_id, "reserve")
+
+    plan = await saga.plan(
+        db_session,
+        instance_id,
+        {"reserve": "app.demo.handlers:release_inventory"},
+        executed_steps=["reserve", "reserve"],
+    )
+
+    assert len(plan) == 2
+    assert len({item.step_run_id for item in plan}) == 2
+
+
+async def test_plan_pairs_loop_passes_with_their_own_runs(db_session: AsyncSession) -> None:
+    """Обратный порядок откатывает свежий проход первым.
+
+    Порядок берётся из журнала, а прогон — по факту выполнения; связать их иначе
+    нечем, и «первым откатывать последний проход» — единственное чтение, при
+    котором обратный порядок вообще имеет смысл.
+    """
+    instance_id = await _new_instance(db_session)
+    earlier = await _completed_step(db_session, instance_id, "reserve")
+    later = await _completed_step(db_session, instance_id, "reserve")
+
+    plan = await saga.plan(
+        db_session,
+        instance_id,
+        {"reserve": "app.demo.handlers:release_inventory"},
+        executed_steps=["reserve", "reserve"],
+    )
+
+    assert [item.step_run_id for item in plan] == [later, earlier]
+
+
 # --- Попытки компенсации ----------------------------------------------------
 
 
@@ -319,15 +363,38 @@ async def test_operation_key_is_namespaced_by_compensation(db_session: AsyncSess
     # откат был бы признан уже применённым. И он не зависит от номера попытки:
     # компенсация — одна операция, и повтор обязан узнать свою отметку.
     instance_id = await _new_instance(db_session)
-    await _completed_step(db_session, instance_id, "reserve")
+    step_run_id = await _completed_step(db_session, instance_id, "reserve")
     item = (
         await saga.plan(db_session, instance_id, {"reserve": "app.demo.handlers:release_inventory"})
     )[0]
 
     key = saga.operation_key(instance_id, item)
 
-    assert key.step_name == "compensate:reserve"
-    assert str(key) == f"{instance_id}:compensate:reserve:0"
+    assert key.step_name.startswith("compensate:reserve")
+    assert str(key) == f"{instance_id}:compensate:reserve:{step_run_id}:0"
+
+
+async def test_operation_key_distinguishes_passes_of_a_loop(
+    db_session: AsyncSession,
+) -> None:
+    """Два прохода одного шага — две операции с разными ключами.
+
+    По одному имени шага вторая компенсация пришла бы под занятым ключом,
+    объявила бы «уже применено» и оставила резерв прохода на складе.
+    """
+    instance_id = await _new_instance(db_session)
+    await _completed_step(db_session, instance_id, "reserve")
+    await _completed_step(db_session, instance_id, "reserve")
+    items = await saga.plan(
+        db_session,
+        instance_id,
+        {"reserve": "app.demo.handlers:release_inventory"},
+        executed_steps=["reserve", "reserve"],
+    )
+
+    keys = [str(saga.operation_key(instance_id, item)) for item in items]
+
+    assert len(set(keys)) == 2
 
 
 # --- Durable-таймеры ---------------------------------------------------------

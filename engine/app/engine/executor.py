@@ -96,22 +96,21 @@ async def build_compensation_context(
     definition: WorkflowDefinitionSchema,
     state_variables: dict[str, Any],
     instance_input: dict[str, Any],
-    instance_id: uuid.UUID,
     step_name: str,
     attempt: int,
+    key: idempotency.OperationKey,
 ) -> Any:
     """Собирает контекст обработчика компенсации.
 
-    Ключ операции компенсационный, а не шаговый: возврат средств должен узнавать
-    свою отметку при повторе шага.
-
-    Номер попытки в ключ не входит: компенсация — одна и та же операция, пока её
-    не отменили, а растущий ключ при падении между эффектом и отметкой вернул бы
-    средства второй раз (§3.4).
+    Ключ операции приходит снаружи — тем же, по которому воркер проверяет отметку
+    перед вызовом. Формат ключа был записан в двух местах, и места разошлись:
+    обработчик откатывал по имени шага, все проходы цикла сводились к одной
+    операции, и второй возврат проходил как «уже применено» — с успехом и без
+    отмены. Ключ, к тому же, не должен расти с номером попытки: падение между
+    эффектом и отметкой вернуло бы средства второй раз (§3.4).
     """
-    operation_id = str(idempotency.make_key(instance_id, f"compensate:{step_name}", attempt=0))
     return await _build_context(
-        definition, state_variables, instance_input, instance_id, step_name, attempt, operation_id
+        definition, state_variables, instance_input, key.instance_id, step_name, attempt, str(key)
     )
 
 
