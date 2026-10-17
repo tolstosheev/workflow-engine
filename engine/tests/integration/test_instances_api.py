@@ -484,6 +484,78 @@ async def test_metrics_report_steps_and_compensations(client: httpx.AsyncClient)
     assert "workflow_compensations" in text
 
 
+async def test_declared_names_skip_broken_definitions() -> None:
+    # Имена берутся из JSON схемы, поэтому мусорный JSON не должен ронять сбор
+    # метрик: иначе одно испорченное определение убрало бы все показатели, а
+    # страница состояния выглядела бы как «система молчит».
+    from app.metrics import _declared_names
+
+    async with _engine_session() as session:
+        session.add(
+            WorkflowDefinition(
+                name="plain", version=1, definition={"steps": {"one": {"action": "a"}}}
+            )
+        )
+        session.add(WorkflowDefinition(name="no_steps", version=1, definition={"start": "x"}))
+        session.add(WorkflowDefinition(name="steps_list", version=1, definition={"steps": []}))
+        session.add(
+            WorkflowDefinition(
+                name="with_compensation",
+                version=1,
+                definition={
+                    "steps": {
+                        "one": {"action": "a", "compensation": "app.demo:release"},
+                        "two": {"action": "b", "compensation": None},
+                    }
+                },
+            )
+        )
+        await session.commit()
+
+    async with _engine_session() as session:
+        steps, compensations = await _declared_names(session)
+
+    assert "one" in steps and "two" in steps
+    assert compensations == {"app.demo:release"}
+
+
+async def test_metrics_stop_counting_vanished_rows(client: httpx.AsyncClient) -> None:
+    # Метрика, которой перестали обновлять значение, продолжает показывать
+    # прежнее число: пустая `step_runs` не вызывает ни одного `set`, и ряд остаётся
+    # с последним записанным. На стенде страница состояния показывала «14
+    # успешных списаний» при таблице без единой строки — хуже нулей, потому что
+    # выглядит как работающая система.
+    definition = await _active_definition(client)
+    created = await client.post("/api/instances", json={"definition_id": definition["id"]})
+
+    async with _engine_session() as session:
+        session.add(
+            StepRun(
+                instance_id=created.json()["id"],
+                step_name="ghost_step",
+                attempt=1,
+                status="COMPLETED",
+            )
+        )
+    filled = (await client.get("/metrics")).text
+    assert 'workflow_steps{result="success",step="ghost_step"} 1.0' in filled
+
+    # Строка исчезла — как после уборки журнала, TRUNCATE в тестах или архивации.
+    async with _engine_session() as session:
+        await session.execute(text("TRUNCATE TABLE step_runs, compensation_log CASCADE"))
+        await session.commit()
+    emptied = (await client.get("/metrics")).text
+
+    assert 'workflow_steps{result="success",step="ghost_step"} 0.0' in emptied
+    assert 'workflow_steps{result="failure",step="ghost_step"} 0.0' in emptied
+    # Ряды компенсаций живут по обработчикам, и они застаревают так же: без нового
+    # значения в общем файле остаётся прежнее число возвратов.
+    assert (
+        'workflow_compensations{result="success",step="app.demo.handlers:release_inventory"} 0.0'
+        in emptied
+    )
+
+
 # --- Chaos -----------------------------------------------------------------
 
 
