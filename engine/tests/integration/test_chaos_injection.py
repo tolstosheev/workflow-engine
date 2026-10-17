@@ -264,7 +264,7 @@ async def test_chaos_clear_removes_rules_via_api(client: httpx.AsyncClient) -> N
     cleared = await client.request("DELETE", "/api/chaos")
     listed = await client.get("/api/chaos")
 
-    assert "снято инъекций: 1" in cleared.json()["message"]
+    assert "снято неисправностей: 1" in cleared.json()["message"]
     assert listed.json()["active"] == []
 
 

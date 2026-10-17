@@ -41,7 +41,7 @@ async def _definition_of(
 ) -> WorkflowDefinition:
     definition = await db_session.get(WorkflowDefinition, instance.definition_id)
     if definition is None:  # pragma: no cover - внешний ключ защищён БД
-        raise NotFoundError("определение инстанса отсутствует")
+        raise NotFoundError("схема процесса отсутствует")
     return definition
 
 
@@ -137,7 +137,7 @@ async def unarchive_instance(
     """Возвращает процесс из архива в список."""
     restored = await service.unarchive(db_session, instance_id)
     if restored is None:
-        raise NotFoundError(f"инстанс {instance_id} не найден в архиве")
+        raise NotFoundError(f"процесс {instance_id} не найден в архиве")
     await db_session.commit()
     return ActionResult(
         status=InstanceStatus(restored.status), message="процесс возвращён из архива"
@@ -208,7 +208,7 @@ async def cancel_instance(
     # CANCELLING, а не терминальный статус: откат выполняет воркер. Если
     # компенсировать нечего, процесс позже придёт в CANCELLED.
     return ActionResult(
-        status=InstanceStatus(instance.status), message="отмена принята, выполняется откат"
+        status=InstanceStatus(instance.status), message="отмена принята, выполняется компенсация"
     )
 
 
@@ -221,7 +221,7 @@ async def force_complete(
     instance = await service.force_complete(db_session, instance_id, payload.reason)
     await db_session.commit()
     return ActionResult(
-        status=InstanceStatus(instance.status), message="инстанс завершён без компенсаций"
+        status=InstanceStatus(instance.status), message="процесс завершён без компенсаций"
     )
 
 
@@ -240,4 +240,6 @@ async def retry_compensation(
 ) -> ActionResult:
     instance = await service.retry_compensation(db_session, instance_id)
     await db_session.commit()
-    return ActionResult(status=InstanceStatus(instance.status), message="откат поставлен на повтор")
+    return ActionResult(
+        status=InstanceStatus(instance.status), message="компенсация поставлена на повтор"
+    )

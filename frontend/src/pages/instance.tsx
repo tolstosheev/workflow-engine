@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 
 import { instances as instancesApi, definitions as definitionsApi } from '@/api/client'
@@ -8,6 +8,7 @@ import { InventoryPanel } from '@/components/InventoryPanel'
 import { LeaseDetails } from '@/components/LeaseDetails'
 import { ReplayCheck } from '@/components/ReplayCheck'
 import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
+import { StepLabel } from '@/components/StepLabel'
 import { StepTimeline } from '@/components/StepTimeline'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
 import { useAbortable } from '@/hooks/useAbortable'
@@ -15,6 +16,7 @@ import { usePolling } from '@/hooks/usePolling'
 import { describeEvent } from '@/lib/events'
 import { pollingIntervalMs } from '@/lib/polling'
 import { buildInstanceReport, reportFileName } from '@/lib/report'
+import { stepDescriptions, stepResolver, stepTitle } from '@/lib/steps'
 import {
   formatDuration,
   formatDateTime,
@@ -28,6 +30,7 @@ import type {
   StepRun,
   TimelineEntry,
   WorkflowDefinition,
+  WorkflowDefinitionSchema,
   WorkflowEvent,
   WorkflowInstance,
 } from '@/types/api'
@@ -96,6 +99,13 @@ export default function InstancePage() {
   usePolling(load, pollingIntervalMs(instance?.status ?? null, connected))
   useEffect(() => abort, [abort])
   const [reportError, setReportError] = useState<string | null>(null)
+
+  // Шаги на странице читаются по-человечески — по описанию из схемы, — а имя
+  // остаётся вторым текстом. Без загруженной схемы всё показывается по имени:
+  // пустое место на месте названия шага выглядело бы как поломка.
+  const schema = definition?.definition.steps
+  const resolveStep = useMemo(() => stepResolver(schema), [schema])
+  const descriptions = useMemo(() => stepDescriptions(schema), [schema])
 
   // Отчёт переживает стенд: экран закрывается, контейнер останавливается, а
   // разбор инцидента остаётся возможным. Скачивание делается в браузере, без
@@ -196,9 +206,18 @@ export default function InstancePage() {
             <>
               <dl className="space-y-2 text-sm">
                 <Row label="Статус" value={statusLabel(state.status)} />
-              <Row label="Текущий шаг" value={state.current_step ?? '—'} />
-              <Row label="Выполнено" value={state.completed_steps.join(' → ') || '—'} />
-              <Row label="К компенсации" value={state.pending_compensations.join(' → ') || '—'} />
+              <Row
+                label="Текущий шаг"
+                value={<StepLabel title={stepTitle(schema, state.current_step)} />}
+              />
+              <Row
+                label="Выполнено"
+                value={<StepList names={state.completed_steps} steps={schema} />}
+              />
+              <Row
+                label="К компенсации"
+                value={<StepList names={state.pending_compensations} steps={schema} />}
+              />
               <Row
                 label="Ожидание"
                 value={
@@ -219,6 +238,9 @@ export default function InstancePage() {
                 value={
                   Object.entries(state.step_iterations ?? {})
                     .filter(([, count]) => count > 1)
+                    // Здесь остаётся имя, а не описание: «Проверка корзины перед
+                    // любым побочным эффектом: 3» — фраза, из которой не видно
+                    // счёта. Счёт проходов читается по идентификатору шага.
                     .map(([name, count]) => `${name}: ${count}`)
                     .join(', ') || '—'
                 }
@@ -272,9 +294,9 @@ export default function InstancePage() {
 
       {/* Лента времени рядом с порядком отката: порядок отвечает на вопрос
           «в каком порядке», лента — «когда и сколько ждал». Одного из двух мало. */}
-      <StepTimeline steps={steps} />
+      <StepTimeline steps={steps} titles={descriptions} />
 
-      <RollbackLane instance={state} steps={steps} />
+      <RollbackLane instance={state} steps={steps} titles={descriptions} />
 
       <Card title="Шаги">
         {steps.length === 0 ? (
@@ -294,7 +316,9 @@ export default function InstancePage() {
             <tbody>
               {steps.map((run) => (
                 <tr key={run.id} className="border-t border-surface-border/60">
-                  <td className="py-2">{run.step_name}</td>
+                  <td className="py-2">
+                    <StepLabel title={stepTitle(schema, run.step_name)} />
+                  </td>
                   <td className="py-2 text-white/50">{run.attempt}</td>
                   <td className="py-2">
                     <StatusBadge label={stepLabel(run.status)} toneClass={stepTone(run.status)} />
@@ -326,7 +350,7 @@ export default function InstancePage() {
                   <>
                     <span className="w-20 shrink-0 text-white/30">#{entry.seq}</span>
                     <span className="min-w-0">
-                      <span className="block">{describeEvent(entry)}</span>
+                      <span className="block">{describeEvent(entry, resolveStep)}</span>
                       {/* payload — то, чем журнал доказывает: без него видно
                           «шаг выполнен», но не видно, каким был переход. */}
                       <EventPayload payload={entry.payload} />
@@ -336,7 +360,7 @@ export default function InstancePage() {
                   <>
                     <span className="w-20 shrink-0 text-white/30">шаг</span>
                     <span className="min-w-0">
-                      <span className="block">{entry.step_name}</span>
+                      <StepLabel title={stepTitle(schema, entry.step_name)} />
                       <span className="text-xs text-white/40">
                         {entry.status ? stepLabel(entry.status) : ''}
                         {entry.compensated ? ', компенсация выполнена' : ''}
@@ -359,6 +383,32 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <dt className="text-white/50">{label}</dt>
       <dd className="text-right">{value}</dd>
     </div>
+  )
+}
+
+/**
+ * Порядок шагов строкой: «Оплата → Резерв → …».
+ *
+ * Соединитель между названиями повторяет «порядок выполнения», который человек
+ * читает по строкам; без него список шагов слипается в одну фразу.
+ */
+function StepList({
+  names,
+  steps,
+}: {
+  names: string[]
+  steps: WorkflowDefinitionSchema['steps'] | undefined
+}) {
+  if (names.length === 0) return <>—</>
+  return (
+    <span className="inline-flex flex-wrap items-baseline justify-end gap-x-1.5 gap-y-1">
+      {names.map((name, index) => (
+        <span key={name} className="inline-flex items-baseline gap-1.5">
+          {index > 0 && <span className="text-white/30">→</span>}
+          <StepLabel title={stepTitle(steps, name)} />
+        </span>
+      ))}
+    </span>
   )
 }
 

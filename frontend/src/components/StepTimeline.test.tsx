@@ -22,6 +22,35 @@ const run = (over: Partial<StepRun> & { id: string; started_at: string }): StepR
 afterEach(cleanup)
 
 describe('лента времени процесса', () => {
+  it('называет шаг по описанию, а имя оставляет в подсказке', () => {
+    render(
+      <StepTimeline
+        steps={[
+          run({ id: 'r1', started_at: '2026-03-01T10:00:00Z', finished_at: '2026-03-01T10:00:01Z' }),
+        ]}
+        titles={{ reserve_inventory: 'Резерв товара на складе' }}
+        now={NOW}
+      />,
+    )
+
+    // Описание читается в колонке фиксированной ширины, а имя остаётся
+    // доступным по подсказке: без него лента не отвечает на вопрос, какой это шаг.
+    expect(screen.getByText(/Резерв товара на складе/)).toBeTruthy()
+    expect(screen.getAllByTitle('reserve_inventory').length).toBeGreaterThan(0)
+  })
+
+  it('без схемы называет шаг по имени', () => {
+    render(
+      <StepTimeline
+        steps={[
+          run({ id: 'r1', started_at: '2026-03-01T10:00:00Z', finished_at: '2026-03-01T10:00:01Z' }),
+        ]}
+        now={NOW}
+      />,
+    )
+
+    expect(screen.getByText(/reserve_inventory/)).toBeTruthy()
+  })
   it('говорит долю времени в шагах, а не только длительности', () => {
     // Это главное, ради чего лента и нужна: из таблицы длительностей процесс
     // выглядит мгновенным, и тезис о долгой транзакции из коротких шагов не

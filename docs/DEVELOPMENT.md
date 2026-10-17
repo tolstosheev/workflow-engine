@@ -25,7 +25,7 @@
 npm run lint
 npm run typecheck
 npm test              # тесты
-npm run test:coverage # тесты и порог покрытия (94/83/96/96)
+npm run test:coverage # тесты и порог покрытия (94/84/96/97)
 npm run build
 npm run test:e2e      # сквозные через браузер, нужен поднятый стенд
 ```
@@ -249,7 +249,7 @@ origin — CORS в разработке не мешает.
 make check              # всё: ruff, mypy, eslint, tsc
 make check-backend      # ruff check, ruff format --check, mypy
 make check-frontend     # eslint, tsc
-make test               # unit + integration с порогом покрытия 90% (нужна БД)
+make test               # unit + integration с порогом покрытия 92% (нужна БД)
 make test-fast          # только unit, без БД и без порога
 make coverage           # HTML-отчёт: engine/htmlcov/index.html
 ```
@@ -328,7 +328,7 @@ make test-full           # всё вместе с порогом покрыти�
 
 ### Покрытие
 
-Порог — **90% branch-покрытия** (`--cov-branch --cov-fail-under=90`).
+Порог — **92% branch-покрытия** (`--cov-branch --cov-fail-under=92`).
 Line-only не считается: `if` без `else` даёт 100% по строкам при
 непроверенной ветке.
 
@@ -341,6 +341,16 @@ Line-only не считается: `if` без `else` даёт 100% по стр�
 
 Понизить порог или добавить `# pragma: no cover` можно только с объяснением в
 теле коммита — это повод для ревью всего коммита.
+
+Порог выбирается по худшему из прогонов, а не по лучшему: `make test` без chaos
+даёт меньше покрытия, чем полный прогон (92.37% против 92.98% на текущем коде).
+93% прошло бы на полном прогоне и упало бы на `make test` — порог, который
+зеленеет и краснеет от того, какие тесты запущены, ничего не проверяет.
+
+Одно число записано в трёх местах: `engine/pyproject.toml`, `Makefile` и
+документация. `engine/tests/unit/test_coverage_thresholds.py` требует, чтобы все
+три совпадали, и отдельно сверяет пороги фронтенда с `vite.config.ts` — до
+этого `DEVELOPMENT.md` называл 83/96 при конфигурации 84/97.
 
 ### Правила написания тестов
 

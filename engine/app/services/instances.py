@@ -60,7 +60,7 @@ async def create_instance(
 async def get_instance(db_session: AsyncSession, instance_id: uuid.UUID) -> WorkflowInstance:
     instance = await db_session.get(WorkflowInstance, instance_id)
     if instance is None:
-        raise NotFoundError(f"инстанс {instance_id} не найден")
+        raise NotFoundError(f"процесс {instance_id} не найден")
     return instance
 
 
@@ -256,7 +256,7 @@ async def cancel_instance(db_session: AsyncSession, instance_id: uuid.UUID) -> W
     """
     instance = await get_instance(db_session, instance_id)
     if InstanceStatus(instance.status) in _terminal_statuses():
-        raise ConflictError(f"инстанс в статусе {instance.status} отменить нельзя")
+        raise ConflictError(f"процесс в состоянии {instance.status} отменить нельзя")
 
     await scheduler.cancel_for(db_session, instance_id)
     await append_event(db_session, instance.id, EventType.INSTANCE_CANCEL_REQUESTED, {})
@@ -274,7 +274,7 @@ async def force_complete(
     """
     instance = await get_instance(db_session, instance_id)
     if InstanceStatus(instance.status) in _terminal_statuses():
-        raise ConflictError(f"инстанс в статусе {instance.status} уже завершён")
+        raise ConflictError(f"процесс в состоянии {instance.status} уже завершён")
 
     await scheduler.cancel_for(db_session, instance_id)
     await append_event(
@@ -293,7 +293,7 @@ async def retry_compensation(db_session: AsyncSession, instance_id: uuid.UUID) -
     """
     instance = await get_instance(db_session, instance_id)
     if InstanceStatus(instance.status) is not InstanceStatus.COMPENSATION_FAILED:
-        raise ConflictError(f"откат не требовался: статус {instance.status}")
+        raise ConflictError(f"компенсация не требовалась: состояние {instance.status}")
 
     # Статус меняется только через журнал (§3.1). Прямая запись в колонку дала
     # бы replay'у состояние COMPENSATION_FAILED навсегда: нового события нет, а
@@ -316,7 +316,7 @@ async def resume_instance(db_session: AsyncSession, instance_id: uuid.UUID) -> W
     """
     instance = await get_instance(db_session, instance_id)
     if InstanceStatus(instance.status) is not InstanceStatus.PAUSED:
-        raise ConflictError(f"инстанс не на паузе: статус {instance.status}")
+        raise ConflictError(f"процесс не на паузе: состояние {instance.status}")
 
     await append_event(
         db_session, instance_id, EventType.INSTANCE_RESUMED, {"step": instance.current_step}

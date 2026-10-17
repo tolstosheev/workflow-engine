@@ -98,7 +98,7 @@ async def test_release_frees_one_instance_of_the_batch(db_session: AsyncSession)
     Иначе освобождение последнего сняло бы аренду и с несделанными, и они
     висели бы до истечения TTL.
     """
-    ids = await _seed(db_session, 3, InstanceStatus.PENDING)
+    await _seed(db_session, 3, InstanceStatus.PENDING)
     claimed = await lease.claim_batch(db_session, "w1", limit=3)
     await db_session.commit()
 

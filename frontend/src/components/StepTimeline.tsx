@@ -19,12 +19,22 @@ const BAR_CLASSES: Record<StepRunStatus, string> = {
   COMPENSATED: 'bg-warning',
 }
 
-export function StepTimeline({ steps, now }: { steps: StepRun[]; now?: number }) {
+export function StepTimeline({
+  steps,
+  titles,
+  now,
+}: {
+  steps: StepRun[]
+  /** Описание шага из схемы: подпись, а имя уходит в подсказку. */
+  titles?: Record<string, string>
+  now?: number
+}) {
   const layout = layoutSteps(steps, now)
   if (!layout) return null
 
   const share = dutyRatio(layout)
   const running = layout.rows.find((row) => row.running)
+  const titleOf = (name: string): string => titles?.[name] ?? name
 
   return (
     <section className="rounded-lg border border-surface-border bg-surface-raised p-4">
@@ -41,7 +51,7 @@ export function StepTimeline({ steps, now }: { steps: StepRun[]; now?: number })
           // сейчас происходит с процессом.
           <p className="mt-2 flex items-center gap-2 text-xs text-accent">
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-accent" />
-            Сейчас исполняется: {running.stepName}
+            Сейчас исполняется: {titleOf(running.stepName)}
             {running.attempt > 1 ? `, попытка ${running.attempt}` : ''}
           </p>
         )}
@@ -49,18 +59,20 @@ export function StepTimeline({ steps, now }: { steps: StepRun[]; now?: number })
 
       <ol className="space-y-1">
         {layout.rows.map((row) => (
-          <Row key={row.key} row={row} />
+          <Row key={row.key} row={row} title={titleOf(row.stepName)} />
         ))}
       </ol>
     </section>
   )
 }
 
-function Row({ row }: { row: LaneRow }) {
+function Row({ row, title }: { row: LaneRow; title: string }) {
   return (
     <li className="flex items-center gap-2 text-xs">
-      <span className="w-36 shrink-0 truncate font-mono text-white/70" title={row.stepName}>
-        {row.stepName}
+      {/* Имя остаётся в подсказке: длинное описание в колонке фиксированной
+          ширины обрезалось бы, а потерять имя шага на ленте нельзя. */}
+      <span className="w-36 shrink-0 truncate text-white/70" title={row.stepName}>
+        {title}
         {row.attempt > 1 ? ` · попытка ${row.attempt}` : ''}
       </span>
 
