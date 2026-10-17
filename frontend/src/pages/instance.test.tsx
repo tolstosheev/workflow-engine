@@ -83,6 +83,7 @@ const REBUILT = {
   completed_steps: ['validate_cart'],
   pending_compensations: ['validate_cart'],
   is_terminal: false,
+  cancel_requested: false,
   step_iterations: {},
 }
 
@@ -246,7 +247,59 @@ describe('кнопки решения', () => {
     expect(forceComplete).toHaveBeenCalledOnce()
   })
 
-  it('показывает процесс без графа, если определение не прочиталось', async () => {
+  it('отвечает под статусом, что процесс отменён, а не упал', async () => {
+    // Отмена с выполненными шагами приходит в «Компенсирован» — так же, как
+    // сбой. Без второй строки вопрос «это отмена или ошибка?» остаётся без
+    // ответа до чтения журнала, а журнал человек на защите не читает.
+    state.mockResolvedValue({
+      ...REBUILT,
+      status: 'COMPENSATED',
+      cancel_requested: true,
+      current_step: null,
+    })
+
+    await open('COMPENSATED')
+
+    expect(await screen.findByText('Отменён, изменения возвращены')).toBeTruthy()
+  })
+
+it('не пишет «Отменён» под процессом, который упал сам', async () => {
+    // Надпись «Отменён» у упавшего была бы враньём: поле по умолчанию — ложь,
+    // и именно этим дефектом проверяется, что подпись берёт значение, а не
+    // факт наличия статуса.
+    state.mockResolvedValue({
+      ...REBUILT,
+      status: 'FAILED',
+      cancel_requested: false,
+      current_step: null,
+    })
+
+    await open('FAILED')
+
+    // «Ошибка» стоит и в бейдже, и в строке состояния — ищутся все вхождения,
+    // иначе проверка падала бы не на дефекте, а на количестве совпадений.
+    expect((await screen.findAllByText('Ошибка')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Отменён, изменения возвращены')).toBeNull()
+    expect(screen.queryByText('Отмена запрошена')).toBeNull()
+  })
+
+it('не повторяет бейджем то, что он уже сказал', async () => {
+    // Отмена до первого шага приходит в «Отменён» — вторая строка была бы
+    // повтором того, что уже написано.
+    state.mockResolvedValue({
+      ...REBUILT,
+      status: 'CANCELLED',
+      cancel_requested: true,
+      current_step: null,
+    })
+
+    await open('CANCELLED')
+
+    expect((await screen.findAllByText('Отменён')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Отмена запрошена')).toBeNull()
+  })
+
+it('показывает процесс без графа, если определение не прочиталось', async () => {
     // Граф берётся из определения, а состояние — из журнала. Отказ первого не
     // должен уводить со страницы всё второе: человек пришёл посмотреть, что с
     // процессом, а не что с картинкой.

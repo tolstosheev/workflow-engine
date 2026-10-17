@@ -268,6 +268,50 @@ async def test_state_is_rebuilt_from_journal(client: httpx.AsyncClient) -> None:
     assert state.json()["completed_steps"] == ["a"]
 
 
+async def test_state_tells_that_the_process_was_cancelled(client: httpx.AsyncClient) -> None:
+    # Отмена с выполненными шагами приходит в COMPENSATED, а не в CANCELLED:
+    # последнее означает «отменили, отменять было нечего». Без отдельного поля
+    # интерфейс не отличил бы отменённый процесс от упавшего по сбою, а факт
+    # лежит в журнале — значит, обязан доезжать и в разборе, а не только в колонке.
+    definition = await _active_definition(client)
+    created = await client.post("/api/instances", json={"definition_id": definition["id"]})
+    instance_id = created.json()["id"]
+
+    async with _engine_session() as session:
+        await append_event(
+            session, instance_id, EventType.STEP_COMPLETED, {"step": "a", "next": "b"}
+        )
+        await append_event(
+            session, instance_id, EventType.INSTANCE_CANCEL_REQUESTED, {"reason": "оператор"}
+        )
+        await append_event(
+            session, instance_id, EventType.INSTANCE_COMPENSATED, {"compensated": ["a"]}
+        )
+
+    state = (await client.get(f"/api/instances/{instance_id}/state")).json()
+
+    assert state["status"] == "COMPENSATED"
+    assert state["cancel_requested"] is True
+
+
+async def test_state_of_a_failed_process_is_not_marked_cancelled(
+    client: httpx.AsyncClient,
+) -> None:
+    # Поле по умолчанию — ложь: процесс, который упал сам по себе, отменённым не
+    # был, и надпись «Отменён» под его бейджем была бы враньём.
+    definition = await _active_definition(client)
+    created = await client.post("/api/instances", json={"definition_id": definition["id"]})
+    instance_id = created.json()["id"]
+
+    async with _engine_session() as session:
+        await append_event(session, instance_id, EventType.INSTANCE_FAILED, {"error": "сбой"})
+
+    state = (await client.get(f"/api/instances/{instance_id}/state")).json()
+
+    assert state["status"] == "FAILED"
+    assert state["cancel_requested"] is False
+
+
 # --- Управление ------------------------------------------------------------
 
 
