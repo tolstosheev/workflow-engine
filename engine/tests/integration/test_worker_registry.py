@@ -176,6 +176,36 @@ async def test_workers_endpoint_keeps_silent_worker_visible(
     assert items[0]["state"] == "stale"
 
 
+async def test_busy_worker_is_not_reported_silent(session: AsyncSession) -> None:
+    # Граница молчания — тройной интервал опроса, а сердце писалось раз за цикл, а
+    # цикл умел выполнить до 100 шагов. Замер на стенде: под нагрузкой оба занятых
+    # исполнителя мигнули «не отвечает» по семь раз за сорок опросов, то есть
+    # система называла мёртвым того, кто работает. Ровно то, что реестр и отменил
+    # своим появлением: «молчит» должно значить «живого нет».
+    import asyncio
+
+    from app.core.config import get_settings
+    from app.core.db import get_session_factory
+    from app.services import registry as registry_service
+
+    settings = get_settings()
+    boundary = registry_service.stale_after(settings.worker_poll_interval_seconds).total_seconds()
+
+    await _register(session, "worker-busy")
+
+    # Имитация занятого цикла: столько времени проходит без записи сердца, сколько
+    # цикл держится под нагрузкой, — а границу молчания это перекрывает.
+    await _age_heartbeat(session, "worker-busy", boundary + 1.5)
+    await asyncio.sleep(boundary / 4)
+
+    async with get_session_factory()() as own_session:
+        await registry_service.touch(own_session, "worker-busy")
+        await own_session.commit()
+
+    rows = await service.list_workers(session, timedelta(seconds=3))
+    assert service.worker_state(rows[0], datetime.now(UTC), timedelta(seconds=3)) == "active"
+
+
 async def test_worker_loop_registers_itself(session: AsyncSession) -> None:
     # Цикл воркера обязан вписаться в реестр сам: ручная регистрация означала бы,
     # что в реальном запуске строки не будет, а тест проверял бы то, чего нет.

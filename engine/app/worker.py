@@ -17,6 +17,7 @@ import logging
 import os
 import signal
 import socket
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -565,16 +566,28 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         await registry.register(session, worker_id)
 
     definition_cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]] = {}
+    # Граница молчания та же, что и у читателя реестра: пока цикл не вернулся к
+    # записи сердца, исполнитель должен подтвердить, что он жив. Замер на стенде:
+    # под нагрузкой оба занятых исполнителя мигали «не отвечает» — система звала
+    # мёртвым того, кто работает.
+    silent_after = registry.stale_after(settings.worker_poll_interval_seconds).total_seconds()
     try:
         while not stop_event.is_set():
             steps_done = 0
             cycles = 0
             lease_lost = 0
+            last_confirm = time.monotonic()
             while steps_done < settings.worker_max_steps_per_cycle and not stop_event.is_set():
                 result = await run_batch_cycle(worker_id, definition_cache)
                 if not result.handled:
                     break
                 cycles += 1
+                if time.monotonic() - last_confirm > silent_after / 2:
+                    # Подтверждение без счётчиков: счётчики дописывает конец цикла,
+                    # и прибавление здесь выдало бы шаги дважды.
+                    async with session_scope() as session:
+                        await registry.touch(session, worker_id)
+                    last_confirm = time.monotonic()
                 if result.lease_lost:
                     lease_lost += 1
                     # Цикл оборвался недоведённо: без паузы воркер сразу забрал бы
