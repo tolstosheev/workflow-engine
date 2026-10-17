@@ -2,10 +2,10 @@ import { Suspense } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Инстансы' },
+  { to: '/', label: 'Заказы' },
   { to: '/definitions', label: 'Определения' },
   { to: '/metrics', label: 'Состояние' },
-  { to: '/chaos', label: 'Инъекция отказов' },
+  { to: '/chaos', label: 'Внесение неисправностей' },
   { to: '/compare', label: 'Сравнение' },
   { to: '/scenarios', label: 'Сценарии' },
 ]

@@ -86,7 +86,7 @@ export default function InstancePage() {
       // Отменённый запрос — не ошибка: он отменён намеренно, следующий
       // запустится по своему расписанию.
       if (controller.signal.aborted) return
-      setError(cause instanceof Error ? cause.message : 'Не удалось загрузить инстанс')
+      setError(cause instanceof Error ? cause.message : 'Не удалось загрузить процесс')
     }
   }, [beginRequest, id])
 
@@ -160,7 +160,7 @@ export default function InstancePage() {
     [],
   )
 
-  if (!id) return <EmptyState message="Идентификатор инстанса не указан" />
+  if (!id) return <EmptyState message="Идентификатор процесса не указан" />
   if (error && !instance) return <ErrorState message={error} onRetry={() => void load()} />
   if (!instance) return <EmptyState message="Загрузка…" />
 
@@ -198,7 +198,7 @@ export default function InstancePage() {
                 <Row label="Статус" value={statusLabel(state.status)} />
               <Row label="Текущий шаг" value={state.current_step ?? '—'} />
               <Row label="Выполнено" value={state.completed_steps.join(' → ') || '—'} />
-              <Row label="К откату" value={state.pending_compensations.join(' → ') || '—'} />
+              <Row label="К компенсации" value={state.pending_compensations.join(' → ') || '—'} />
               <Row
                 label="Ожидание"
                 value={
@@ -226,8 +226,8 @@ export default function InstancePage() {
               <Row label="Создан" value={formatDateTime(instance.created_at)} />
               </dl>
 
-              {/* Аренда вместо блокировок не читается в коде, а строка «Аренда:
-                  worker-1» ничего не говорила о том, что срок истечёт и инстанс
+              {/* Закрепление вместо блокировок не читается в коде, а строка «Аренда:
+                  worker-1» ничего не говорила о том, что срок истечёт и процесс
                   освободится сам. */}
               <LeaseDetails
                 owner={instance.lease_owner}
@@ -253,7 +253,7 @@ export default function InstancePage() {
 
         <InventoryPanel />
 
-        <Card title="Переменные инстанса" className="lg:col-span-2">
+        <Card title="Переменные процесса" className="lg:col-span-2">
           {Object.keys(instance.variables).length === 0 ? (
             <EmptyState message="Переменные появятся после первого шага" />
           ) : (
@@ -280,7 +280,7 @@ export default function InstancePage() {
         {steps.length === 0 ? (
           <EmptyState message="Шаги ещё не выполнялись" />
         ) : (
-          <table aria-label="Прогоны шагов" className="w-full text-left text-sm">
+          <table aria-label="Выполнения шагов" className="w-full text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-white/40">
               <tr>
                 <th scope="col" className="pb-2">Шаг</th>
@@ -397,10 +397,8 @@ interface ActionsProps {
  * Действия доступны не во всех состояниях: отменять завершённый процесс
  * бессмысленно.
  *
- * У процесса, застрявшего на откате, остаётся только повтор: отмена привела бы
- * его туда же, только другим путём и в обход паузы, которую движок накопил по
- * неудачным попыткам. Две кнопки в одно состояние — значит оператор выберет
- * ту, что не сработает.
+ * У процесса, застрявшего на компенсации, остаётся только повтор: две кнопки
+ * в одно состояние — значит оператор выберет ту, что не сработает.
  */
 function Actions({ instance, onDone, onError }: ActionsProps) {
   const terminal = ['COMPLETED', 'COMPENSATED', 'CANCELLED', 'FAILED'].includes(instance.status)
@@ -428,9 +426,9 @@ function Actions({ instance, onDone, onError }: ActionsProps) {
       {instance.status === 'COMPENSATION_FAILED' && (
         <Button
           variant="primary"
-          onClick={() => void run(() => instancesApi.retryCompensation(instance.id), 'Не удалось повторить откат')}
+          onClick={() => void run(() => instancesApi.retryCompensation(instance.id), 'Не удалось повторить компенсацию')}
         >
-          Повторить откат
+          Повторить компенсацию
         </Button>
       )}
       {!terminal && !stuck && (

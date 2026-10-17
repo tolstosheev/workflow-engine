@@ -1,11 +1,11 @@
 /**
- * Аренда и воркеры.
+ * Закреплённые процессы: кто что держит и когда последний раз подтверждал
+ * активность.
  *
- * Панель показывает, кто какие инстансы обрабатывает и когда в последний раз
- * продлевал аренду. Это то, что нужно, чтобы показать главное свойство
- * механизма: после смерти воркера владелец меняется сам, без блокировок,
- * которые пришлось бы снимать руками.
+ * После смерти исполнителя владелец меняется сам, без блокировок, которые
+ * пришлось бы снимать руками.
  */
+
 
 import { StatusBadge } from '@/components/ui'
 import { collectLeases } from '@/lib/leases'
@@ -19,14 +19,14 @@ export function WorkerLeases({ instances }: { instances: WorkflowInstance[] }) {
   return (
     <section className="rounded-lg border border-surface-border bg-surface-raised p-4">
       <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-white">Аренда и воркеры</h2>
+        <h2 className="text-sm font-semibold text-white">Закреплённые процессы</h2>
         <span className="text-xs text-white/40">
-          {leases.length} с арендой · {free} свободно
+          {leases.length} закреплено · {free} свободно
         </span>
       </header>
 
       {leases.length === 0 ? (
-        <p className="text-sm text-white/50">Никто не держит аренду — воркеры простаивают</p>
+        <p className="text-sm text-white/50">Никто не держит процессы — исполнители простаивают</p>
       ) : (
         <ul className="space-y-2">
           {leases.map((lease) => (
@@ -34,7 +34,7 @@ export function WorkerLeases({ instances }: { instances: WorkflowInstance[] }) {
               <span className="font-mono text-white/80">{lease.owner}</span>
               <span className="text-white/40">{lease.instances.length} инст.</span>
               <span className="text-white/40">
-                heartbeat {lease.lastHeartbeat ? formatDateTime(lease.lastHeartbeat) : '—'}
+                активность {lease.lastHeartbeat ? formatDateTime(lease.lastHeartbeat) : '—'}
               </span>
               <span className="flex flex-wrap gap-1">
                 {lease.instances.map((instance) => (
@@ -53,8 +53,8 @@ export function WorkerLeases({ instances }: { instances: WorkflowInstance[] }) {
       )}
 
       <p className="mt-3 text-[11px] text-white/30">
-        Здесь видны только держатели аренды. Воркер, которому нечего делать, аренды не имеет и в этом
-        списке не появится — за ним стоит панель «Воркеры» ниже.
+        Здесь только те, кто держит процесс. Исполнитель, которому нечего делать, ничего не
+        не закрепляет и в списке не появится — за ним стоит панель «Исполнители» ниже.
       </p>
     </section>
   )

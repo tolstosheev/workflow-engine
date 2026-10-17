@@ -1,11 +1,10 @@
 /**
  * Состояние системы по метрикам.
  *
- * Страница переносит в интерфейс таблицу «что считать нормой» из
- * `docs/OPERATIONS.md` §2: инцидент виден не по подписи, а по тому, что
- * счётчик ненулевой. Ненулевой откат и потерянная аренда подсвечиваются
- * красным — это те два значения, которые в норме равны нулю.
+ * Переносит в интерфейс таблицу «что считать нормой» из `OPERATIONS.md` §2:
+ * инцидент виден не по подписи, а по ненулевому счётчику.
  */
+
 
 import { useCallback, useState } from 'react'
 
@@ -20,7 +19,7 @@ import type { Sample } from '@/lib/metrics'
 const ALARMS: Array<{ test: (samples: Sample[]) => number; text: string }> = [
   {
     test: (samples) => sumBy(samples, 'workflow_instances', ['status', 'COMPENSATION_FAILED']),
-    text: 'откат не удался — процесс остался с частично применённым эффектом',
+    text: 'компенсация не выполнена — процесс остался с частично применённым эффектом',
   },
   {
     test: (samples) => valueOf(samples, 'workflow_compensations', { result: 'failure' }),
@@ -28,7 +27,7 @@ const ALARMS: Array<{ test: (samples: Sample[]) => number; text: string }> = [
   },
   {
     test: (samples) => valueOf(samples, 'workflow_lease_lost_total', {}),
-    text: 'потеряно аренд — воркер перегружен или срок аренды мал',
+    text: 'потеряно закреплений — исполнитель перегружен или срок закрепления мал',
   },
 ]
 
@@ -95,7 +94,7 @@ export function MetricsPage() {
           <EmptyState message="Метрики ещё не собраны" />
         ) : alarms.length === 0 ? (
           <p className="text-sm text-success">
-            Инцидентов нет: откаты проходят, компенсации не проваливаются, аренды не теряются.
+            Инцидентов нет: компенсации выполняются, закрепления не теряются.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -116,8 +115,8 @@ export function MetricsPage() {
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Инстансы по состояниям">
-          <table aria-label="Инстансы по состояниям" className="w-full text-left text-sm">
+        <Card title="Заказы по состояниям">
+          <table aria-label="Заказы по состояниям" className="w-full text-left text-sm">
             <tbody>
               {STATUSES.map((status) => (
                 <tr key={status} className="border-t border-surface-border/60">

@@ -46,15 +46,11 @@ export interface ActionSpec {
 }
 
 /**
- * Свидетельство, читаемое из данных процесса.
+ * Свидетельство, читаемое из данных процесса, а не из его состояния.
  *
- * Это проверяемое утверждение, а не украшение: у каждого пункта есть подпись,
- * которая попадает в отчёт и на страницу.
- *
- * Источники выбраны по факту, а не по предположению. Компенсация видна в
- * журнале событием `COMPENSATION_COMPLETED` с полем `for_step` — отдельных
- * прогонов шага у неё нет, а здоровье шага читается по `COMPENSATION_FAILED`.
- * Прогоны `/steps` называются именами шагов графа, а не обработчиков.
+ * Источники выбраны по факту: компенсация видна в журнале событием
+ * `COMPENSATION_COMPLETED` с полем `for_step`, отдельных прогонов у неё нет,
+ * а `/steps` называет шаги графа, а не обработчики.
  */
 export type Evidence =
   | { kind: 'event'; event: string; label: string }
@@ -118,22 +114,22 @@ export const SCENARIOS: ScenarioSpec[] = [
   },
   {
     id: 'payment-fails',
-    title: 'Платёж отказывает, заказ откатывается',
+    title: 'Платёж отклонён, заказ компенсируется',
     proves:
-      'Saga возвращает выполненные шаги в обратном порядке: резерв освобождается, деньги не списаны, процесс приходит в «откатан».',
+      'Saga возвращает выполненные шаги в обратном порядке: резерв освобождается, деньги не списаны, процесс приходит в состояние «Компенсирован».',
     definition: 'order_fulfillment',
     rules: [{ kind: 'step', target: 'charge_payment', mode: 'always', error: 'сбой шага (сценарий)' }],
     expect: ['COMPENSATED'],
     evidence: [
       { kind: 'compensated', step: 'reserve_inventory', label: 'резерв на складе освобождён' },
-      { kind: 'event', event: 'COMPENSATION_STARTED', label: 'откат начат' },
+      { kind: 'event', event: 'COMPENSATION_STARTED', label: 'компенсация начата' },
     ],
   },
   {
     id: 'compensation-fails',
-    title: 'Откат не проходит',
+    title: 'Компенсация не выполняется',
     proves:
-      'Провал компенсации не прячется: процесс остаётся в COMPENSATION_FAILED, его видно в списке и откат можно повторить вручную.',
+      'Неудача компенсации не прячется: процесс остаётся в состоянии «Компенсация не выполнена», его видно в списке, а компенсацию можно повторить вручную.',
     definition: 'order_fulfillment',
     rules: [
       { kind: 'step', target: 'create_shipment', mode: 'always', error: 'сбой шага (сценарий)' },
@@ -147,9 +143,9 @@ export const SCENARIOS: ScenarioSpec[] = [
   },
   {
     id: 'compensation-retry',
-    title: 'Повтор отката не возвращает средства дважды',
+    title: 'Повтор компенсации не возвращает средства дважды',
     proves:
-      'Провал компенсации виден и разбирается человеком: он снимает причину и повторяет откат, а компенсация идемпотентна — возврат применяется один раз.',
+      'Неудача компенсации видна и разбирается человеком: он снимает причину и повторяет компенсацию, а она идемпотентна — возврат применяется один раз.',
     definition: 'order_fulfillment',
     rules: [
       { kind: 'step', target: 'create_shipment', mode: 'always', error: 'сбой шага (сценарий)' },
@@ -170,9 +166,9 @@ export const SCENARIOS: ScenarioSpec[] = [
         event: 'COMPENSATION_STARTED',
         forStep: 'reserve_inventory',
         atLeast: 2,
-        label: 'откат повторён после провала первой попытки',
+        label: 'компенсация повторена после первой неудачной попытки',
       },
-      { kind: 'event', event: 'COMPENSATION_COMPLETED', label: 'откат завершён без провала' },
+      { kind: 'event', event: 'COMPENSATION_COMPLETED', label: 'компенсация завершена без ошибок' },
     ],
   },
   {
@@ -203,7 +199,7 @@ export const SCENARIOS: ScenarioSpec[] = [
     id: 'cancel',
     title: 'Отмена процесса',
     proves:
-      'Отмена не равна успеху: выполненные шаги откатываются, и итог зависит от того, что было откатывать. Отменённый заказ приходит в «откатан», а если откатывать было нечего — в «отменён».',
+      'Отмена не равна успеху: выполненные шаги компенсируются, и итог зависит от того, что было выполнено. Отменённый заказ приходит в состояние «Компенсирован», а если компенсировать было нечего — «Отменён».',
     definition: 'order_with_wait',
     action: { kind: 'cancel', after: ['WAITING'] },
     expect: ['COMPENSATED', 'CANCELLED'],
@@ -227,7 +223,7 @@ export const SCENARIOS: ScenarioSpec[] = [
     id: 'human-pause',
     title: 'Ворота согласования',
     proves:
-      'Необратимый шаг ждёт решения человека: процесс встаёт в PAUSED, не берётся воркерами и идёт дальше только после команды.',
+      'Необратимый шаг ждёт решения человека: процесс встаёт в паузу, не берётся исполнителями и идёт дальше только после команды.',
     definition: 'order_with_approval',
     observe: ['PAUSED'],
     action: { kind: 'resume', after: ['PAUSED'] },
@@ -238,7 +234,7 @@ export const SCENARIOS: ScenarioSpec[] = [
     id: 'pause-deadline',
     title: 'Срок ожидания истёк',
     proves:
-      'Пауза без решения имеет срок: по его истечении процесс отменяется и уходит в откат, а не платит без согласования.',
+      'Пауза без решения имеет срок: по его истечении процесс отменяется и уходит в компенсацию, а не платит без согласования.',
     definition: 'order_with_pause_deadline',
     via: ['COMPENSATING', 'CANCELLING'],
     // Пауза здесь не конец показа: сценарий обещает откат по истечении срока,
@@ -252,7 +248,7 @@ export const SCENARIOS: ScenarioSpec[] = [
     id: 'loop-exhausted',
     title: 'Цикл исчерпан',
     proves:
-      'Счётчик проходов читается движком: на пределе пишется LOOP_EXHAUSTED и процесс уходит в откат, а не крутится вечно.',
+      'Счётчик проходов читается движком: на пределе пишется LOOP_EXHAUSTED и процесс уходит в компенсацию, а не крутится вечно.',
     definition: 'order_with_loop',
     expect: ['COMPENSATED'],
     evidence: [
@@ -262,9 +258,9 @@ export const SCENARIOS: ScenarioSpec[] = [
   },
   {
     id: 'lease-expired',
-    title: 'Процесс переживает остановку продления аренды',
+    title: 'Процесс переживает остановку продления закрепления',
     proves:
-      'Падение воркера не оставляет процесс висеть: аренда истекает по TTL, инстанс забирает воркер и работа продолжается. Перехват другим воркером требует двух воркеров на стенде — на одном инстанс поднимает тот же.',
+      'Падение исполнителя не оставляет процесс висеть: закрепление истекает по TTL, процесс забирает другой исполнитель, и работа продолжается. Перехват другим исполнителем требует двух исполнителей на стенде — на одном процесс поднимает он же.',
     definition: 'order_with_wait',
     action: { kind: 'stop-lease', after: ['RUNNING'], durationSeconds: 120 },
     // Процесс может пережить перехват и уйти в откат, если воркер успел
@@ -406,7 +402,7 @@ export interface ScenarioVerdict {
   notes: EvidenceNote[]
 }
 
-/** Журнал и прогоны шагов: свидетельства читаются из них, а не из статуса. */
+/** Журнал и выполнения шагов: свидетельства читаются из них, а не из состояния. */
 export interface EvidenceSource {
   events: WorkflowEvent[]
   steps: StepRun[]
@@ -469,7 +465,7 @@ export function checkEvidence(spec: ScenarioSpec, source: EvidenceSource): Evide
     return {
       label: item.label,
       passed: runs.length >= item.atLeast,
-      detail: `прогонов: ${runs.length}, успешных: ${completed}`,
+      detail: `выполнений: ${runs.length}, успешных: ${completed}`,
     }
   })
 }

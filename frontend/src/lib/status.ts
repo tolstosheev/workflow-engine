@@ -1,4 +1,4 @@
-/** Цвет и подпись состояния инстанса — единое место, чтобы не расходились. */
+/** Цвет и подпись состояния — в одном месте, чтобы бейджи не расходились. */
 
 import type { EventType, InstanceStatus, StepRunStatus } from '@/types/api'
 
@@ -16,8 +16,8 @@ const STATUS_TONES: Record<InstanceStatus, Tone> = {
   PENDING: 'neutral',
   RUNNING: 'active',
   WAITING: 'warning',
-  // Пауза ждёт человека: тон предупреждения тот же, что у таймера, но
-  // подпись отличается — ждать время и ждать решения это разное.
+  // Пауза ждёт человека: тон тот же, что у таймера, но подпись отличается —
+  // ждать время и ждать решения это разное.
   PAUSED: 'warning',
   CANCELLING: 'warning',
   COMPENSATING: 'warning',
@@ -28,20 +28,17 @@ const STATUS_TONES: Record<InstanceStatus, Tone> = {
   FAILED: 'danger',
 }
 
-/**
- * Подписи состояний вынесены наружу: ими пользуются и бейджи, и текстовые
- * пояснения, а расходиться им нельзя.
- */
+/** Подписи состояний: ими пользуются и бейджи, и текстовые пояснения. */
 export const STATUS_LABELS: Record<InstanceStatus, string> = {
   PENDING: 'В очереди',
   RUNNING: 'Выполняется',
   WAITING: 'Ожидание',
   PAUSED: 'Ждёт решения',
   CANCELLING: 'Отменяется',
-  COMPENSATING: 'Откат',
-  COMPENSATION_FAILED: 'Откат не удался',
+  COMPENSATING: 'Компенсация идёт',
+  COMPENSATION_FAILED: 'Компенсация не выполнена',
   COMPLETED: 'Завершён',
-  COMPENSATED: 'Откатан',
+  COMPENSATED: 'Компенсирован',
   CANCELLED: 'Отменён',
   FAILED: 'Ошибка',
 }
@@ -55,24 +52,24 @@ export function statusLabel(status: InstanceStatus): string {
 }
 
 const EVENT_LABELS: Record<EventType, string> = {
-  INSTANCE_CREATED: 'Инстанс создан',
+  INSTANCE_CREATED: 'Процесс создан',
 
   INSTANCE_PAUSED: 'Процесс ждёт решения',
   INSTANCE_RESUMED: 'Процесс продолжен',
   STEP_STARTED: 'Шаг начат',
   STEP_COMPLETED: 'Шаг выполнен',
-  STEP_FAILED: 'Шаг провален',
+  STEP_FAILED: 'Шаг не выполнен',
   STEP_RETRY_SCHEDULED: 'Шаг поставлен на повтор',
   LOOP_EXHAUSTED: 'Исчерпаны проходы цикла',
   TIMER_SCHEDULED: 'Ожидание создано',
   TIMER_FIRED: 'Ожидание сработало',
   COMPENSATION_STARTED: 'Компенсация начата',
   COMPENSATION_COMPLETED: 'Компенсация выполнена',
-  COMPENSATION_FAILED: 'Компенсация провалена',
+  COMPENSATION_FAILED: 'Компенсация не выполнена',
 
   INSTANCE_COMPLETED: 'Процесс завершён',
-  INSTANCE_COMPENSATED: 'Процесс откатан',
-  INSTANCE_FAILED: 'Процесс провален без отката',
+  INSTANCE_COMPENSATED: 'Процесс компенсирован',
+  INSTANCE_FAILED: 'Процесс завершился ошибкой',
   INSTANCE_CANCEL_REQUESTED: 'Запрошена отмена',
   INSTANCE_CANCELLED: 'Процесс отменён',
 }
@@ -89,28 +86,16 @@ const STEP_TONES: Record<StepRunStatus, Tone> = {
   COMPENSATED: 'success',
 }
 
-/**
- * Подпись прогона шага.
- *
- * Тон у прогона был, а подписи не было: страница отдавала сырое `COMPLETED` из
- * базы рядом с русскими подписями состояний процесса. Человек, читающий список
- * прогов, видел английские слова посреди русского текста.
- */
+/** Подпись выполнения шага: без неё в списке были слова из базы. */
 export const STEP_LABELS: Record<StepRunStatus, string> = {
   PENDING: 'не начат',
   RUNNING: 'выполняется',
   COMPLETED: 'выполнен',
-  FAILED: 'провален',
-  COMPENSATED: 'откатан',
+  FAILED: 'не выполнен',
+  COMPENSATED: 'компенсирован',
 }
 
-/**
- * Подпись прогона шага, а при неизвестном значении — само значение.
- *
- * Лента приходит из бэкенда свободным текстом, и состояние, которого движок
- * ещё не знает, должно показываться как есть, а не пропадать: как и в
- * `eventLabel`.
- */
+/** Неизвестное значение показывается как есть, а не пропадает. */
 export function stepLabel(status: StepRunStatus | string): string {
   return STEP_LABELS[status as StepRunStatus] ?? status
 }
@@ -123,13 +108,7 @@ export function formatDateTime(value: string | null | undefined): string {
   return format(value, DATE_TIME)
 }
 
-/**
- * Подпись момента времени.
- *
- * Неразбираная дата показывается прочерком: строка «Invalid Date» в журнале
- * выглядит как сбой интерфейса, а не как отсутствие данных, и отвлекает от
- * того, что смотрели.
- */
+/** Неразбираная дата — прочерком: «Invalid Date» читается как сбой. */
 function format(value: string | null | undefined, formatter: Intl.DateTimeFormat): string {
   if (!value) return '—'
   const date = new Date(value)
@@ -137,11 +116,7 @@ function format(value: string | null | undefined, formatter: Intl.DateTimeFormat
   return formatter.format(date)
 }
 
-/**
- * Форматтеры создаются один раз: `toLocaleString` собирает локаль заново при
- * каждом вызове, а подпись времени показывается в каждой строке таблицы и в
- * каждом событии журнала.
- */
+/** Форматтер создаётся один раз: лок заново не собирается при каждом вызове. */
 const DATE_TIME = new Intl.DateTimeFormat('ru-RU', {
   day: '2-digit',
   month: '2-digit',

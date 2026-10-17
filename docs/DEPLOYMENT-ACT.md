@@ -278,6 +278,7 @@ cd engine && python -m scripts.seed
 | [`BENCHMARKS.md`](BENCHMARKS.md) | Замеры и условия |
 | [`DEVELOPMENT.md`](DEVELOPMENT.md) | Окружение, отладка, тесты |
 | [`OPERATIONS.md`](OPERATIONS.md) | Эксплуатация и разбор сбоев |
+| [`UI-GLOSSARY.md`](UI-GLOSSARY.md) | Словарь надписей интерфейса |
 | [`GIT_WORKFLOW.md`](GIT_WORKFLOW.md) | Модель веток и коммитов |
 | [`adr/`](adr/README.md) | Архитектурные решения |
 | [`../AGENTS.md`](../AGENTS.md) | Инварианты и правила работы |

@@ -1,10 +1,13 @@
-"""Сценарий про аренду не должен обещать перехват другим воркером.
+"""Сценарий про закрепление не должен обещать перехват другим исполнителем.
 
 Сценарий назывался «Воркер перестал продлевать аренду» и доказывал, что процесс
-переживает остановку сердца. На стенде с одним воркером перехватывать некому:
-инстанс поднимает тот же воркер после истечения TTL, и формулировка про
-«другого воркера» оказывалась недоказанной — при этом выглядела доказанной,
-потому что статус доходил до конца.
+переживает остановку сердца. На стенде с одним исполнителем перехватывать
+некому: процесс поднимает он же после истечения TTL, и формулировка про
+«другого» оказывалась недоказанной — при этом выглядела доказанной, потому что
+статус доходил до конца.
+
+Названия приведены к словарю `docs/UI-GLOSSARY.md`: на экране «воркер» и
+«аренда» не остались, и проверка обязана искать то, что написано.
 """
 
 import re
@@ -22,12 +25,12 @@ def _lease_scenario() -> str:
     return text[start : start + 2000]
 
 
-def test_scenario_does_not_claim_another_worker() -> None:
+def test_scenario_does_not_claim_another_executor() -> None:
     scenario = _lease_scenario()
 
-    # На одном воркере перехвата нет, и обещание «забирает другой воркер»
+    # На одном исполнителе перехвата нет, и обещание «забирает другой»
     # проверяется на защите человеком, который знает конфигурацию стенда.
-    assert "другой воркер" not in scenario.split("title:")[0]
+    assert "другой исполнитель" not in scenario.split("title:")[0]
 
 
 def test_scenario_says_what_it_needs() -> None:
@@ -35,7 +38,7 @@ def test_scenario_says_what_it_needs() -> None:
 
     # Условие должно быть названо рядом с утверждением, а не в документации,
     # которую читают после, когда замечать уже поздно.
-    assert "двух воркеров" in scenario
+    assert "двух исполнителей" in scenario
 
 
 def test_scenario_states_what_it_proves() -> None:
@@ -48,7 +51,7 @@ def test_operations_explains_how_to_get_two_workers() -> None:
     text = OPERATIONS.read_text(encoding="utf-8")
 
     # Команда без `--no-deps` поднимает весь стенд, включая второй сервис
-    # воркеров: это уже ловилось с замерами.
+    # исполнителей: это уже ловилось с замерами.
     assert re.search(r"up -d --no-deps --scale worker=2", text)
     assert "/api/workers" in text
 
@@ -56,4 +59,4 @@ def test_operations_explains_how_to_get_two_workers() -> None:
 def test_operations_table_does_not_promise_a_handover() -> None:
     text = OPERATIONS.read_text(encoding="utf-8")
 
-    assert "перехват инстанса другим воркером" not in text
+    assert "перехват процесса другим исполнителем" not in text

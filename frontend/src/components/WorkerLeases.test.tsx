@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 /**
- * Панель аренды: кто держит процессы и кто давно не отвечал.
+ * Панель закрепления: кто держит процессы и кто давно не отвечал.
  *
- * Панель показывает главное свойство аренды — владелец меняется сам после
- * смерти воркера — и потому обязана отличать три вещи: воркер работает,
- * воркер молчит, и воркера нет вовсе. Пустой список и «молчат» выглядят на
+ * Панель показывает главное свойство закрепления — владелец меняется сам после
+ * смерти исполнителя — и потому обязана отличать три вещи: исполнитель работает,
+ * исполнитель молчит, и исполнителя нет вовсе. Пустой список и «молчат» выглядят на
  * экране одинаково, а разница ровно та, ради которой панель существует.
  */
 
@@ -18,7 +18,7 @@ function instance(
   id: string,
   owner: string | null,
   step: string | null,
-  heartbeat: string | null,
+  lastHeartbeat: string | null,
 ): WorkflowInstance {
   return {
     id,
@@ -28,7 +28,7 @@ function instance(
     variables: {},
     lease_owner: owner,
     lease_expires_at: null,
-    heartbeat_at: heartbeat,
+    heartbeat_at: lastHeartbeat,
     created_at: '2026-03-01T10:00:00Z',
     updated_at: '2026-03-01T10:00:00Z',
   } as unknown as WorkflowInstance
@@ -36,15 +36,15 @@ function instance(
 
 afterEach(cleanup)
 
-describe('панель аренды', () => {
-  it('говорит прямо, что аренду никто не держит', () => {
+describe('панель закрепления', () => {
+  it('говорит прямо, что закрепление никто не держит', () => {
     render(<WorkerLeases instances={[instance('i-1', null, 'charge', null)]} />)
 
-    expect(screen.getByText('Никто не держит аренду — воркеры простаивают')).toBeTruthy()
+    expect(screen.getByText('Никто не держит процессы — исполнители простаивают')).toBeTruthy()
     expect(screen.getByText(/1 свободно/)).toBeTruthy()
   })
 
-  it('группирует инстансы по владельцу аренды', () => {
+  it('группирует процессы по владельцу закрепления', () => {
     render(
       <WorkerLeases
         instances={[
@@ -57,18 +57,18 @@ describe('панель аренды', () => {
 
     expect(screen.getByText('w1')).toBeTruthy()
     expect(screen.getByText('w2')).toBeTruthy()
-    expect(screen.getByText(/2 с арендой/)).toBeTruthy()
+    expect(screen.getByText(/2 закреплено/)).toBeTruthy()
   })
 
-  it('показывает прочерк вместо молчания воркера', () => {
-    // Пустой heartbeat и «его нет» выглядели бы одинаково, и панель не могла
-    // бы сказать, воркер ли молчит или его просто нет в списке.
+  it('показывает прочерк вместо молчания исполнителя', () => {
+    // Пустой активность и «его нет» выглядели бы одинаково, и панель не могла
+    // бы сказать, исполнитель ли молчит или его просто нет в списке.
     render(<WorkerLeases instances={[instance('i-1', 'w1', 'charge', null)]} />)
 
-    expect(screen.getByText('heartbeat —')).toBeTruthy()
+    expect(screen.getByText('активность —')).toBeTruthy()
   })
 
-  it('показывает шаг каждого инстанса, а не только владельца', () => {
+  it('показывает шаг каждого процесса, а не только владельца', () => {
     render(
       <WorkerLeases
         instances={[

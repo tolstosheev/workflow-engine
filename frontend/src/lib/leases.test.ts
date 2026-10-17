@@ -1,4 +1,4 @@
-/** Тесты группировки аренд по владельцам. */
+/** Тесты группировки закрепление по владельцам. */
 
 import { describe, expect, it } from 'vitest'
 
@@ -26,7 +26,7 @@ function instance(partial: Partial<WorkflowInstance> & { id: string }): Workflow
 }
 
 describe('collectLeases', () => {
-  it('группирует инстансы по владельцу аренды', () => {
+  it('группирует процессы по владельцу закрепления', () => {
     const leases = collectLeases([
       instance({ id: '1', lease_owner: 'w1' }),
       instance({ id: '2', lease_owner: 'w2' }),
@@ -37,13 +37,13 @@ describe('collectLeases', () => {
     expect(leases.find((lease) => lease.owner === 'w1')?.instances).toHaveLength(2)
   })
 
-  it('не учитывает инстансы без аренды', () => {
+  it('не учитывает процессы без закрепления', () => {
     const leases = collectLeases([instance({ id: '1', lease_owner: null })])
 
     expect(leases).toEqual([])
   })
 
-  it('берёт последний heartbeat среди инстансов воркера', () => {
+  it('берёт последнюю активность среди процессов исполнителя', () => {
     const leases = collectLeases([
       instance({ id: '1', lease_owner: 'w1', heartbeat_at: '2026-01-01T00:00:05Z' }),
       instance({ id: '2', lease_owner: 'w1', heartbeat_at: '2026-01-01T00:00:09Z' }),
@@ -52,7 +52,7 @@ describe('collectLeases', () => {
     expect(leases[0].lastHeartbeat).toBe('2026-01-01T00:00:09Z')
   })
 
-  it('упорядочивает воркеров по имени, чтобы список не прыгал', () => {
+  it('упорядочивает исполнителей по имени, чтобы список не прыгал', () => {
     const leases = collectLeases([
       instance({ id: '1', lease_owner: 'w10' }),
       instance({ id: '2', lease_owner: 'w2' }),

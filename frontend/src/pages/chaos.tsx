@@ -65,7 +65,7 @@ export default function ChaosPage() {
     try {
       setActive((await chaosApi.list()).active)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Не удалось получить список инъекций')
+      setError(cause instanceof Error ? cause.message : 'Не удалось получить список неисправностей')
     }
   }, [])
 
@@ -86,10 +86,10 @@ export default function ChaosPage() {
   return (
     <section className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold">Инъекция отказов</h1>
+        <h1 className="text-xl font-semibold">Внесение неисправностей</h1>
         <p className="mt-1 text-sm text-white/60">
           Правила применяются исполнителем шага до вызова обработчика. Режим
-          «Зависание» проверяет, что аренда продлевается во время долгой работы.
+          «Зависание» проверяет, что закрепление продлевается во время долгой работы.
         </p>
       </div>
 
@@ -98,7 +98,7 @@ export default function ChaosPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Сломать шаг">
           <p className="mb-3 text-sm text-white/60">
-            Пресет ломает шаг на любом инстансе: правило адресное, параллельные прогоны не мешают
+            Пресет ломает шаг на любом процессе: правило адресное, параллельные проверки не мешают
             друг другу.
           </p>
           <div className="mb-3 flex flex-wrap gap-2">
@@ -141,17 +141,17 @@ export default function ChaosPage() {
             ))}
           </div>
 
-          {/* Подписи различают поля намеренно: два поля «Инстанс» на одной
+          {/* Подписи различают поля намеренно: два поля «Процесс» на одной
               странице скринридер объявляет одинаково, и к какому из них относится
               действие рядом — остаётся угадать. */}
           <label htmlFor="chaos-instance-fail" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
-            Инстанс для инъекции (необязательно)
+            Процесс для неисправности (необязательно)
           </label>
           <input
             id="chaos-instance-fail"
             value={failInstanceId}
             onChange={(event) => setFailInstanceId(event.target.value)}
-            placeholder="любой инстанс"
+            placeholder="любой процесс"
             className="mb-3 w-full rounded-md border border-surface-border bg-surface px-3 py-1.5 font-mono text-xs"
           />
 
@@ -163,7 +163,7 @@ export default function ChaosPage() {
                   step: step || null,
                   mode,
                   instance_id: failInstanceId || null,
-                  error: 'сбой шага (инъекция)',
+                  error: 'сбой шага (неисправность)',
                 }),
               )
             }
@@ -174,8 +174,8 @@ export default function ChaosPage() {
 
         <Card title="Сломать компенсацию">
           <p className="mb-3 text-sm text-white/60">
-            Отказ при откате. Saga обещает, что возврат может не пройти, и без этого
-            правила показать провал отката было нечем: прямой шаг ломается и без
+            Отказ при компенсации. Saga обещает, что возврат может не пройти, и без
+            этого правила показать провал компенсации было нечем: прямой шаг ломается и без
             него. Правило адресовано обработчику, а не шагу.
           </p>
           <div className="flex flex-wrap gap-2">
@@ -217,19 +217,19 @@ export default function ChaosPage() {
           </div>
         </Card>
 
-        <Card title="Остановить воркер">
+        <Card title="Остановить исполнителя">
           <p className="mb-3 text-sm text-white/60">
-            Продление аренды прекращается, инстанс освобождается по TTL, и его
-            подхватывает другой воркер — это и есть проверка восстановления.
+            Продление закрепления прекращается, процесс освобождается по TTL, и его
+            подхватывает другой исполнитель — это и есть проверка восстановления.
           </p>
           <label htmlFor="chaos-instance-lease" className="mb-1 block text-xs uppercase tracking-wide text-white/40">
-            Инстанс для аренды
+            Процесс для закрепления
           </label>
           <input
             id="chaos-instance-lease"
             value={leaseInstanceId}
             onChange={(event) => setLeaseInstanceId(event.target.value)}
-            placeholder="идентификатор инстанса"
+            placeholder="идентификатор процесса"
             className="mb-3 w-full rounded-md border border-surface-border bg-surface px-3 py-1.5 font-mono text-xs"
           />
           <div className="flex gap-2">
@@ -251,7 +251,7 @@ export default function ChaosPage() {
 
         <Card title="Активные правила">
           {active.length === 0 ? (
-            <EmptyState message="Инъекций нет" />
+            <EmptyState message="Неисправностей нет" />
           ) : (
             <>
               <ul className="space-y-1 font-mono text-xs">

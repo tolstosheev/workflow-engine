@@ -8,7 +8,7 @@
  * - определение с тем же именем и версией создать нельзя, и без предложения
  *   обновить каждый, кто сохранил образец дважды, упирался в 409;
  * - проверка обязана отличать ошибку от предупреждения: ошибка — процесс не
- *   запустится, предупреждение — откатится не полностью, и путать их хуже,
+ *   запустится, предупреждение — компенсируется не полностью, и путать их хуже,
  *   чем не показывать ничего;
  * - сброс к образцу затирает набранный текст, и спрашивать об этом нужно до;
  * - образец обязан оставаться пригодным: он назван иначе, чем то, что создаёт
@@ -200,7 +200,7 @@ describe('редактор определений', () => {
     // Поле входа принимает свободный текст, и вставленный обрывок — обычное
     // дело. Сообщение движка JavaScript на русской странице объясняет ничего:
     // человек не знает, что «Unexpected token» — это про `{`, а не про сервер.
-    await fireEvent.change(screen.getByLabelText('Входные данные инстанса в формате JSON'), {
+    await fireEvent.change(screen.getByLabelText('Входные данные процесса в формате JSON'), {
       target: { value: '{ не json' },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Запустить' }))
@@ -224,13 +224,13 @@ describe('редактор определений', () => {
   it('запускает выбранное определение с введёнными данными', async () => {
     await open()
 
-    await fireEvent.change(screen.getByLabelText('Входные данные инстанса в формате JSON'), {
+    await fireEvent.change(screen.getByLabelText('Входные данные процесса в формате JSON'), {
       target: { value: '{"sku":"SKU-1","qty":2}' },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Выбрать' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Запустить выбранное определение' }))
 
-    // Входные данные уходят в запрос как есть: инстанс получает ровно то, что
+    // Входные данные уходят в запрос как есть: процесс получает ровно то, что
     // человек ввёл, и редактор не подставляет ничего от себя.
     expect(start).toHaveBeenCalledWith('d-old', { sku: 'SKU-1', qty: 2 })
   })
@@ -258,7 +258,7 @@ describe('редактор определений', () => {
     validatePayload.mockResolvedValue({
       valid: false,
       errors: [{ code: 'unknown_action', step: 'charge', message: 'обработчик не найден' }],
-      warnings: [{ code: 'no_compensation', step: 'ship', message: 'откат неполон' }],
+      warnings: [{ code: 'no_compensation', step: 'ship', message: 'компенсация не назначена' }],
     })
     await open()
 
@@ -266,7 +266,7 @@ describe('редактор определений', () => {
 
     expect(await screen.findByText('Ошибок: 1')).toBeTruthy()
     expect(screen.getByText('charge: обработчик не найден')).toBeTruthy()
-    expect(screen.getByText('ship: откат неполон')).toBeTruthy()
+    expect(screen.getByText('ship: компенсация не назначена')).toBeTruthy()
   })
 
   it('спрашивает перед сбросом набранного текста', async () => {
@@ -308,7 +308,7 @@ describe('редактор определений', () => {
 
     // Форма всегда на месте: она принадлежит редактору, а не выбору, и
     // появляться по клику означало бы лишний шаг перед каждым запуском.
-    expect(screen.getByLabelText('Входные данные инстанса в формате JSON')).toBeTruthy()
+    expect(screen.getByLabelText('Входные данные процесса в формате JSON')).toBeTruthy()
   })
 
   it('открывает запуск после выбора определения', async () => {
@@ -316,7 +316,7 @@ describe('редактор определений', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Выбрать' }))
 
-    expect(screen.getByLabelText('Входные данные инстанса в формате JSON')).toBeTruthy()
+    expect(screen.getByLabelText('Входные данные процесса в формате JSON')).toBeTruthy()
   })
 
   it('показывает, какое определение выбрано', async () => {

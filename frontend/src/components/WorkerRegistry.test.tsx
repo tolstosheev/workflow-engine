@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Реестр воркеров (ADR-0018).
+ * Реестр исполнителей (ADR-0018).
  *
  * Панель проверяется на границах, а не на красоте: главное свойство реестра в том,
- * что молчащий воркер виден отдельно от отсутствующего, и что граница молчания
+ * что молчащий исполнитель виден отдельно от отсутствующего, и что граница молчания
  * названа цифрой. Без второго подпись «не отвечает» была бы загадкой, а без
  * первого вопрос о живости системы остался бы без ответа.
  */
@@ -37,7 +37,7 @@ function record(over: Partial<WorkerRecord> = {}): WorkerRecord {
   }
 }
 
-describe('реестр воркеров', () => {
+describe('реестр исполнителей', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
   })
@@ -47,7 +47,7 @@ describe('реестр воркеров', () => {
     vi.useRealTimers()
   })
 
-  it('показывает отвечающего воркера и его счётчики', async () => {
+  it('показывает отвечающего исполнителя и его счётчики', async () => {
     const list = await load()
     list.mockResolvedValue({ items: [record()], fresh_for_seconds: 3, departed_total: 0 })
 
@@ -60,8 +60,8 @@ describe('реестр воркеров', () => {
   })
 
   it('отличает молчащего от отсутствующего', async () => {
-    // Упавший воркер обязан остаться в списке с отдельной пометкой: если бы он
-    // исчезал, «воркер молчит» и «воркера нет» стали бы одним и тем же.
+    // Упавший исполнитель обязан остаться в списке с отдельной пометкой: если бы он
+    // исчезал, «исполнитель молчит» и «исполнителя нет» стали бы одним и тем же.
     const list = await load()
     list.mockResolvedValue({
       items: [
@@ -102,7 +102,7 @@ describe('реестр воркеров', () => {
     expect(await screen.findByText(/дольше 3 с/)).toBeTruthy()
   })
 
-  it('показывает потери аренды, когда они были', async () => {
+  it('показывает потери закрепления, когда они были', async () => {
     const list = await load()
     list.mockResolvedValue({
       items: [record({ lease_lost: 3 })],
@@ -112,14 +112,14 @@ describe('реестр воркеров', () => {
 
     render(<WorkerRegistry />)
 
-    // Молчаливое число в счётчике ничего не значит: потерянная аренда — это удвоенная
-    // работа другого воркера, и её надо назвать.
-    expect(await screen.findByText('потерянных аренд 3')).toBeTruthy()
+    // Молчаливое число в счётчике ничего не значит: потерянное закрепление — это удвоенная
+    // работа другого исполнителя, и её надо назвать.
+    expect(await screen.findByText('потерянных закреплений 3')).toBeTruthy()
   })
 
   it('называет отвечающих, а не всех, кто когда-либо запускался', async () => {
     // Заголовок «12 в системе» при трёх отвечающих был просто неправдой: он
-    // считал строки реестра, а не живые воркеры.
+    // считал строки реестра, а не живые исполнители.
     const list = await load()
     list.mockResolvedValue({
       items: [
@@ -177,13 +177,13 @@ describe('реестр воркеров', () => {
     expect(screen.queryByRole('button', { name: /завершённых/ })).toBeNull()
   })
 
-  it('говорит, когда воркеров нет ни одного', async () => {
+  it('говорит, когда исполнителей нет ни одного', async () => {
     const list = await load()
     list.mockResolvedValue({ items: [], fresh_for_seconds: 3, departed_total: 0 })
 
     render(<WorkerRegistry />)
 
-    expect(await screen.findByText('Воркеров нет ни одного')).toBeTruthy()
+    expect(await screen.findByText('Исполнителей нет ни одного')).toBeTruthy()
   })
 
   it('объявляет, что реестр не прочитан', async () => {
@@ -195,7 +195,7 @@ describe('реестр воркеров', () => {
     expect(await screen.findByText('реестр недоступен')).toBeTruthy()
   })
 
-  it('читает реестр повторно, потому что сердце воркера движется', async () => {
+  it('читает реестр повторно, потому что сердце исполнителя движется', async () => {
     const list = await load()
     list.mockResolvedValue({ items: [record()], fresh_for_seconds: 3, departed_total: 0 })
 

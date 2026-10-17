@@ -46,9 +46,9 @@ async function demoDefinition(request: APIRequestContext): Promise<string> {
  * Определение с паузой и сроком. Создаётся один раз и переиспользуется.
  *
  * Активируется при каждом обращении, а не только при создании: уборка после
- * прогонов выключает его, и повторный запуск нашёл бы выключенное определение
+ * выполнений шага выключает его, и повторный запуск нашёл бы выключенное определение
  * и упал бы с «определение неактивно» — то есть проверки перестали бы
- * проходить после первого же удачного прогона.
+ * проходить после первого же удачного выполнения шага.
  */
 async function manualGateDefinition(request: APIRequestContext): Promise<string> {
   const { json } = await api(request, 'get', '/api/definitions?limit=200')
@@ -94,12 +94,12 @@ async function startInstance(request: APIRequestContext, definitionId: string): 
     input: {},
   })
   if (created.status >= 300) {
-    throw new Error(`инстанс не создан: ${JSON.stringify(created.json)}`)
+    throw new Error(`процесс не создан: ${JSON.stringify(created.json)}`)
   }
   return String((created.json as unknown as Instance).id)
 }
 
-/** Ждёт состояния инстанса, показывая его на экране. */
+/** Ждёт состояния процесса, показывая его на экране. */
 async function expectStatus(page: Page, id: string, wanted: string[]): Promise<void> {
   await page.goto(`/instances/${id}`)
   await expect(page.getByText(new RegExp(`(${wanted.join('|')})`)).first()).toBeVisible({
@@ -124,7 +124,7 @@ test.afterAll(async ({ request }) => {
 })
 
 test.beforeEach(async ({ request }) => {
-  // Чужое правило инъекции пережило бы прогон и испортило следующий.
+  // Чужое правило неисправности пережило бы выполнение шага и испортило следующий.
   await api(request, 'delete', '/api/chaos')
 })
 
@@ -134,9 +134,9 @@ test.afterEach(async ({ request }) => {
 
 test('сценарий приводит к откату через интерфейс', async ({ page, request }) => {
   // Страница сценариев обещает показать свойство, а не запустить процесс.
-  // Проверка идёт через неё целиком: кнопка, правило инъекции, ожидание конца.
+  // Проверка идёт через неё целиком: кнопка, правило неисправности, ожидание конца.
   // Если сценарий перестанет снимать правило, следующая проверка встанет на
-  // чужой инъекции — и это тоже часть договора страницы.
+  // чужой неисправности — и это тоже часть договора страницы.
   const definitionId = await demoDefinition(request)
   await api(request, 'post', `/api/definitions/${definitionId}/activate`)
 
@@ -144,7 +144,7 @@ test('сценарий приводит к откату через интерф�
   // Карточка ищется от заголовка вверх до ближайшей секции: поиск по тексту
   // секции ловит и внешние обёртки, потому что они тоже содержат этот текст.
   const rollback = page
-    .getByRole('heading', { name: 'Платёж отказывает, заказ откатывается' })
+    .getByRole('heading', { name: 'Платёж отклонён, заказ компенсируется' })
     .locator('xpath=ancestor::section[1]')
     .getByRole('button', { name: 'Запустить' })
   await rollback.click()
@@ -156,7 +156,7 @@ test('сценарий приводит к откату через интерф�
   })
 
   // Свидетельство показывается рядом: компенсация резерва реально завершилась,
-  // а не просто статус стал «откатан».
+  // а не просто статус стал «компенсирован».
   await expect(page.getByText(/резерв на складе освобождён/).first()).toBeVisible()
 
   // И правило снято: чужое правило сломало бы всё, что запустят дальше.
@@ -165,7 +165,7 @@ test('сценарий приводит к откату через интерф�
 })
 
 /**
- * Прогон сценария через интерфейс до подтверждённого утверждения.
+ * Выполнение шага сценария через интерфейс до подтверждённого утверждения.
  *
  * Карточка ищется от заголовка, а не по номеру: порядок каталога меняется, и
  * проверка, привязанная к индексу, начала бы бить по соседнему сценарию.
@@ -188,7 +188,7 @@ async function runCatalogScenario(page: Page, title: string): Promise<void> {
 test('откат, который не прошёл, остаётся разбираемым', async ({ page }) => {
   // Провал компенсации обязан быть виден как разбор: процесс стоит в
   // COMPENSATION_FAILED, а не тихо завершается. Раньше интерфейс об этом молчал.
-  await runCatalogScenario(page, 'Откат не проходит')
+  await runCatalogScenario(page, 'Компенсация не выполняется')
 
   await expect(page.getByText('провал компенсации записан в журнал').first()).toBeVisible()
 })
@@ -196,7 +196,7 @@ test('откат, который не прошёл, остаётся разби�
 test('повтор отката возвращает средства один раз', async ({ page, request }) => {
   // Сценарий снимает правило и повторяет откат вручную: проверяется, что путь
   // разбора существует в интерфейсе, а не только в API.
-  await runCatalogScenario(page, 'Повтор отката не возвращает средства дважды')
+  await runCatalogScenario(page, 'Повтор компенсации не возвращает средства дважды')
 
   const { json } = await api(request, 'get', '/api/chaos')
   expect(json.active).toEqual([])
@@ -265,7 +265,7 @@ test('страница состояния показывает метрики, �
 
   // И в разбивке по состояниям хотя бы одна строка не ноль: все нули при
   // живом процессе — это тот же дефект, только посимвольнее.
-  const breakdown = page.getByRole('table', { name: 'Инстансы по состояниям' })
+  const breakdown = page.getByRole('table', { name: 'Заказы по состояниям' })
   await expect(breakdown).toBeVisible({ timeout: 30_000 })
   await expect
     .poll(async () => {
@@ -342,10 +342,10 @@ test('сломанный шаг приводит к откату', async ({ page
   })
   const id = await startInstance(request, definitionId)
 
-  await expectStatus(page, id, ['Откатан', 'CANCELLED'])
+  await expectStatus(page, id, ['Компенсирован', 'CANCELLED'])
   // Подпись состояния встречается в шапке, в карточке, в графе и в журнале;
   // проверяем шапку, а не любое из шести вхождений.
-  await expect(page.getByText('Откатан').first()).toBeVisible()
+  await expect(page.getByText('Компенсирован').first()).toBeVisible()
 
   // Лента времени показывает долю, проведённую в шагах: шаг занимает двадцать
   // миллисекунд, а процесс живёт секунды, и именно этот разрыв — главное
@@ -361,12 +361,12 @@ test('состояние процесса подтверждается разб�
   const definitionId = await demoDefinition(request)
   await api(request, 'post', '/api/chaos/fail-step', { step: 'charge_payment', mode: 'always' })
   const id = await startInstance(request, definitionId)
-  await expectStatus(page, id, ['Откатан', 'CANCELLED'])
+  await expectStatus(page, id, ['Компенсирован', 'CANCELLED'])
 
   await page.getByRole('button', { name: 'Проверить: состояние = журнал' }).click()
 
   // Совпадение означает, что колонка догнала журнал и восстановление после
-  // падения воркера возможно: состояние читается из журнала, а не из поля.
+  // падения исполнителя возможно: состояние читается из журнала, а не из поля.
   await expect(page.getByText(/Совпадает/).first()).toBeVisible()
 })
 
@@ -406,10 +406,10 @@ test('сломанная компенсация оставляет процес�
   const id = await startInstance(request, definitionId)
 
   await page.goto(`/instances/${id}`)
-  await expect(page.getByText('Откат не удался').first()).toBeVisible({ timeout: 45_000 })
+  await expect(page.getByText('Компенсация не выполнена').first()).toBeVisible({ timeout: 45_000 })
 
   // У застрявшего процесса остаётся только повтор отката: отмена предложила бы
-  // забыть о неоткатанном резерве.
-  await expect(page.getByRole('button', { name: 'Повторить откат' })).toBeVisible()
+  // забыть о некомпенсированном резерве.
+  await expect(page.getByRole('button', { name: 'Повторить компенсацию' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Отменить' })).toHaveCount(0)
 })

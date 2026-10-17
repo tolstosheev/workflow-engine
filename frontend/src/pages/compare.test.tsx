@@ -121,7 +121,7 @@ describe('сравнение процессов', () => {
 
     // Обе стороны показаны одновременно — ради этого страница и писалась. Проверка
     // по подписям, а не по наличию списка: список есть и у стороны без
-    // прогонов, и у стороны с ними.
+    // выполнений шага, и у стороны с ними.
     expect(await screen.findByText('short-1')).toBeTruthy()
     expect(await screen.findByText('long-1')).toBeTruthy()
     expect(await screen.findByText('20 мс жизни')).toBeTruthy()
@@ -166,10 +166,10 @@ describe('сравнение процессов', () => {
   })
 
   it('объясняет, если процесс не прочитался', async () => {
-    get.mockRejectedValue(new Error('инстанс недоступен'))
+    get.mockRejectedValue(new Error('процесс недоступен'))
 
     renderAt('/compare?a=short-1&b=long-1')
 
-    expect(await screen.findByText('инстанс недоступен')).toBeTruthy()
+    expect(await screen.findByText('процесс недоступен')).toBeTruthy()
   })
 })

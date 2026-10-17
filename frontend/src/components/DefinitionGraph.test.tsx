@@ -4,7 +4,7 @@
  *
  * Ценность схемы в том, что на ней видно не только «как объявлено», но и «что
  * с этим произошло». Значит проверяются две вещи: раскладка строится по
- * объявлению, а цвет узла берётся из прогона шага, а не из статуса процесса —
+ * объявлению, а цвет узла берётся из выполнения шага шага, а не из статуса процесса —
  * `COMPENSATED` у процесса и у шага означают разное.
  */
 
@@ -91,7 +91,7 @@ describe('состояние узла', () => {
     expect(states.get('charge')).toBe('failed')
   })
 
-  it('не перекрашивает откатанный шаг в выполняющийся', () => {
+  it('не перекрашивает компенсированный шаг в выполняющийся', () => {
     const states = nodeStates(
       [step('charge', { compensated: true })],
       state({ current_step: 'charge', status: 'COMPENSATING' }),
@@ -160,7 +160,7 @@ describe('схема шагов', () => {
       />,
     )
 
-    expect(screen.getByLabelText('Шаг reserve_inventory: откатан')).toBeTruthy()
+    expect(screen.getByLabelText('Шаг reserve_inventory: компенсирован')).toBeTruthy()
   })
 
   /** Узел доступен по наведению и по фокусу: подпись шага обязана открываться обоими. */
@@ -218,7 +218,7 @@ describe('схема шагов', () => {
     render(<DefinitionGraph definition={DEFINITION} steps={[]} />)
 
     expect(screen.getByText('обратное ребро цикла')).toBeTruthy()
-    expect(screen.getByText('откатан')).toBeTruthy()
+    expect(screen.getByText('компенсирован')).toBeTruthy()
   })
 
   it('зовёт выбранный шаг, когда он передан', () => {

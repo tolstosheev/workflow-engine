@@ -80,7 +80,7 @@ describe('отчёт о процессе', () => {
     const text = buildInstanceReport({ instance, state, steps, timeline: [timelineEntry()], events })
 
     expect(text).toContain('order_fulfillment')
-    expect(text).toContain('Откатан')
+    expect(text).toContain('Компенсирован')
     expect(text).toContain(abcdef12())
   })
 

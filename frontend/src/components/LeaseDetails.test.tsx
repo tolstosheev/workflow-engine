@@ -17,9 +17,9 @@ function freezeClock() {
   vi.setSystemTime(NOW)
 }
 
-describe('аренда на инстансе', () => {
+describe('закрепление на процессе', () => {
   it('показывает, сколько осталось до истечения', () => {
-    // Важно не «кто держит», а «до какого»: по истечении срока инстанс
+    // Важно не «кто держит», а «до какого»: по истечении срока процесс
     // свободен для захвата, и в этом суть решения вместо блокировок.
     freezeClock()
 
@@ -32,7 +32,7 @@ describe('аренда на инстансе', () => {
     )
 
     expect(screen.getByText(/держит ещё 25 с/)).toBeTruthy()
-    expect(screen.getByText(/heartbeat 2 с назад/)).toBeTruthy()
+    expect(screen.getByText(/активность 2 с назад/)).toBeTruthy()
   })
 
   it('отсчитывает живьём, а не показывает значение на момент монтирования', () => {
@@ -53,14 +53,14 @@ describe('аренда на инстансе', () => {
     render(<LeaseDetails owner="worker-2" expiresAt="2026-03-01T09:59:00Z" heartbeatAt={null} />)
 
     // Минус в подписи читался бы как ошибка; на самом деле это и есть
-    // interesting state: инстанс свободен, и его заберёт кто угодно.
-    expect(screen.getByText(/срок истёк, инстанс свободен для захвата/)).toBeTruthy()
+    // interesting state: процесс свободен, и его заберёт кто угодно.
+    expect(screen.getByText(/срок истёк, процесс свободен/)).toBeTruthy()
   })
 
-  it('объясняет свободный инстанс вместо пустой строки', () => {
+  it('объясняет свободный процесс вместо пустой строки', () => {
     render(<LeaseDetails owner={null} expiresAt={null} heartbeatAt={null} />)
 
-    expect(screen.getByText(/Аренды нет/)).toBeTruthy()
+    expect(screen.getByText(/Закрепления нет/)).toBeTruthy()
   })
 
   it('не сбивается, если срок неизвестен', () => {
@@ -68,6 +68,6 @@ describe('аренда на инстансе', () => {
 
     render(<LeaseDetails owner="worker-1" expiresAt={null} heartbeatAt={null} />)
 
-    expect(screen.getByText(/срок аренды неизвестен/)).toBeTruthy()
+    expect(screen.getByText(/срок закрепления неизвестен/)).toBeTruthy()
   })
 })

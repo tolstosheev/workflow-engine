@@ -1,10 +1,5 @@
-/**
- * Граница ошибок.
- *
- * Без неё необработанное исключение оставляет белый экран без единого слова:
- * неизвестно, упал ли интерфейс или данные. Показывается что произошло и
- * куда идти дальше.
- */
+/** Без границы необработанное исключение оставляет белый экран без слов. */
+
 
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
@@ -42,7 +37,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <h1 className="text-lg font-semibold text-danger">Интерфейс не смог отобразить страницу</h1>
         <p className="mt-2 text-sm text-white/70">
           Данные при этом на месте: процессы продолжают исполняться, а журнал событий доступен на
-          странице инстансов.
+          странице процессов.
         </p>
         <pre className="mt-3 overflow-auto rounded bg-surface p-3 text-xs text-white/60">
           {error.message}

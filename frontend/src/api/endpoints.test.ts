@@ -69,7 +69,7 @@ describe('определения', () => {
   })
 })
 
-describe('инстансы', () => {
+describe('процессы', () => {
   const cases: [string, () => Promise<unknown>, string, string][] = [
     ['список', () => instances.list(), 'GET', '/api/instances'],
     ['чтение', () => instances.get('i1'), 'GET', '/api/instances/i1'],
@@ -118,13 +118,13 @@ describe('инстансы', () => {
   })
 })
 
-describe('инъекции отказов', () => {
+describe('неисправности отказов', () => {
   const cases: [string, () => Promise<unknown>, string, string][] = [
     ['список', () => chaos.list(), 'GET', '/api/chaos'],
     ['сломать шаг', () => chaos.failStep({ mode: 'once' }), 'POST', '/api/chaos/fail-step'],
     ['отключить сервис', () => chaos.failService('payments'), 'POST', '/api/chaos/fail-service'],
     [
-      'остановить воркер',
+      'остановить исполнитель',
       () => chaos.stopLease('i1', 40),
       'POST',
       '/api/chaos/stop-lease',
@@ -140,7 +140,7 @@ describe('инъекции отказов', () => {
     expect(last().init?.method ?? 'GET').toBe(method)
   })
 
-  it('передаёт инъекцию шага целиком', async () => {
+  it('передаёт неисправность шага целиком', async () => {
     await chaos.failStep({ mode: 'always', step: 'charge_payment', instance_id: 'i1' })
 
     expect(JSON.parse(String(last().init?.body))).toEqual({

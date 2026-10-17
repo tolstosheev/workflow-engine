@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Список инстансов: поиск и сортировка должны быть видны на экране.
+ * Список процессов: поиск и сортировка должны быть видны на экране.
  *
  * Обе функции считались верно и результат выбрасывался: страница рендерила
  * исходный список, а счётчик под поисковой строкой показывал отфильтрованное
@@ -97,8 +97,8 @@ async function search(text: string): Promise<void> {
 /**
  * Подпись поля поиска обязана называть то, что ищется.
  *
- * У инстанса нет имени — есть идентификатор, — а поле ищет по имени процесса.
- * Разные подписи у одного поля («инстанс» и «процесс») означают, что скринридер
+ * У процесса нет имени — есть идентификатор, — а поле ищет по имени процесса.
+ * Разные подписи у одного поля («процесс» и «процесс») означают, что скринридер
  * читает не то, что делает страница.
  */
 function searchLabel(): string {
@@ -122,7 +122,7 @@ beforeEach(() => {
   })
 })
 
-describe('список инстансов', () => {
+describe('список процессов', () => {
   describe('состояние списка в адресе', () => {
     it('не засоряет адрес, пока ничего не выбрано', () => {
       renderPage()
@@ -295,7 +295,7 @@ describe('список инстансов', () => {
     })
 
     await fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
-    expect(await screen.findByText(/Инстансов пока нет/)).toBeTruthy()
+    expect(await screen.findByText(/Заказов пока нет/)).toBeTruthy()
   })
 
   it('объясняет, если уборка не вышла', async () => {
@@ -312,13 +312,13 @@ describe('список инстансов', () => {
 
   it('объясняет, если процесс не вернулся из архива', async () => {
     const { instances } = await import('@/api/client')
-    vi.mocked(instances.unarchive).mockRejectedValueOnce(new Error('инстанс не найден'))
+    vi.mocked(instances.unarchive).mockRejectedValueOnce(new Error('процесс не найден'))
 
     renderPage('/?archive=1')
     const restores = await screen.findAllByRole('button', { name: 'Вернуть в список' })
     await fireEvent.click(restores[0])
 
-    expect(await screen.findByText('инстанс не найден')).toBeTruthy()
+    expect(await screen.findByText('процесс не найден')).toBeTruthy()
   })
 
   it('показывает архив по переключателю и возвращает процесс', async () => {

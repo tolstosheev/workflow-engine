@@ -184,6 +184,7 @@ workflow-engine/
 | [`docs/API.md`](docs/API.md) | REST-эндпоинты, SSE-события, примеры запросов |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Окружение, запуск, отладка, тесты |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Эксплуатация, наблюдаемость, типовые сбои |
+| [`docs/UI-GLOSSARY.md`](docs/UI-GLOSSARY.md) | Словарь надписей интерфейса |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Замеры производительности и условия их получения |
 | [`docs/DEPLOYMENT-ACT.md`](docs/DEPLOYMENT-ACT.md) | Акт внедрения: состав, испытания, границы применимости |
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records |

@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 /**
- * Панель инъекции отказов.
+ * Панель неисправности отказов.
  *
  * Панель ломает систему намеренно, поэтому важнее другое: она обязана честно
- * показывать, что сломано сейчас, и не выдавать неудачный запрос за «инъекций
+ * показывать, что сломано сейчас, и не выдавать неудачный запрос за «неисправностей
  * нет». И отдельно — адресовать действие туда, куда оператор его направил.
  *
- * Тест на два поля инстанса ловит дефект, который выглядел безобидно: оба поля
- * были связаны с одним значением, поэтому адрес, введённый для инъекции в шаг,
- * молча применялся и к остановке аренды — к совершенно другому действию.
+ * Тест на два поля процесса ловит дефект, который выглядел безобидно: оба поля
+ * были связаны с одним значением, поэтому адрес, введённый для неисправности в шаг,
+ * молча применялся и к остановке закрепления — к совершенно другому действию.
  */
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -33,8 +33,8 @@ interface CompRule {
 /**
  * Обёртки передают аргументы шпиону.
  *
- * Раньше они вызывали `stopLease()` без ничего, и проверка «инъекция адресована
- * тому инстансу» физически не могла увидеть адрес: шпион получал пустой вызов.
+ * Раньше они вызывали `stopLease()` без ничего, и проверка «неисправность адресована
+ * тому процессу» физически не могла увидеть адрес: шпион получал пустой вызов.
  * Проверка проходила, потому что ничего и не утверждала.
  */
 vi.mock('@/api/client', () => ({
@@ -85,11 +85,11 @@ beforeEach(() => {
   failCompensation.mockResolvedValue({})
 })
 
-describe('панель инъекций', () => {
+describe('панель неисправностей', () => {
   it('говорит, что правил нет, а не показывает пустой список молча', async () => {
     render(<ChaosPage />)
 
-    expect(await screen.findByText('Инъекций нет')).toBeTruthy()
+    expect(await screen.findByText('Неисправностей нет')).toBeTruthy()
   })
 
   it('перечисляет действующее правило', async () => {
@@ -104,7 +104,7 @@ describe('панель инъекций', () => {
     render(<ChaosPage />)
 
     // Пресет защищает от опечатки в имени обработчика: правило с неверным
-    // именем никогда не срабатывает и выглядит как «инъекция не работает».
+    // именем никогда не срабатывает и выглядит как «неисправность не работает».
     await fireEvent.click(screen.getByRole('button', { name: 'create_shipment' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Сломать шаг' }))
     await flush()
@@ -112,28 +112,28 @@ describe('панель инъекций', () => {
     expect(failStep).toHaveBeenCalledOnce()
   })
 
-  it('не путает адрес инъекции с адресом для аренды', async () => {
+  it('не путает адрес неисправности с адресом для закрепления', async () => {
     render(<ChaosPage />)
 
-    await fireEvent.change(screen.getByLabelText('Инстанс для инъекции (необязательно)'), {
-      target: { value: 'i-инъекция' },
+    await fireEvent.change(screen.getByLabelText('Процесс для неисправности (необязательно)'), {
+      target: { value: 'i-неисправность' },
     })
-    await fireEvent.change(screen.getByLabelText('Инстанс для аренды'), {
-      target: { value: 'i-аренда' },
+    await fireEvent.change(screen.getByLabelText('Процесс для закрепления'), {
+      target: { value: 'i-закрепление' },
     })
 
     // Одно значение на оба поля означало бы, что введённый адрес применяется к
     // действию, о котором оператор не думал.
-    expect((screen.getByLabelText('Инстанс для инъекции (необязательно)') as HTMLInputElement).value).toBe(
-      'i-инъекция',
+    expect((screen.getByLabelText('Процесс для неисправности (необязательно)') as HTMLInputElement).value).toBe(
+      'i-неисправность',
     )
     expect(
-      (screen.getByLabelText('Инстанс для аренды') as HTMLInputElement)
+      (screen.getByLabelText('Процесс для закрепления') as HTMLInputElement)
         .value,
-    ).toBe('i-аренда')
+    ).toBe('i-закрепление')
   })
 
-  it('не даёт остановить аренду без адреса', async () => {
+  it('не даёт остановить закрепление без адреса', async () => {
     render(<ChaosPage />)
 
     const stop = screen.getByRole('button', { name: 'Остановить на 40 с' }) as HTMLButtonElement
@@ -141,10 +141,10 @@ describe('панель инъекций', () => {
     expect(stop.disabled).toBe(true)
   })
 
-  it('останавливает аренду по введённому адресу', async () => {
+  it('останавливает закрепление по введённому адресу', async () => {
     render(<ChaosPage />)
 
-    await fireEvent.change(screen.getByLabelText('Инстанс для аренды'), {
+    await fireEvent.change(screen.getByLabelText('Процесс для закрепления'), {
       target: { value: 'i-1' },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Остановить на 40 с' }))
@@ -154,28 +154,28 @@ describe('панель инъекций', () => {
 
   it('принимает имя шага, введённое руками', async () => {
     render(<ChaosPage />)
-    await screen.findByText('Инъекций нет')
+    await screen.findByText('Неисправностей нет')
 
     await fireEvent.change(screen.getByLabelText('Шаг'), { target: { value: 'reserve_inventory' } })
     await fireEvent.click(screen.getByRole('button', { name: 'Сломать шаг' }))
 
     // Поле существует не для красоты: имена шагов длиннее, помещаются в пресет,
-    // и без правки вручную инъекция на свой шаг была бы недоступна.
+    // и без правки вручную неисправность на свой шаг была бы недоступна.
     expect(failStep).toHaveBeenCalledWith(
       expect.objectContaining({ step: 'reserve_inventory', mode: 'always' }),
     )
   })
 
-  it('возобновляет аренду указанного инстанса', async () => {
+  it('возобновляет закрепление указанного процесса', async () => {
     render(<ChaosPage />)
-    await screen.findByText('Инъекций нет')
+    await screen.findByText('Неисправностей нет')
 
-    await fireEvent.change(screen.getByLabelText('Инстанс для аренды'), { target: { value: 'i-9' } })
+    await fireEvent.change(screen.getByLabelText('Процесс для закрепления'), { target: { value: 'i-9' } })
     await fireEvent.click(screen.getByRole('button', { name: 'Возобновить' }))
     await flush()
 
-    // Адрес аренды и адрес инъекции — разные поля намеренно: сначала было одно
-    // на оба, и остановка аренды применялась к адресу инъекции.
+    // Адрес закрепления и адрес неисправности — разные поля намеренно: сначала было одно
+    // на оба, и остановка закрепления применялась к адресу неисправности.
     expect(resumeLease).toHaveBeenCalledWith('i-9')
   })
 
@@ -195,14 +195,14 @@ describe('панель инъекций', () => {
     // запасного текста на экране оказалось бы `undefined` вместо причины.
     failStep.mockRejectedValue('просто строка')
     render(<ChaosPage />)
-    await screen.findByText('Инъекций нет')
+    await screen.findByText('Неисправностей нет')
 
     await fireEvent.click(screen.getByRole('button', { name: 'Сломать шаг' }))
 
     expect(await screen.findByText('Операция не выполнена')).toBeTruthy()
   })
 
-  it('объясняет, что список инъекций не пришёл', async () => {
+  it('объясняет, что список неисправностей не пришёл', async () => {
     // Отказ при загрузке — другое место, чем отказ действия, и сообщение у него
     // своё: человек должен понять, что не удалось прочитать состояние.
     list.mockRejectedValue(new Error('панель недоступна'))
@@ -213,7 +213,7 @@ describe('панель инъекций', () => {
 
   it('ломает компенсацию отдельным адресом, а не шагом', async () => {
     render(<ChaosPage />)
-    await screen.findByText('Инъекций нет')
+    await screen.findByText('Неисправностей нет')
 
     await fireEvent.click(screen.getByRole('button', { name: 'Отменить резерв' }))
     await flush()
@@ -228,11 +228,11 @@ describe('панель инъекций', () => {
     expect(failStep).not.toHaveBeenCalled()
   })
 
-  it('адресует компенсацию тому инстансу, что указан', async () => {
+  it('адресует компенсацию тому процессу, что указан', async () => {
     render(<ChaosPage />)
-    await screen.findByText('Инъекций нет')
+    await screen.findByText('Неисправностей нет')
 
-    await fireEvent.change(screen.getByLabelText('Инстанс для инъекции (необязательно)'), {
+    await fireEvent.change(screen.getByLabelText('Процесс для неисправности (необязательно)'), {
       target: { value: 'i-1' },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Вернуть оплату' }))
@@ -246,7 +246,7 @@ describe('панель инъекций', () => {
 
   it('уважает выбранный режим', async () => {
     render(<ChaosPage />)
-    await screen.findByText('Инъекций нет')
+    await screen.findByText('Неисправностей нет')
 
     await fireEvent.click(screen.getByRole('button', { name: 'Один раз' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Отменить доставку' }))
@@ -259,21 +259,21 @@ describe('панель инъекций', () => {
   })
 
   it('показывает причину, когда запрос не прошёл', async () => {
-    list.mockRejectedValue(new Error('сервис инъекций недоступен'))
+    list.mockRejectedValue(new Error('сервис неисправностей недоступен'))
 
     render(<ChaosPage />)
 
-    expect(await screen.findByText('сервис инъекций недоступен')).toBeTruthy()
+    expect(await screen.findByText('сервис неисправностей недоступен')).toBeTruthy()
   })
 
   it('обновляет список после включения правила', async () => {
     list.mockResolvedValueOnce({ active: [] }).mockResolvedValueOnce({ active: ['inventory'] })
 
     render(<ChaosPage />)
-    await screen.findByText('Инъекций нет')
+    await screen.findByText('Неисправностей нет')
 
     // Кнопки сервисов подписаны именем дела («Платежи»), а не названием
-    // карточки: адресат инъекции — платёжный шаг.
+    // карточки: адресат неисправности — платёжный шаг.
     await fireEvent.click(screen.getByRole('button', { name: 'Платежи' }))
 
     expect(failService).toHaveBeenCalledOnce()

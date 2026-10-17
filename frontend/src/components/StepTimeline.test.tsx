@@ -74,10 +74,10 @@ describe('лента времени процесса', () => {
     )
 
     expect(screen.getByText(/попытка 2/)).toBeTruthy()
-    expect(screen.getByText('провален')).toBeTruthy()
+    expect(screen.getByText('не выполнен')).toBeTruthy()
   })
 
-  it('помечает откатанный шаг', () => {
+  it('помечает компенсированный шаг', () => {
     render(
       <StepTimeline
         now={NOW}
@@ -92,7 +92,7 @@ describe('лента времени процесса', () => {
       />,
     )
 
-    expect(screen.getByText('откатан')).toBeTruthy()
+    expect(screen.getByText('компенсирован')).toBeTruthy()
   })
 
   it('называет шаг, который исполняется сейчас', () => {

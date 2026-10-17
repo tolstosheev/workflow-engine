@@ -116,7 +116,7 @@ export default function InstancesPage() {
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Инстансы workflow</h1>
+        <h1 className="text-xl font-semibold">Заказы</h1>
         <StreamStatus connected={connected} lastEventAt={lastEventAt} />
       </div>
 
@@ -206,19 +206,19 @@ export default function InstancesPage() {
 
       <Card>
         {loading && items.length === 0 ? (
-          <EmptyState message="Загрузка инстансов…" />
+          <EmptyState message="Загрузка заказов…" />
         ) : items.length === 0 ? (
-          <EmptyState message="Инстансов пока нет. Запустите процесс на странице определений." />
+          <EmptyState message="Заказов пока нет. Запустите процесс на странице схем." />
         ) : visible.length === 0 ? (
           <EmptyState message={`По запросу «${query.trim()}» ничего не найдено`} />
         ) : (
-          <table aria-label="Инстансы workflow" className="w-full text-left text-sm">
+          <table aria-label="Заказы" className="w-full text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-white/40">
               <tr>
                 <th scope="col" className="pb-2">Процесс</th>
                 <th scope="col" className="pb-2">Статус</th>
                 <th scope="col" className="pb-2">Текущий шаг</th>
-                <th scope="col" className="pb-2">Воркер</th>
+                <th scope="col" className="pb-2">Исполнитель</th>
                 <th scope="col" className="pb-2">Создан</th>
               </tr>
             </thead>

@@ -88,10 +88,10 @@ describe('handleEvent', () => {
     expect(useInstancesStore.getState().items[0].current_step).toBe('b')
   })
 
-  it('следит за номерами каждого инстанса отдельно', () => {
+  it('следит за номерами каждого процесса отдельно', () => {
     useInstancesStore.getState().handleEvent(event('STEP_COMPLETED', {}, { seq: 9 }))
 
-    // Номер девять у одного инстанса не означает «девять всего»: у второго
+    // Номер девять у одного процесса не означает «девять всего»: у второго
     // событий могло быть больше или меньше.
     useInstancesStore.getState().handleEvent(
       event('STEP_STARTED', { step: 'z' }, { instance_id: 'i2', seq: 1 }),
@@ -125,7 +125,7 @@ describe('handleEvent', () => {
   })
 
   it('отмечает процесс, ушедший в откат по исчерпанному циклу', () => {
-    // Цикл исчерпал проходы: процесс откатывается. Если это событие не было бы
+    // Цикл исчерпал проходы: процесс компенсируется. Если это событие не было бы
     // обработано, список показывал бы шаг, который на самом деле повторяться
     // уже перестал.
     useInstancesStore.getState().handleEvent(event('LOOP_EXHAUSTED', {}))
@@ -235,7 +235,7 @@ describe('handleEvent', () => {
 
     await useInstancesStore.getState().load()
 
-    expect(useInstancesStore.getState().error).toBe('Не удалось загрузить инстансы')
+    expect(useInstancesStore.getState().error).toBe('Не удалось загрузить заказы')
   })
 
   it('отменённый запрос не пишет в состояние', async () => {

@@ -36,9 +36,9 @@ describe('проверка состояния по журналу', () => {
     await fireEvent.click(screen.getByRole('button', { name: /состояние = журнал/ }))
 
     expect(await screen.findByText(/Совпадает/)).toBeTruthy()
-    // «Откатан» ждёт и колонка, и разбор: обе строки обязаны совпасть, и
+    // «Компенсирован» ждёт и колонка, и разбор: обе строки обязаны совпасть, и
     // именно это проверка и утверждает.
-    expect(screen.getAllByText('Откатан')).toHaveLength(2)
+    expect(screen.getAllByText('Компенсирован')).toHaveLength(2)
   })
 
   it('называет расхождение, а не прячет его', async () => {

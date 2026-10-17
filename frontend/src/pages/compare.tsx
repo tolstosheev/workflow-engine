@@ -1,16 +1,11 @@
 /**
  * Сравнение двух процессов на одном отрезке времени.
  *
- * Ответ на вопрос «во что обходится сбой», который из двух таблиц длительностей
- * получить нельзя. На раздельных шкалах процесс, прошедший за полсекунды, и
- * процесс, провисевший в ожидании сорок секунд, выглядели бы одинаково
- * быстрыми. На общем отрезке видно, что второй почти всё время ждал, и что
- * работа — это единицы процентов его жизни в обоих случаях.
- *
- * Процессы выбираются и живут в адресе: сравнение — это то, что показывают
- * комиссии, и ссылка должна переносить выбор, как и всё остальное на странице
- * списка.
+ * Отвечает на вопрос «во что обходится сбой»: на раздельных шкалах процесс за
+ * полсекунды и процесс, провисевший сорок секунд, выглядели бы одинаково
+ * быстрыми. Выбор живёт в адресе — сравнение переносят ссылкой.
  */
+
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -185,7 +180,7 @@ function SideCard({ title, side, scale }: { title: string; side: Side; scale: No
         <StatusBadge label={statusLabel(instance.status)} toneClass={statusTone(instance.status)} />
         <span className="font-mono text-white/60">{instance.id.slice(0, 8)}</span>
         <span className="text-white/40">
-          {from && to ? `${formatSpan(new Date(from).getTime(), new Date(to).getTime())} жизни` : 'нет прогонов'}
+          {from && to ? `${formatSpan(new Date(from).getTime(), new Date(to).getTime())} жизни` : 'нет выполнений'}
         </span>
       </div>
 

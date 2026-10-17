@@ -1,23 +1,12 @@
-/**
- * Выборка строк списка инстансов.
- *
- * Чистая функция без React и без DOM: правило «что показывать» легко проверить
- * тестом и легко сломать незаметно — поиск и сортировка уже молча перестали
- * влиять на таблицу, потому что считались рядом с ней.
- */
+/** Выборка строк списка: чистая функция, чтобы правило проверялось тестом. */
+
 
 import type { InstanceStatus, WorkflowInstance } from '@/types/api'
 
 /**
- * Вкладки списка — это группы состояний, а не отдельные состояния.
- *
- * Раньше кнопка «Завершённые» означала ровно `COMPLETED`, и откатанные,
- * отменённые и упавшие в неё не попадали: на стенде их большинство, и вкладка
- * выглядела пустой при полном списке. «Выполняются» не показывала ни
- * ожидающих, ни висящих пауз, а состояний `PENDING` и `WAITING` на кнопках не
- * было вообще — процесс в них был виден только под «Все».
- *
- * Покрытие всех состояний проверяется сверкой с перечислением движка:
+ * Вкладки списка — группы состояний, а не отдельные состояния: «Завершённые»
+ * означала ровно `COMPLETED`, и компенсированные, отменённые и упавшие в неё
+ * не попадали. Покрытие состояний сверяется с движком тестом
  * `engine/tests/unit/test_instance_filters_contract.py`.
  */
 export type InstanceFilterId = 'all' | 'running' | 'rollback' | 'rollback-failed' | 'finished'
@@ -36,8 +25,12 @@ export const INSTANCE_FILTERS: InstanceFilter[] = [
     label: 'Выполняются',
     statuses: ['PENDING', 'RUNNING', 'WAITING', 'PAUSED', 'CANCELLING'],
   },
-  { id: 'rollback', label: 'Откат', statuses: ['COMPENSATING'] },
-  { id: 'rollback-failed', label: 'Откат не удался', statuses: ['COMPENSATION_FAILED'] },
+  { id: 'rollback', label: 'Компенсация', statuses: ['COMPENSATING'] },
+  {
+    id: 'rollback-failed',
+    label: 'Компенсация не выполнена',
+    statuses: ['COMPENSATION_FAILED'],
+  },
   {
     id: 'finished',
     label: 'Завершённые',
@@ -89,12 +82,7 @@ export function countRunning(instances: WorkflowInstance[]): number {
   return total
 }
 
-/**
- * Отбор по имени процесса и порядок строк.
- *
- * Порядок задаётся явно, а не через сортировку на месте: `sort` мутирует
- * массив, и список, отданный наружу, менялся бы вместе с порядком отрисовки.
- */
+/** Порядок задаётся явно: `sort` мутирует массив, а список отдан наружу. */
 export function selectInstances(
   instances: WorkflowInstance[],
   { search, newestFirst }: InstanceListQuery,

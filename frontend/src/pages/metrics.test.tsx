@@ -52,8 +52,8 @@ describe('состояние системы', () => {
 
     render(<MetricsPage />)
 
-    expect(await screen.findByText(/откат не удался/)).toBeTruthy()
-    expect(screen.getByText(/потеряно аренд/)).toBeTruthy()
+    expect(await screen.findByText(/компенсация не выполнена/)).toBeTruthy()
+    expect(screen.getByText(/потеряно закреплений/)).toBeTruthy()
   })
 
   it('не выдаёт пустой ответ за отсутствие инцидентов', async () => {
@@ -72,12 +72,12 @@ describe('состояние системы', () => {
     metrics.mockResolvedValue(BROKEN)
 
     render(<MetricsPage />)
-    await screen.findByText(/откат не удался/)
+    await screen.findByText(/компенсация не выполнена/)
 
     // Панель появляется и исчезает сама, без действия человека: без объявления
     // скринридер узнаёт о тревоге только при следующем переходе по странице.
     const live = document.querySelector('[aria-live="polite"]')
 
-    expect(live?.textContent).toContain('откат не удался')
+    expect(live?.textContent).toContain('компенсация не выполнена')
   })
 })

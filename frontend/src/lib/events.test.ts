@@ -12,7 +12,7 @@ describe('фраза о событии', () => {
   it('называет шаг, попытку и причину отказа', () => {
     expect(
       describeEvent({ type: 'STEP_FAILED', payload: { step: 'charge_payment', attempt: 3, error: 'отказ банка' } }),
-    ).toBe('Шаг charge_payment провален на попытке 3: отказ банка')
+    ).toBe('Шаг charge_payment не выполнен на попытке 3: отказ банка')
   })
 
   it('различает срок ожидания человека и ожидание шага', () => {
@@ -45,7 +45,9 @@ describe('фраза о событии', () => {
         type: 'COMPENSATION_STARTED',
         payload: { for_step: 'reserve_inventory', compensation: 'app.demo:release_inventory', attempt: 1 },
       }),
-    ).toBe('Откат начат: для шага reserve_inventory вызывается app.demo:release_inventory на попытке 1')
+    ).toBe(
+    'Компенсация начата: для шага reserve_inventory вызывается app.demo:release_inventory на попытке 1',
+  )
   })
 
   it('говорит, какой компенсации не удалось и почему', () => {
@@ -54,18 +56,18 @@ describe('фраза о событии', () => {
         type: 'COMPENSATION_FAILED',
         payload: { for_step: 'reserve_inventory', attempt: 2, error: 'склад недоступен' },
       }),
-    ).toBe('Компенсация шага reserve_inventory не удалась на попытке 2: склад недоступен')
+    ).toBe('Компенсация шага reserve_inventory не выполнена на попытке 2: склад недоступен')
   })
 
   it('не придумывает отсутствующую попытку', () => {
     // Попытки в payload может не быть: тогда фраза «на попытке 0» была бы
     // выдумкой интерфейса, которой нет в журнале.
     expect(describeEvent({ type: 'STEP_FAILED', payload: { step: 'validate_cart' } })).toBe(
-      'Шаг validate_cart провален',
+      'Шаг validate_cart не выполнен',
     )
   })
 
-  it('откатывается к подписи, когда имя шага неизвестно', () => {
+  it('компенсируется к подписи, когда имя шага неизвестно', () => {
     // «Шаг ?» на экране читается как поломка интерфейса. Подпись события
     // ничего не выдумывает и показывает, что известно точно.
     expect(describeEvent({ type: 'STEP_STARTED' })).toBe('Шаг начат')
@@ -115,11 +117,13 @@ describe('фраза о событии', () => {
   })
 
   it('объясняет итоговые состояния по-разному', () => {
-    // Три итоговых состояния похожие по форме и разные по смыслу: без
-    // пояснения «процесс провален» читается как «всё упало», хотя откатывать
-    // было нечего и процесс вёл себя правильно.
-    expect(describeEvent({ type: 'INSTANCE_COMPENSATED' })).toContain('скомпенсированы')
-    expect(describeEvent({ type: 'INSTANCE_FAILED' })).toContain('отменять было нечего')
+    // Три итоговых состояния похожи по форме и разны по смыслу: без пояснения
+    // «завершился ошибкой» читается как «всё упало», хотя компенсировать было
+    // нечего и процесс вёл себя правильно.
+    expect(describeEvent({ type: 'INSTANCE_COMPENSATED' })).toContain(
+      'возвращены в исходное состояние',
+    )
+    expect(describeEvent({ type: 'INSTANCE_FAILED' })).toContain('компенсировать было нечего')
     expect(describeEvent({ type: 'INSTANCE_COMPLETED' })).toContain('все шаги выполнены')
   })
 

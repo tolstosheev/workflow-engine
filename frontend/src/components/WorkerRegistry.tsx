@@ -1,16 +1,15 @@
 /**
- * Реестр воркеров (ADR-0018).
+ * Реестр исполнителей (ADR-0018).
  *
- * Панель отвечает на два вопроса, на которые раньше ответа не было: сколько
- * воркеров в системе и кто из них молчит. Второе важнее первого — раньше
- * воркер был виден только пока держал аренду, то есть пока делал что-то, и
- * зависший выглядел так же, как отсутствующий.
+ * Отвечает на два вопроса: сколько исполнителей в системе и кто из них молчит.
+ * Второе важнее: раньше исполнитель был виден только пока держал процесс, то
+ * есть пока делал что-то, и зависший выглядел так же, как отсутствующий.
  *
- * Заголовок называет то, что в списке, а не то, что было когда-то: надпись «в
- * системе» означала всех, кто когда-либо запускался, и на стенде доходила до
- * двенадцати при трёх отвечающих. Записи старше суток скрыты за переключателем
- * вместе со своим числом — они не удалены, но и в принятии решения не участвуют.
+ * Заголовок называет то, что в списке. Записи старше суток скрыты за
+ * переключателем вместе со своим числом — они не удалены, но и в решении не
+ * участвуют.
  */
+
 
 import { useCallback, useEffect, useState } from 'react'
 
@@ -60,7 +59,7 @@ export function WorkerRegistry() {
       setDepartedTotal(page.departed_total ?? 0)
       setError(null)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Реестр воркеров не прочитан')
+      setError(cause instanceof Error ? cause.message : 'Реестр исполнителей не прочитан')
     }
   }, [showDeparted])
 
@@ -79,7 +78,7 @@ export function WorkerRegistry() {
   return (
     <section className="rounded-lg border border-surface-border bg-surface-raised p-4">
       <header className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-white">Воркеры</h2>
+        <h2 className="text-sm font-semibold text-white">Исполнители</h2>
         <span className="text-xs text-white/40">
           {items === null
             ? '…'
@@ -105,8 +104,8 @@ export function WorkerRegistry() {
       {items !== null && items.length === 0 && (
         <p className="mt-3 text-sm text-white/50">
           {departedTotal > 0
-            ? 'Сейчас в системе нет ни одного воркера; завершённые скрыты за переключателем'
-            : 'Воркеров нет ни одного'}
+            ? 'Сейчас в системе нет ни одного исполнителя; завершённые скрыты за переключателем'
+            : 'Исполнителей нет ни одного'}
         </p>
       )}
 
@@ -116,12 +115,12 @@ export function WorkerRegistry() {
             <li key={worker.worker_id} className="flex flex-wrap items-center gap-2 text-xs">
               <span className="font-mono text-white/80">{worker.worker_id}</span>
               <StatusBadge label={STATE[worker.state].label} toneClass={STATE[worker.state].tone} />
-              <span className="text-white/40">сердце {age(worker.heartbeat_at)}</span>
+              <span className="text-white/40">активность {age(worker.heartbeat_at)}</span>
               <span className="text-white/40">циклов {worker.cycles_completed}</span>
               <span className="text-white/40">шагов {worker.steps_executed}</span>
               {worker.lease_lost > 0 && (
-                <span className="text-warning" title="Циклов, оборвавшихся потерей аренды">
-                  потерянных аренд {worker.lease_lost}
+                <span className="text-warning" title="Циклов, оборвавшихся потерей закрепления">
+                  потерянных закреплений {worker.lease_lost}
                 </span>
               )}
               {worker.stopped_at && (
@@ -134,8 +133,8 @@ export function WorkerRegistry() {
 
       <p className="mt-3 text-[11px] text-white/30">
         {freshFor > 0
-          ? `Молчащим считается воркер, который не продлил сердце дольше ${freshFor} с. Упавший не удаляется: отсутствие сигнала — не отсутствие воркера.`
-          : 'Упавший воркер не удаляется из реестра: отсутствие сигнала — не отсутствие воркера.'}
+          ? `Молчащим считается исполнитель, который не подтвердил активность дольше ${freshFor} с. Упавший не удаляется: отсутствие сигнала — не отсутствие исполнителя.`
+          : 'Упавший исполнитель не удаляется из реестра: отсутствие сигнала — не отсутствие исполнителя.'}
       </p>
     </section>
   )

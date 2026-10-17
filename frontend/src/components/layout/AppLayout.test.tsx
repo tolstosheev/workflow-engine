@@ -47,7 +47,7 @@ describe('каркас', () => {
       </MemoryRouter>,
     )
 
-    for (const name of ['Инстансы', 'Определения', 'Состояние', 'Инъекция отказов']) {
+    for (const name of ['Заказы', 'Определения', 'Состояние', 'Внесение неисправностей']) {
       expect(screen.getByRole('link', { name })).toBeTruthy()
     }
   })
@@ -59,7 +59,7 @@ describe('каркас', () => {
       </MemoryRouter>,
     )
 
-    const link = screen.getByRole('link', { name: 'Инстансы' })
+    const link = screen.getByRole('link', { name: 'Заказы' })
 
     // Главная совпадает сама с собой, и без точной привязки её активность
     // вычислялась бы иначе, чем у остальных разделов.
@@ -76,6 +76,6 @@ describe('каркас', () => {
     expect(screen.getByRole('link', { name: 'Состояние' }).getAttribute('aria-current')).toBe(
       'page',
     )
-    expect(screen.getByRole('link', { name: 'Инстансы' }).getAttribute('aria-current')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Заказы' }).getAttribute('aria-current')).toBeNull()
   })
 })

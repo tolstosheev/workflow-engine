@@ -1,14 +1,11 @@
 /**
- * Граф определения workflow.
+ * Граф схемы процесса.
  *
- * Схема рисуется своими средствами: граф линейный, и библиотека раскладки
- * обошлась бы дороже кода, который она заменила бы.
- *
- * Цвет узла — его фактическое состояние в инстансе. Именно это делает
- * схему показательной: видно не только «как объявлено», но и «что с этим
- * произошло» — шаг, который откатили, и шаг, который упал, видны разными
- * цветами на одном графе.
+ * Рисуется своими средствами: граф линейный, и библиотека раскладки обошлась
+ * бы дороже кода, который она заменила бы. Цвет узла — его фактическое
+ * состояние в процессе, а не то, что объявлено в схеме.
  */
+
 
 import { useMemo, useState } from 'react'
 
@@ -23,8 +20,8 @@ const STATE_STYLES: Record<NodeState, { box: string; dot: string; label: string 
   running: { box: 'fill-accent/20 stroke-accent', dot: 'fill-accent', label: 'выполняется' },
   done: { box: 'fill-success/20 stroke-success/50', dot: 'fill-success', label: 'выполнен' },
   failed: { box: 'fill-danger/20 stroke-danger/60', dot: 'fill-danger', label: 'упал' },
-  compensated: { box: 'fill-warning/20 stroke-warning/50', dot: 'fill-warning', label: 'откатан' },
-  compensating: { box: 'fill-warning/20 stroke-warning/50', dot: 'fill-warning', label: 'откатывается' },
+  compensated: { box: 'fill-warning/20 stroke-warning/50', dot: 'fill-warning', label: 'компенсирован' },
+  compensating: { box: 'fill-warning/20 stroke-warning/50', dot: 'fill-warning', label: 'компенсируется' },
 }
 
 const EDGE_STYLES: Record<string, string> = {

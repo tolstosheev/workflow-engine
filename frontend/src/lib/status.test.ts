@@ -20,7 +20,7 @@ import {
 } from '@/lib/status'
 import type { EventType, InstanceStatus, StepRunStatus } from '@/types/api'
 
-describe('состояние инстанса', () => {
+describe('состояние процесса', () => {
   it('подписывает каждое состояние, которое движок может записать', () => {
     const statuses: InstanceStatus[] = [
       'PENDING',
@@ -42,7 +42,7 @@ describe('состояние инстанса', () => {
   })
 
   it('различает отмену и откат', () => {
-    // Подписи «Отменён» и «Откатан» — единственное, чем пользователь
+    // Подписи «Отменён» и «Компенсирован» — единственное, чем пользователь
     // отличает добровольную остановку от сбоя с компенсацией.
     expect(statusLabel('CANCELLED')).not.toBe(statusLabel('COMPENSATED'))
     expect(statusLabel('FAILED')).not.toBe(statusLabel('COMPENSATING'))
@@ -92,7 +92,7 @@ describe('подписи событий', () => {
 })
 
 describe('подпись шага', () => {
-  it('подписывает каждое состояние прогона, а не отдаёт его имя', () => {
+  it('подписывает каждое состояние выполнения шага, а не отдаёт его имя', () => {
     // Сырое `COMPLETED` в русском интерфейсе выдаёт движок, а человек читает
     // подпись: «выполнен» и «провал» говорят больше, чем имя колонки в БД.
     for (const status of ['COMPLETED', 'FAILED', 'COMPENSATED', 'RUNNING'] as StepRunStatus[]) {
@@ -100,7 +100,7 @@ describe('подпись шага', () => {
     }
   })
 
-  it('подписывает все состояния прогона, какие движок записывает', () => {
+  it('подписывает все состояния выполнения шага, какие движок записывает', () => {
     for (const status of ['RUNNING', 'COMPLETED', 'FAILED', 'COMPENSATED'] as StepRunStatus[]) {
       expect(stepLabel(status)).toBeTruthy()
     }

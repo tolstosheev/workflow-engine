@@ -1,13 +1,11 @@
 /**
  * Порядок компенсаций: фактический, а не предполагаемый.
  *
- * Важное различие этого подхода: список к откату берётся из того, что шаги
- * действительно выполнились, а не из структуры определения. Определение не
- * знает, какие шаги успели выполниться до сбоя, и рисовать по нему откат
- * значило бы показывать то, чего не было.
- *
- * Порядок обратный: зависимости между шагами обратимы только так.
+ * Список берётся из того, что шаги действительно выполнились, а не из схемы:
+ * схема не знает, какие шаги успели выполниться до сбоя. Порядок обратный —
+ * зависимости между шагами обратимы только так.
  */
+
 
 import { STATUS_LABELS } from '@/lib/status'
 import { useEffect, useState } from 'react'
@@ -37,10 +35,10 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
   return (
     <section className="rounded-lg border border-surface-border bg-surface-raised p-4">
       <header className="mb-3">
-        <h2 className="text-sm font-semibold text-white">Порядок отката</h2>
+        <h2 className="text-sm font-semibold text-white">Порядок компенсации</h2>
         <p className="mt-1 text-xs text-white/50">
-          Список к откату взят из выполненных шагов, а не из определения: определение не знает, что
-          успело выполниться. Откат идёт в обратном порядке — иначе зависимости между шагами не
+          Список компенсаций взят из выполненных шагов, а не из схемы: схема не знает, что
+          успело выполниться. Компенсация идёт в обратном порядке — иначе зависимости между шагами
           обратимы.
         </p>
       </header>
@@ -48,7 +46,7 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
       <p className="mb-3 text-xs text-white/40">
         {rollingBack
           ? `Сейчас: ${STATUS_LABELS[instance.status]}`
-          : 'Откат запускается при сбое шага, отмене процесса или нехватке проходов цикла'}
+          : 'Компенсация запускается при сбое шага, отмене процесса или нехватке проходов цикла'}
       </p>
 
       <ol className="space-y-1.5">
@@ -68,7 +66,7 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
               <span
                 className={`w-24 shrink-0 rounded border px-2 py-0.5 text-center ${MARKER_STYLES[marker]}`}
               >
-                {already ? 'откатан' : planned ? 'откат' : 'остаётся'}
+                {already ? 'компенсирован' : planned ? 'компенсация' : 'остаётся'}
               </span>
               <span className="font-mono text-white/80">{name}</span>
               {failed && <span className="text-danger/70">упал, компенсации нет</span>}
@@ -132,8 +130,8 @@ export function TimerCountdown({
     return (
       <p className="mt-1 text-xs text-warning">
         {kind === 'pause_deadline'
-          ? 'Срок ожидания истёк, процесс отменится и уйдёт в откат'
-          : 'Ожидание истекло, воркер поднимет инстанс на ближайшем цикле'}
+          ? 'Срок ожидания истёк, процесс отменится и уйдёт в компенсацию'
+          : 'Ожидание истекло, исполнитель поднимет процесс на ближайшем цикле'}
       </p>
     )
   }

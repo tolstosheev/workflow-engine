@@ -6,15 +6,10 @@ import { formatDateTime } from '@/lib/status'
 import type { DefinitionSummary, ValidationResult } from '@/types/api'
 
 /**
- * Образец определения.
- *
- * Совпадает с тем, что загружает `scripts/seed.py`, но назван иначе:
- * `make seed` создаёт `order_fulfillment` версии 1, и определение с тем же
- * именем и версией сохранить нельзя — сервер вернул бы 409. Образец должен
- * сохраняться всегда, независимо от состояния базы.
- *
- * Ожидание в конце нужно, чтобы процесс дошёл до состояния «Ожидание»:
- * без него весь процесс проходит за секунду и ждать нечего.
+ * Образец схемы: совпадает с тем, что загружает `scripts/seed.py`, но назван
+ * иначе — определение с тем же именем и версией сохранить нельзя, сервер
+ * вернул бы 409. Ожидание в конце нужно, чтобы процесс дошёл до состояния
+ * «Ожидание»: без него он проходит за секунду и ждать нечего.
  */
 const SAMPLE = `{
   "name": "demo_order",
@@ -187,7 +182,7 @@ export default function DefinitionsPage() {
       }
       const created = await instancesApi.start(definitionId, input)
       setError(null)
-      setNotice(`Инстанс ${created.id} запущен`)
+      setNotice(`Процесс ${created.id} запущен`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось запустить процесс')
       setNotice(null)
@@ -242,18 +237,18 @@ export default function DefinitionsPage() {
           </div>
           <p className="mt-2 text-xs text-white/40">
             «Проверить» разбирает текст и показывает проблемы без сохранения: ошибка в определении
-            видна до того, как под неё создадут инстанс.
+            видна до того, как под неё создадут процесс.
           </p>
         </Card>
 
         <div className="space-y-4">
           <Card title="Запуск процесса">
             <p className="mb-2 text-sm text-white/60">
-              Входные данные инстанса. JSON потому, что его читает тот же бэкенд,
-              что проверяет дефинишен.
+              Входные данные процесса. JSON потому, что его читает тот же бэкенд,
+              что проверяет схему.
             </p>
             <textarea
-              aria-label="Входные данные инстанса в формате JSON"
+              aria-label="Входные данные процесса в формате JSON"
               value={startInput}
               onChange={(event) => setStartInput(event.target.value)}
               spellCheck={false}
