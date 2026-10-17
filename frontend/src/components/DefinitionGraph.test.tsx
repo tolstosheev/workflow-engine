@@ -58,6 +58,7 @@ function state(over: Partial<InstanceState> = {}): InstanceState {
     completed_steps: ['validate_cart', 'reserve_inventory'],
     pending_compensations: [],
     is_terminal: false,
+    cancel_requested: false,
     step_iterations: {},
     ...over,
   } as unknown as InstanceState

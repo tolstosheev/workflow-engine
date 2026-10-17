@@ -184,7 +184,19 @@ export default function InstancePage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <StatusBadge label={statusLabel(instance.status)} toneClass={statusTone(instance.status)} />
+          <div className="flex flex-col items-end gap-0.5">
+            <StatusBadge
+              label={statusLabel(instance.status)}
+              toneClass={statusTone(instance.status)}
+            />
+            {/* Отмена с выполненными шагами приходит в «Компенсирован», а не в
+                «Отменён»: отменённым было что отменять. Без этой строки
+                «Компенсирован» читается как сбой, и вопрос «это отмена или
+                ошибка?» остаётся без ответа до чтения журнала. */}
+            {cancelledNote(state) && (
+              <span className="text-xs text-white/40">{cancelledNote(state)}</span>
+            )}
+          </div>
           <Button onClick={downloadReport}>Скачать отчёт</Button>
           <Actions instance={instance} onDone={load} onError={setActionError} />
         </div>
@@ -375,6 +387,21 @@ export default function InstancePage() {
       </Card>
     </section>
   )
+}
+
+/**
+ * Что сказать под статусом, если процесс отменяли.
+ *
+ * Формулировка зависит от того, что осталось от отмены: компенсация выполнила
+ * свою работу — процесс вернулся в исходное состояние; ждать больше нечего.
+ * У процесса, который отменили до первого шага, статус и так `CANCELLED`, и
+ * вторая строка была бы повтором того, что уже сказано бейджем.
+ */
+function cancelledNote(state: InstanceState | null): string | null {
+  if (!state?.cancel_requested) return null
+  if (state.status === 'CANCELLED') return null
+  if (state.status === 'COMPENSATED') return 'Отменён, изменения возвращены'
+  return 'Отмена запрошена'
 }
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {

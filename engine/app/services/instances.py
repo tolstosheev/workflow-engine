@@ -360,6 +360,7 @@ async def rebuild_state(db_session: AsyncSession, instance_id: uuid.UUID) -> dic
             "completed_steps": [],
             "pending_compensations": [],
             "is_terminal": True,
+            "cancel_requested": False,
             "step_iterations": {},
             "journal_pruned_at": pruned_at,
         }
@@ -371,6 +372,7 @@ async def rebuild_state(db_session: AsyncSession, instance_id: uuid.UUID) -> dic
         "completed_steps": state.completed_steps,
         "pending_compensations": steps_to_compensate(state),
         "is_terminal": state.is_terminal,
+        "cancel_requested": state.cancel_requested,
         "step_iterations": state.step_iterations,
         "journal_pruned_at": None,
     }

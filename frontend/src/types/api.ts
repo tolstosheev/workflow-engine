@@ -147,6 +147,12 @@ export interface InstanceState {
   completed_steps: string[]
   pending_compensations: string[]
   is_terminal: boolean
+  /**
+   * Просили ли отмену. Отмена с выполненными шагами приходит в `COMPENSATED`,
+   * а не в `CANCELLED`, и без этого поля отменённый процесс не отличить от
+   * упавшего по сбою.
+   */
+  cancel_requested: boolean
   /** Сколько раз шаг успешно завершился: для показа «проход 2 из 3». */
   step_iterations: Record<string, number>
 }
