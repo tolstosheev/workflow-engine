@@ -11,6 +11,15 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+# Вид ожидания: ожидание шага или срок ожидания человека.
+#
+# Живёт здесь, а не в планировщике, потому что читает его и разбор журнала,
+# а планировщик импортирует журнал: оттуда константа была бы недостижима без
+# циклического импорта. Строка попадает и в событие `TIMER_SCHEDULED`, по
+# которому разбор отличает одно ожидание от другого (ADR-0016).
+STEP_WAIT = "step"
+PAUSE_DEADLINE = "pause_deadline"
+
 
 class InstanceStatus(StrEnum):
     """Состояние инстанса workflow."""
@@ -18,6 +27,9 @@ class InstanceStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     WAITING = "WAITING"
+    # Процесс встал и ждёт решения человека: активен, но не берётся в работу,
+    # пока не придёт команда возобновления (ADR-0014).
+    PAUSED = "PAUSED"
     CANCELLING = "CANCELLING"
     COMPENSATING = "COMPENSATING"
     COMPENSATION_FAILED = "COMPENSATION_FAILED"
@@ -32,6 +44,7 @@ ACTIVE_STATUSES: frozenset[InstanceStatus] = frozenset(
         InstanceStatus.PENDING,
         InstanceStatus.RUNNING,
         InstanceStatus.WAITING,
+        InstanceStatus.PAUSED,
         InstanceStatus.CANCELLING,
         InstanceStatus.COMPENSATING,
         InstanceStatus.COMPENSATION_FAILED,
@@ -74,7 +87,11 @@ class EventType(StrEnum):
     """
 
     INSTANCE_CREATED = "INSTANCE_CREATED"
-    INSTANCE_STARTED = "INSTANCE_STARTED"
+    # Процесс встал на паузу и ждёт человека. Отдельное событие, а не флаг:
+    # состояние обязано выводиться из журнала, иначе подхват воркера после
+    # перезапуска дал бы другое поведение, чем до него (ADR-0014).
+    INSTANCE_PAUSED = "INSTANCE_PAUSED"
+    INSTANCE_RESUMED = "INSTANCE_RESUMED"
     STEP_STARTED = "STEP_STARTED"
     STEP_COMPLETED = "STEP_COMPLETED"
     STEP_FAILED = "STEP_FAILED"
@@ -89,7 +106,6 @@ class EventType(StrEnum):
     COMPENSATION_STARTED = "COMPENSATION_STARTED"
     COMPENSATION_COMPLETED = "COMPENSATION_COMPLETED"
     COMPENSATION_FAILED = "COMPENSATION_FAILED"
-    COMPENSATION_SKIPPED = "COMPENSATION_SKIPPED"
     INSTANCE_COMPLETED = "INSTANCE_COMPLETED"
     INSTANCE_COMPENSATED = "INSTANCE_COMPENSATED"
     # Отказ без компенсации: упал первый шаг, откатывать нечего.
@@ -101,4 +117,3 @@ class EventType(StrEnum):
     # процесс завершался, минуя откат выполненных шагов.
     INSTANCE_CANCEL_REQUESTED = "INSTANCE_CANCEL_REQUESTED"
     INSTANCE_CANCELLED = "INSTANCE_CANCELLED"
-    LEASE_EXPIRED = "LEASE_EXPIRED"

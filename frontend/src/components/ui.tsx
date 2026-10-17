@@ -24,7 +24,14 @@ export function Card({ title, actions, children, className = '' }: CardProps) {
     <section className={`rounded-lg border border-surface-border bg-surface-raised p-4 ${className}`}>
       {(title || actions) && (
         <header className="mb-3 flex items-center justify-between gap-3">
-          {title}
+          {/* Заголовок карточки — настоящий заголовок, а не текст в шапке.
+              Иначе на странице с полдюжиной карточек скринридер выдаёт подряд
+              безымянные секции, и перейти к нужной можно только глазами. */}
+          {typeof title === 'string' ? (
+            <h2 className="text-sm font-semibold text-white">{title}</h2>
+          ) : (
+            title
+          )}
           {actions}
         </header>
       )}
@@ -43,9 +50,18 @@ const BUTTON_VARIANTS: Record<NonNullable<ButtonProps['variant']>, string> = {
   danger: 'bg-danger/20 text-danger border-danger/40 hover:bg-danger/30',
 }
 
-export function Button({ variant = 'secondary', className = '', ...props }: ButtonProps) {
+export function Button({
+  variant = 'secondary',
+  className = '',
+  type = 'button',
+  ...props
+}: ButtonProps) {
   return (
     <button
+      // По умолчанию кнопка не отправляет форму: внутри любой формы
+      // `type` по умолчанию равен `submit`, и обычное нажатие на кнопку
+      // панели отправляло бы форму вместо своего действия.
+      type={type}
       {...props}
       className={`rounded-md border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${BUTTON_VARIANTS[variant]} ${className}`}
     />
@@ -67,7 +83,12 @@ interface ErrorStateProps {
 
 export function ErrorState({ message, onRetry }: ErrorStateProps) {
   return (
-    <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+    // role=alert: без него скринридер не объявит об ошибке — текст в разметке
+    // не прерывает чтение, и пользователь узнает о сбое только случайно.
+    <div
+      role="alert"
+      className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger"
+    >
       <p>{message}</p>
       {onRetry && (
         <Button className="mt-2" onClick={onRetry}>

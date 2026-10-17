@@ -606,6 +606,24 @@ LIMIT :batch
 
 Память процесса в учёте ожиданий не участвует.
 
+### 10.3 Срок ожидания человека
+
+Шаг с `wait_for: manual` может объявить `pause_timeout_seconds`. По умолчанию
+срока нет, и пауза живёт, пока придёт команда возобновления.
+
+Срок — тот же durable-таймер, но с видом `pause_deadline`. Вид обязателен:
+на шаге могут стоять и ожидание, и срок, и без различия `planned_for` принял
+бы одно за другое.
+
+По истечении срока пишется `INSTANCE_CANCEL_REQUESTED`, и процесс уходит в
+существующий путь отката. Продолжение шага было бы соблазнительно, но
+действие шага необратимо: для ворот согласования «не получил ответа за срок —
+значит, платим» означает платить без согласования.
+
+Планируется срок в той же транзакции, что и `INSTANCE_PAUSED`. Без этого
+пауза осталась бы без будильника: `PAUSED` исключён из подбора воркером,
+и разбудить её было бы некому.
+
 ---
 
 ## 11. Машина состояний инстанса
@@ -619,6 +637,11 @@ stateDiagram-v2
     RUNNING --> WAITING: таймер ожидания создан
     WAITING --> RUNNING: таймер сработал
 
+    RUNNING --> PAUSED: шаг ждёт решения человека (wait_for: manual)
+    PAUSED --> RUNNING: INSTANCE_RESUMED
+    PAUSED --> CANCELLING: INSTANCE_CANCEL_REQUESTED
+    PAUSED --> CANCELLING: истёк pause_timeout_seconds (ADR-0016)
+
     RUNNING --> COMPENSATING: STEP_FAILED и попытки исчерпаны
     RUNNING --> CANCELLING: INSTANCE_CANCEL_REQUESTED
     WAITING --> CANCELLING: INSTANCE_CANCEL_REQUESTED
@@ -626,7 +649,8 @@ stateDiagram-v2
 
     COMPENSATING --> COMPENSATING: COMPENSATION_STARTED / COMPLETED
     COMPENSATING --> COMPENSATION_FAILED: компенсация провалена, попытки исчерпаны
-    COMPENSATION_FAILED --> COMPENSATING: ручной перезапуск компенсации
+    COMPENSATION_FAILED --> COMPENSATING: повтор компенсации после паузы и выбора
+
 
     COMPENSATING --> COMPENSATED: все компенсации выполнены
     CANCELLING --> CANCELLED: компенсировать нечего
@@ -640,11 +664,11 @@ stateDiagram-v2
     FAILED --> [*]
 
     note right of COMPENSATION_FAILED
-        Ручное разбирательство.
-        Эффекты выполненных шагов
-        остаются в силе: компенсация
-        не сработала, а откатывать
-        откат нельзя.
+        Провал — не конец процесса:
+        повтор отката воркер берёт сам,
+        пока служба доступна. Эффекты
+        выполненных шагов остаются
+        в силе до успешного отката.
     end note
 
     note right of WAITING
@@ -696,6 +720,8 @@ stateDiagram-v2
 | Сбой шага приводит к откату | `::test_failed_step_triggers_compensation` |
 | Откат идёт в обратном порядке | `::test_compensation_covers_only_completed_steps` |
 | Провал компенсации виден как `COMPENSATION_FAILED` | `::test_failed_compensation_is_visible` |
+| Провал компенсации повторяется без исполнения упавшего шага | `::test_compensation_retries_after_failure` |
+| Повтор отката не откатывает уже сделанный шаг | `::test_retry_does_not_repeat_finished_compensation` |
 | После перехвата нет дублей шагов | `::test_resumed_worker_does_not_duplicate_steps` |
 | Replay после паузы совпадает с непрерывным проходом | `::test_replay_after_pause_matches_continuous_run` |
 | Два воркера не выполняют один шаг | `::test_two_workers_do_not_execute_same_step` |

@@ -33,10 +33,6 @@ class WorkflowNotRunnableError(ConflictError):
     """Инстанс в статусе, из которого нельзя запустить исполнение."""
 
 
-class CompensationFailedError(ConflictError):
-    """Компенсация исчерпала попытки — требуется ручное разбирательство."""
-
-
 class LeaseLostError(AppError):
     """Инстанс перехвачен другим воркером: текущий обязан прекратить работу."""
 

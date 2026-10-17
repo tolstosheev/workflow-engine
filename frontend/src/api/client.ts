@@ -1,20 +1,18 @@
-/**
- * Клиент REST API и потока событий.
- *
- * Компоненты не знают URL: всё общение с бэкендом идёт через этот слой, и
- * контракт меняется в одном месте.
- */
+/** Клиент REST API и потока событий: компоненты не знают адресов. */
+
 
 import type {
   ActionResult,
   ChaosResult,
   DefinitionSummary,
   InstanceState,
+  InventoryOut,
   Paginated,
   TimelineEntry,
   ValidationResult,
   WorkflowDefinition,
   WorkflowEvent,
+  WorkerList,
   WorkflowInstance,
   StepRun,
 } from '@/types/api'
@@ -96,33 +94,60 @@ export const definitions = {
   activate: (id: string) =>
     request<WorkflowDefinition>(`/api/definitions/${id}/activate`, { method: 'POST' }),
 
-  deactivate: (id: string) =>
-    request<WorkflowDefinition>(`/api/definitions/${id}/deactivate`, { method: 'POST' }),
+
 }
 
 // --- Инстансы -------------------------------------------------------------
 
 export const instances = {
-  list: (params: { limit?: number; offset?: number; status?: string; definition_id?: string } = {}) => {
+  list: (
+    params: {
+      limit?: number
+      offset?: number
+      status?: string
+      definition_id?: string
+      archived?: 'active' | 'archived' | 'all'
+    } = {},
+    signal?: AbortSignal,
+  ) => {
     const query = new URLSearchParams()
     if (params.limit !== undefined) query.set('limit', String(params.limit))
     if (params.offset !== undefined) query.set('offset', String(params.offset))
     if (params.status) query.set('status', params.status)
     if (params.definition_id) query.set('definition_id', params.definition_id)
+    // По умолчанию архивные скрыты, но параметр уходит всегда: так список
+    // ведёт себя одинаково независимо от настроек сервера.
+    query.set('archived', params.archived ?? 'active')
     const suffix = query.toString() ? `?${query}` : ''
-    return request<Paginated<WorkflowInstance>>(`/api/instances${suffix}`)
+    return request<Paginated<WorkflowInstance>>(`/api/instances${suffix}`, { signal })
   },
 
-  get: (id: string) => request<WorkflowInstance>(`/api/instances/${id}`),
+  get: (id: string, signal?: AbortSignal) =>
+    request<WorkflowInstance>(`/api/instances/${id}`, { signal }),
 
   events: (id: string, fromSeq = 0) =>
     request<{ items: WorkflowEvent[]; total: number }>(`/api/instances/${id}/events?from_seq=${fromSeq}`),
 
-  steps: (id: string) => request<{ items: StepRun[] }>(`/api/instances/${id}/steps`),
+  steps: (id: string, signal?: AbortSignal) =>
+    request<{ items: StepRun[] }>(`/api/instances/${id}/steps`, { signal }),
 
-  timeline: (id: string) => request<{ items: TimelineEntry[] }>(`/api/instances/${id}/timeline`),
+  timeline: (id: string, signal?: AbortSignal) =>
+    request<{ items: TimelineEntry[] }>(`/api/instances/${id}/timeline`, { signal }),
 
-  state: (id: string) => request<InstanceState>(`/api/instances/${id}/state`),
+  state: (id: string, signal?: AbortSignal) =>
+    request<InstanceState>(`/api/instances/${id}/state`, { signal }),
+
+  /** Убирает завершённые процессы из списка. Это не удаление (ADR-0017). */
+  archive: (before?: string) =>
+    request<{ archived: number; message: string }>('/api/instances/archive', {
+      method: 'POST',
+      body: JSON.stringify(before ? { before } : {}),
+    }),
+
+  unarchive: (id: string) =>
+    request<{ status: string; message: string }>(`/api/instances/${id}/unarchive`, {
+      method: 'POST',
+    }),
 
   start: (definitionId: string, input: Record<string, unknown>) =>
     request<WorkflowInstance>('/api/instances', {
@@ -131,6 +156,8 @@ export const instances = {
     }),
 
   cancel: (id: string) => request<ActionResult>(`/api/instances/${id}/cancel`, { method: 'POST' }),
+
+  resume: (id: string) => request<ActionResult>(`/api/instances/${id}/resume`, { method: 'POST' }),
 
   forceComplete: (id: string, reason: string) =>
     request<ActionResult>(`/api/instances/${id}/complete`, {
@@ -144,6 +171,29 @@ export const instances = {
 
 // --- Инъекция отказов ------------------------------------------------------
 
+export const workers = {
+  /**
+   * Реестр воркеров (ADR-0018): отдаёт и не отвечающих.
+   *
+   * `departed` включает записи старше суток. По умолчанию они скрыты: на стенде
+   * их набирается за неделю, и панель из них состояла из одних давно ушедших.
+   * Параметр уходит всегда — иначе переключатель менял бы выдачу, а сервер молчал
+   * бы о скрытых строках.
+   */
+  list: (params: { departed?: boolean } = {}) =>
+    request<WorkerList>(`/api/workers?departed=${params.departed === true}`),
+}
+
+export const demo = {
+  /**
+   * Склад демонстрационной области: только чтение.
+   *
+   * Ручки изменения нет и не будет: человек не должен освобождать резерв
+   * кнопкой и наблюдать «успех» там, где демонстрируется компенсация.
+   */
+  inventory: () => request<InventoryOut>('/api/demo/inventory'),
+}
+
 export const chaos = {
   list: () => request<ChaosResult>('/api/chaos'),
 
@@ -154,6 +204,14 @@ export const chaos = {
     request<ChaosResult>('/api/chaos/fail-service', {
       method: 'POST',
       body: JSON.stringify({ service }),
+    }),
+
+  // Отдельный адрес, а не флаг у шага: обработчик отката и шаг — разные
+  // действия, и одно поле, значившее оба, ломало бы адресацию (ADR-0015).
+  failCompensation: (body: { instance_id?: string | null; handler: string; mode: string }) =>
+    request<ChaosResult>('/api/chaos/fail-compensation', {
+      method: 'POST',
+      body: JSON.stringify(body),
     }),
 
   stopLease: (instanceId: string, durationSeconds: number) =>
@@ -172,6 +230,14 @@ export const chaos = {
 }
 
 export const service = {
-  health: () => request<{ status: string }>('/health'),
-  metrics: () => fetch(api('/metrics')).then((response) => response.text()),
+  metrics: async () => {
+    const response = await fetch(api('/metrics'))
+    if (!response.ok) {
+      // Без этой проверки парсер вернул бы текст ошибки как обычное содержимое,
+      // `parseMetrics` не нашёл бы образцов и отдал пустой список: упавшая панель
+      // показывала бы «метрики ещё не собраны» — то же, что и при сбое.
+      throw new ApiError(`Метрики недоступны: ответ ${response.status}`, response.status)
+    }
+    return response.text()
+  },
 }

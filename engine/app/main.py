@@ -15,7 +15,9 @@ from app.core.db import dispose_engine, get_session_factory
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.routers.definitions import router as definitions_router
+from app.routers.demo import router as demo_router
 from app.routers.instances import router as instances_router
+from app.routers.registry import router as registry_router
 from app.routers.service import router as service_router
 from app.routers.stream import router as stream_router
 
@@ -39,11 +41,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("api.stopped")
 
 
+def api_version() -> str:
+    """Версия из метаданных данных.
+
+    Обязаться со списка пакетов, а не копировать: версия в документации расходилась на
+    полверу внеш, и в `package.json` она отставался бы на два релиза.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("workflow-engine")
+    except PackageNotFoundError:  # pragma: no cover - запуск без установки
+        return "0.0.0"
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     application = FastAPI(
         title="Workflow Engine",
-        version="1.2.0",
+        version=api_version(),
         description=(
             "Распределённый движок выполнения workflow с поддержкой долгих "
             "транзакций и компенсаций (Saga)."
@@ -67,8 +83,10 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    application.include_router(demo_router)
     application.include_router(definitions_router)
     application.include_router(instances_router)
+    application.include_router(registry_router)
     application.include_router(stream_router)
     application.include_router(service_router)
 

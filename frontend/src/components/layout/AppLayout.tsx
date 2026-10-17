@@ -1,10 +1,13 @@
+import { Suspense } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Инстансы' },
+  { to: '/', label: 'Заказы' },
   { to: '/definitions', label: 'Определения' },
   { to: '/metrics', label: 'Состояние' },
-  { to: '/chaos', label: 'Инъекция отказов' },
+  { to: '/chaos', label: 'Внесение неисправностей' },
+  { to: '/compare', label: 'Сравнение' },
+  { to: '/scenarios', label: 'Сценарии' },
 ]
 
 const navLinkClass = ({ isActive }: { isActive: boolean }): string =>
@@ -27,7 +30,13 @@ export default function AppLayout() {
         </nav>
       </header>
       <main className="p-6">
-        <Outlet />
+        {/* Страницы грузятся по требованию, поэтому место их ожидания нужно:
+            без него переход показывал бы пустой экран. */}
+        <Suspense
+          fallback={<p className="py-6 text-center text-sm text-white/50">Загрузка страницы…</p>}
+        >
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   )

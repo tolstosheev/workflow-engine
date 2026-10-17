@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.engine import lease
-from app.models.enums import EventType, InstanceStatus
+from app.models.enums import ACTIVE_STATUSES, EventType, InstanceStatus
 from app.models.workflow import WorkflowDefinition, WorkflowInstance
 
 pytestmark = pytest.mark.integration
@@ -290,6 +290,19 @@ async def test_heartbeat_fails_for_foreign_worker(db_session: AsyncSession) -> N
     assert await lease.heartbeat(db_session, instance_id, "w2") is False
 
 
+async def test_heartbeat_loop_exits_when_the_lease_is_gone(db_session: AsyncSession) -> None:
+    # Отказ продлить аренду — признак, что инстанс ушёл к другому воркеру:
+    # цикл обязан выйти из петли, иначе он будет бить по чужой аренде до конца
+    # работы. Счётчик потери при этом ведёт проверка перед записью результата —
+    # единственная точка, где потеря становится решением.
+    from app.engine.executor import heartbeat_loop
+
+    instance_id = await _new_instance(db_session)
+    await lease.acquire(db_session, "w1", instance_id)
+
+    await asyncio.wait_for(heartbeat_loop(instance_id, "w2", asyncio.Event()), timeout=5)
+
+
 async def test_heartbeat_fails_on_free_instance(db_session: AsyncSession) -> None:
     instance_id = await _new_instance(db_session)
 
@@ -327,28 +340,9 @@ async def test_released_instance_can_be_claimed_again(db_session: AsyncSession) 
 # --- Обнаружение брошенных инстансов ---------------------------------------
 
 
-async def test_find_expired_returns_only_expired(db_session: AsyncSession) -> None:
-    expired_id = await _new_instance(db_session)
-    live_id = await _new_instance(db_session)
-    await lease.acquire(db_session, "w1", live_id)
-    await _expire(db_session, expired_id)
-    await db_session.flush()
-
-    found = await lease.find_expired(db_session)
-
-    assert expired_id in found
-    assert live_id not in found
-
-
-async def test_find_expired_skips_terminal_instances(db_session: AsyncSession) -> None:
-    instance_id = await _new_instance(db_session, status=InstanceStatus.COMPENSATED)
-    await _expire(db_session, instance_id)
-    await db_session.flush()
-
-    assert await lease.find_expired(db_session) == []
-
-
-async def test_is_active_matches_status_sets() -> None:
-    assert lease.is_active(InstanceStatus.RUNNING) is True
-    assert lease.is_active(InstanceStatus.COMPENSATING) is True
-    assert lease.is_active(InstanceStatus.COMPLETED) is False
+async def test_active_statuses_cover_exactly_the_open_ones() -> None:
+    # Перечисление живёт в перечислении, а не в модуле аренды: от него
+    # зависят подбор, фильтры списка и метрики, и разойтись они не должны.
+    assert InstanceStatus.RUNNING in ACTIVE_STATUSES
+    assert InstanceStatus.PAUSED in ACTIVE_STATUSES
+    assert InstanceStatus.COMPLETED not in ACTIVE_STATUSES

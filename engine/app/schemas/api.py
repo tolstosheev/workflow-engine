@@ -87,6 +87,13 @@ class InstanceOut(BaseModel):
     # Отдельно от срока аренды: по нему видно, что воркер жив, даже если
     # аренда формально истекла в момент запроса.
     heartbeat_at: datetime | None
+    # Отметка архива (ADR-0017). Процесс убран из списка, но не удалён: журнал
+    # цел, а страница процесса открывается.
+    archived_at: datetime | None
+    # Убран ли журнал (ADR-0019). Разбор состояния для такого процесса
+    # невозможен, и страница обязана сказать об этом прямо: пустая лента без
+    # пометки читалась бы как «событий не было».
+    journal_pruned_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -96,6 +103,9 @@ class InstanceListOut(BaseModel):
     total: int
     limit: int
     offset: int
+    # Сколько всего архивных: без этого числа кнопка уборки не знала бы,
+    # что именно она убирает.
+    archived_total: int = 0
 
 
 class InstanceCreate(BaseModel):
@@ -180,6 +190,10 @@ class InstanceStateOut(BaseModel):
     # Сколько раз шаг успешно завершился: интерфейсу нужен для показа
     # «проход 2 из 3» у цикла.
     step_iterations: dict[str, int] = Field(default_factory=dict)
+    # Убран ли журнал (ADR-0019). Тогда состояние выше — это колонка
+    # инстанса, а не разбор: разбирать нечего, и объявлять об этом обязан
+    # сам ответ.
+    journal_pruned_at: datetime | None = None
 
 
 class ForceCompleteRequest(BaseModel):
@@ -193,6 +207,47 @@ class ActionResult(BaseModel):
     message: str
 
 
+class WorkerOut(BaseModel):
+    """Строка реестра воркеров (ADR-0018)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    worker_id: str
+    # `active` — сердце свежее, `stale` — молчит, `stopped` — остановлен штатно.
+    state: Literal["active", "stale", "stopped"]
+    started_at: datetime
+    heartbeat_at: datetime
+    stopped_at: datetime | None
+    cycles_completed: int
+    steps_executed: int
+    lease_lost: int
+
+
+class WorkerListOut(BaseModel):
+    items: list[WorkerOut]
+    # Через сколько секунд молчания воркер объявляется не отвечающим. Отдаётся
+    # вместе со списком, иначе подпись «не отвечает» была бы загадкой.
+    fresh_for_seconds: float
+    # Сколько записей скрыто за переключателем «показать завершённых». Без
+    # числа переключатель выглядел бы пустым, а на деле за ним были строки.
+    departed_total: int = 0
+
+
+class ArchiveRequest(BaseModel):
+    """Тело запроса уборки завершённых процессов."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Только процессы, созданные раньше срока. Без срока база растёт, а
+    # удалять по возрасту мы сознательно не умеем (ADR-0017).
+    before: datetime | None = None
+
+
+class ArchiveResult(BaseModel):
+    archived: int
+    message: str
+
+
 # --- Инъекция отказов ------------------------------------------------------
 
 
@@ -203,6 +258,17 @@ class ChaosStepRequest(BaseModel):
     step: str | None = None
     mode: Literal["once", "always", "timeout"] = "always"
     error: str = "сбой шага (инъекция)"
+
+
+class ChaosCompensationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instance_id: uuid.UUID | None = None
+    # Ссылка на обработчик обязательна: пустая означала бы «сломать любое
+    # возмещение», а это не демонстрация сбоя, а порча стенда целиком.
+    handler: str = Field(min_length=3, max_length=256, pattern=r"^[\w.]+:[\w]+$")
+    mode: Literal["once", "always"] = "always"
+    error: str = "сбой компенсации (инъекция)"
 
 
 class ChaosServiceRequest(BaseModel):

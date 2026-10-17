@@ -1,12 +1,23 @@
+import { lazy } from 'react'
 import { createBrowserRouter } from 'react-router-dom'
 
 import AppLayout from '@/components/layout/AppLayout'
-import ChaosPage from '@/pages/chaos'
-import DefinitionsPage from '@/pages/definitions'
-import InstancePage from '@/pages/instance'
-import InstancesPage from '@/pages/instances'
-import { MetricsPage } from '@/pages/metrics'
-import NotFoundPage from '@/pages/not-found'
+
+/**
+ * Маршруты грузятся по требованию.
+ *
+ * Все шесть страниц попадали в первый чанк, хотя открывается одна: панель
+ * инъекций и разбор метрик нужны при разборе стенда, а не при работе с
+ * заказами. Главная остаётся в основном чанке — она и есть вход.
+ */
+const InstancesPage = lazy(() => import('@/pages/instances'))
+const InstancePage = lazy(() => import('@/pages/instance'))
+const DefinitionsPage = lazy(() => import('@/pages/definitions'))
+const MetricsPage = lazy(() => import('@/pages/metrics').then((m) => ({ default: m.MetricsPage })))
+const ChaosPage = lazy(() => import('@/pages/chaos'))
+const ComparePage = lazy(() => import('@/pages/compare').then((m) => ({ default: m.ComparePage })))
+const ScenariosPage = lazy(() => import('@/pages/scenarios'))
+const NotFoundPage = lazy(() => import('@/pages/not-found'))
 
 export const router = createBrowserRouter([
   {
@@ -18,6 +29,8 @@ export const router = createBrowserRouter([
       { path: 'definitions', element: <DefinitionsPage /> },
       { path: 'metrics', element: <MetricsPage /> },
       { path: 'chaos', element: <ChaosPage /> },
+      { path: 'compare', element: <ComparePage /> },
+      { path: 'scenarios', element: <ScenariosPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

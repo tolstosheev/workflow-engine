@@ -87,6 +87,22 @@ class WorkflowInstance(Base, TimestampMixin):
     )
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Раннее время следующей попытки отката. Провал компенсации означает, что
+    # внешний сервис недоступен: без паузы воркер бил бы по нему раз в секунду
+    # на каждый процесс, и отказ лечил бы сам себя лавиной повторов.
+    compensation_not_before: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Отметка «убран из списка» (ADR-0017). Это не удаление: журнал остаётся
+    # целым, а процесс по-прежнему открывается. Архивировать можно только
+    # терминальные — незакрытый инцидент из вида убирать нельзя.
+    # Момент уборки журнала (ADR-0019). Разбор событий после него невозможен,
+    # поэтому пометка обязана быть в самой строке: интерфейс и разбор инцидента
+    # читают её, а не догадываются по пустому списку событий.
+    journal_pruned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     definition: Mapped[WorkflowDefinition] = relationship(back_populates="instances")
     events: Mapped[list[WorkflowEvent]] = relationship(
         back_populates="instance",
@@ -105,6 +121,9 @@ class WorkflowInstance(Base, TimestampMixin):
             postgresql_where="status IN ('PENDING','RUNNING','WAITING','CANCELLING','COMPENSATING','COMPENSATION_FAILED')",
         ),
         Index("ix_workflow_instances_status_created", "status", "created_at"),
+        # Фильтр по определению — внешний ключ, а внешние ключи индекса не
+        # получают: без него отбор по определению сканировал бы таблицу.
+        Index("ix_workflow_instances_definition", "definition_id"),
     )
 
 
@@ -138,6 +157,10 @@ class WorkflowEvent(Base):
         Index("uq_workflow_events_instance_seq", "instance_id", "seq", unique=True),
         Index("ix_workflow_events_instance_created", "instance_id", "created_at"),
         Index("ix_workflow_events_type_created", "type", "created_at"),
+        # Поток SSE сортирует события по времени, а индексы по инстансу и по
+        # типу начинаются не с него: без такого индекса планировщик читает всю
+        # таблицу и сортирует её на стороне СУБД.
+        Index("ix_workflow_events_created", "created_at"),
         CheckConstraint("seq >= 0", name="seq_non_negative"),
     )
 
@@ -196,6 +219,12 @@ class Timer(Base):
         UUID(as_uuid=True), ForeignKey("workflow_instances.id", ondelete="RESTRICT"), nullable=False
     )
     step_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Вид ожидания. На одном шаге могут стоять и ожидание, и срок паузы, и без
+    # различия `planned_for` принял бы одно за другое: шаг не наступил бы
+    # никогда, а срок паузы отменил бы не тот процесс (ADR-0016).
+    kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="step", server_default="step"
+    )
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     fired: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
@@ -203,7 +232,13 @@ class Timer(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    __table_args__ = (Index("ix_timers_due", "fired", "due_at"),)
+    __table_args__ = (
+        Index("ix_timers_due", "fired", "due_at"),
+        # `planned_for` ищет по инстансу и шагу на каждом цикле воркера, а не
+        # по сроку ожидания: без индекса на этой паре воркер сканировал бы
+        # всю таблицу таймеров.
+        Index("ix_timers_instance_step", "instance_id", "step_name"),
+    )
 
 
 class ProcessedOperation(Base):
@@ -273,6 +308,9 @@ class CompensationLog(Base):
             unique=True,
             postgresql_where="finished_at IS NULL",
         ),
+        # Индекс без условия: партиальный уникальный действовал бы только на
+        # невыполненных запусках, а `find_step_run` ищет по всем записям.
+        Index("ix_compensation_log_step_run", "step_run_id"),
     )
 
 

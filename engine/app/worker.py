@@ -21,26 +21,30 @@ import signal
 import socket
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
+from prometheus_client import multiprocess
 from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.db import dispose_engine, session_scope
+from app.core.errors import LeaseLostError
 from app.core.logging import configure_logging
-from app.engine import executor, interpreter, lease, saga, scheduler
-from app.engine.journal import read_events, replay
-from app.models.enums import TERMINAL_STATUSES, EventType, InstanceStatus
+from app.engine import deadline, executor, interpreter, lease, saga, scheduler
+from app.engine.journal import append_event, read_events, replay
+from app.metrics import IS_MULTIPROCESS, LEASE_ACQUIRED
+from app.models import chaos
+from app.models.enums import (
+    PAUSE_DEADLINE,
+    TERMINAL_STATUSES,
+    EventType,
+    InstanceStatus,
+)
 from app.models.workflow import CompensationLog, WorkflowDefinition, WorkflowInstance
 from app.schemas.definition import WorkflowDefinitionSchema
+from app.services import registry
 
 logger = logging.getLogger(__name__)
-
-STATUS_EVENTS = {
-    InstanceStatus.PENDING: EventType.INSTANCE_STARTED,
-    InstanceStatus.RUNNING: EventType.INSTANCE_STARTED,
-    InstanceStatus.WAITING: EventType.INSTANCE_STARTED,
-    InstanceStatus.COMPENSATING: EventType.INSTANCE_STARTED,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,11 +55,14 @@ class CycleResult:
     step_executed: bool
     terminal: bool
     lease_lost: bool
+    # Идентификатор инстанса: без него в логе не сказать, какой процесс оборвал
+    # цикл, и разбор аварии по журналу воркера был бы невозможен.
+    instance_id: uuid.UUID | None = None
 
 
 def _worker_id() -> str:
-    # Идентификатор включает имя узла: по нему видно, какой из воркеров подхватил.
-    # docker-compose сейчас держит инстанс.
+    # Идентификатор включает имя узла: по нему видно, какой воркер подхватил
+    # инстанс, и записи разных процессов различаются в журнале.
     return f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
 
@@ -69,24 +76,43 @@ def _install_stop_handlers(stop_event: asyncio.Event) -> None:
 
 
 async def _load_definition(
-    definition_id: uuid.UUID, cache: dict[uuid.UUID, WorkflowDefinitionSchema]
+    definition_id: uuid.UUID, cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]]
 ) -> WorkflowDefinitionSchema | None:
     """Читает определение, кэшируя разобранную схему.
 
-    Кэш только по id: версия дефинишена неизменяема, а инстанс всегда ссылается
-    на конкретную версию.
+    Кэш хранит вместе со схемой время последней правки: определение
+    перезаписывается на месте, и кэш без проверки свежести держал бы прежний
+    граф до перезапуска воркера — правка в редакторе не дошла бы до процесса,
+    который её исполняет. Дешёвое чтение строки остаётся, дорогая проверка
+    схемы выполняется только при изменении.
     """
-    if definition_id in cache:
-        return cache[definition_id]
-
     async with session_scope() as session:
         row = await session.get(WorkflowDefinition, definition_id)
         if row is None:
             return None
+        cached = cache.get(definition_id)
+        if cached is not None and cached[0] == row.updated_at:
+            return cached[1]
         parsed = WorkflowDefinitionSchema.model_validate(row.definition)
 
-    cache[definition_id] = parsed
+    cache[definition_id] = (row.updated_at, parsed)
     return parsed
+
+
+def _next_compensation_attempt_at(failed_attempts: int) -> datetime:
+    """Когда брать следующую попытку отката.
+
+    Задержка растёт по числу неудач и упирается в потолок: недоступный сервис
+    не станет доступнее от того, что по нему бьют чаще. Первая пауза короткая —
+    сбой мог быть разовым, и ждать пять минут ради этого незачем.
+    """
+    settings = get_settings()
+    exponent = max(0, failed_attempts - 1)
+    delay = min(
+        settings.compensation_retry_base_seconds * (2**exponent),
+        settings.compensation_retry_max_seconds,
+    )
+    return datetime.now(UTC) + timedelta(seconds=delay)
 
 
 async def _compensate(
@@ -120,9 +146,8 @@ async def _compensate(
         if not items:
             # Откатывать нечего. Отмена при этом всё равно завершилась, но
             # называть её `COMPENSATED` было бы враньём: компенсаций не было.
-            # Итог утечённое состояние зависит от последнего события:
-            # пользователь запросил отмену — инстанс отменён,
-            # а упавший шаг — отказан — отказан в себя успешно не был.
+            # Итог зависит от последнего события журнала: отмену запросили —
+            # инстанс отменён, шаг упал — отказ, потому что откатывать было нечего.
             empty_status = (
                 InstanceStatus.CANCELLED if state.cancel_requested else InstanceStatus.FAILED
             )
@@ -139,14 +164,18 @@ async def _compensate(
             )
             await session.commit()
 
-        succeeded, error = await _invoke_compensation(
-            instance_id,
-            item,
-            attempt=item.attempts_made + 1,
-            definition=definition,
-            instance_input=instance_input,
-            variables=variables,
-        )
+        # Откат идёт вне транзакции и занимает столько же времени, сколько
+        # шаги: без продления аренда истекает, и второй воркер начинает тот же
+        # откат, удвоив возврат средств (§3.3).
+        async with executor.keep_lease_alive(instance_id, worker_id):
+            succeeded, error = await _invoke_compensation(
+                instance_id,
+                item,
+                attempt=item.attempts_made + 1,
+                definition=definition,
+                instance_input=instance_input,
+                variables=variables,
+            )
 
         async with session_scope() as session:
             log_row = await session.get(CompensationLog, log.id, with_for_update=True)
@@ -160,12 +189,18 @@ async def _compensate(
                 instance_row = await session.get(WorkflowInstance, instance_id)
                 if instance_row is not None:
                     instance_row.status = InstanceStatus.COMPENSATION_FAILED
+                    instance_row.compensation_not_before = _next_compensation_attempt_at(
+                        await saga.failed_count(session, instance_id)
+                    )
                     await session.commit()
             return False
 
     async with session_scope() as session:
         instance_row = await session.get(WorkflowInstance, instance_id)
         if instance_row is not None:
+            # Пауза отката снимается вместе с успехом: процесс терминален, и
+            # оставшееся поле только сбивало бы с толку при разборе.
+            instance_row.compensation_not_before = None
             await executor.finish(session, instance_row, InstanceStatus.COMPENSATED)
     return True
 
@@ -191,10 +226,10 @@ async def _invoke_compensation(
 
     from app.core.db import session_scope
     from app.engine import idempotency
-    from app.engine.executor import build_compensation_context
+    from app.engine.executor import StepFailed, build_compensation_context
     from app.handlers.registry import resolve_handler
 
-    key = saga.operation_key(instance_id, item, attempt)
+    key = saga.operation_key(instance_id, item)
 
     async with session_scope() as session:
         if await idempotency.already_applied(session, key):
@@ -206,6 +241,13 @@ async def _invoke_compensation(
             return True, None
 
     try:
+        # Проверка инъекции до обработчика отката: правило адресовано именно
+        # ему, и прямой шаг оно не задевает (ADR-0015).
+        async with session_scope() as session:
+            rule = await chaos.find_rule_for_handler(session, instance_id, item.compensation_ref)
+        if rule is not None:
+            raise StepFailed(rule.error, retryable=False)
+
         handler = resolve_handler(item.compensation_ref)
         # Контекст строится так же, как для обычного шага. Раньше компенсация
         # получала None и знать не могла, что отменяет, — освободить резерв
@@ -251,15 +293,22 @@ async def _fire_due_timers() -> int:
     async with session_scope() as session:
         fired = 0
         for timer in await scheduler.claim_due(session):
-            if await scheduler.fire_due(session, timer):
+            # Вид важнее таймера: срок паузы отменяет процесс, а ожидание шага
+            # просто будит его. Обработчик выбирается здесь, чтобы у каждого
+            # вида была ровно одна точка срабатывания.
+            if timer.kind == PAUSE_DEADLINE:
+                done = await deadline.expire_pause_deadline(session, timer)
+            else:
+                done = await scheduler.fire_due(session, timer)
+            if done:
                 fired += 1
         return fired
 
 
 async def run_cycle(
-    worker_id: str, cache: dict[uuid.UUID, WorkflowDefinitionSchema]
+    worker_id: str, cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]]
 ) -> CycleResult:
-    """Один цикл: подбор инстанса и исполнение одного шага.
+    """Один шаг: разбуждение таймеров, захват одного инстанса и его обработка.
 
     Разбуждение спящих инстансов идёт до подбора: иначе ожидание просыпалось бы
     только в те циклы, когда очередь пуста.
@@ -270,7 +319,68 @@ async def run_cycle(
         claimed = await lease.claim_next(session, worker_id)
         if claimed is None:
             return CycleResult(handled=False, step_executed=False, terminal=False, lease_lost=False)
+        # Аренда удалась этому шагу: метрика считает удачные захваты, а не
+        # пустые циклы, в которых никто ничего не взял.
+        LEASE_ACQUIRED.inc()
 
+    return await _handle_claimed(claimed, worker_id, cache)
+
+
+async def run_batch_cycle(
+    worker_id: str, cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]]
+) -> CycleResult:
+    """Пачка шагов за один проход по базе (ADR-0023).
+
+    Замер показал, что шаг занимает около 30 % времени цикла, а остальное —
+    повторяющийся на каждом шаге захват, разбор и проверка таймеров. Здесь всё
+    это делается один раз на `WORKER_CLAIM_BATCH` инстансов.
+
+    Обработка идёт по очереди, и каждый инстанс доводится до конца с
+    освобождением аренды: пачка «в запас» висела бы до истечения TTL.
+
+    Возвращается итог по **последнему** обработанному инстансу и сумме по
+    шагам: цикл воркера решает по нему, продолжать ли, и «пачка не вышла»
+    означало бы, что один инстанс сорвал остальные.
+    """
+    await _fire_due_timers()
+
+    async with session_scope() as session:
+        claimed_batch = await lease.claim_batch(
+            session, worker_id, get_settings().worker_claim_batch
+        )
+        for _ in claimed_batch:
+            # Метрика считает удачные захваты, а не пустые циклы.
+            LEASE_ACQUIRED.inc()
+    if not claimed_batch:
+        return CycleResult(handled=False, step_executed=False, terminal=False, lease_lost=False)
+
+    last = CycleResult(handled=False, step_executed=False, terminal=False, lease_lost=False)
+    steps = 0
+    lost = False
+    for claimed in claimed_batch:
+        # Провал одного не должен остановить пачку: иначе один испорченный
+        # процесс блокировал бы очередь до конца цикла.
+        result = await _handle_claimed(claimed, worker_id, cache)
+        last = result
+        steps += 1 if result.step_executed else 0
+        lost = lost or result.lease_lost
+
+    return CycleResult(
+        handled=True,
+        step_executed=steps > 0,
+        terminal=last.terminal,
+        lease_lost=lost,
+        instance_id=last.instance_id,
+    )
+
+
+async def _handle_claimed(
+    claimed: lease.ClaimedInstance,
+    worker_id: str,
+    cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]],
+) -> CycleResult:
+    """Обрабатывает уже захваченный инстанс до конца: шаг, откат или завершение."""
+    async with session_scope() as session:
         instance_row = await session.get(
             WorkflowInstance, claimed.instance_id, with_for_update=True
         )
@@ -289,7 +399,14 @@ async def run_cycle(
 
     # Отмена и провал шага приводят в одну точку: выполненные шаги надо
     # вернуть. Различаются они только тем, как процесс сюда попал.
-    if state.status in (InstanceStatus.COMPENSATING, InstanceStatus.CANCELLING):
+    if state.status in (
+        InstanceStatus.COMPENSATING,
+        InstanceStatus.CANCELLING,
+        # Провал компенсации не конец процесса: он уже в очереди на повтор
+        # по §3.5. Раньше инстанс падал в обход отката и доводил упавший шаг
+        # до конца, а брал его уже другой воркер.
+        InstanceStatus.COMPENSATION_FAILED,
+    ):
         done = await _compensate(claimed.instance_id, definition, worker_id)
         async with session_scope() as session:
             await lease.release(session, claimed.instance_id, worker_id)
@@ -309,6 +426,33 @@ async def run_cycle(
             await lease.release(session, claimed.instance_id, worker_id)
         return CycleResult(handled=True, step_executed=False, terminal=True, lease_lost=False)
 
+    # Пауза ждёт человека: шаг не исполняется, пока не придёт команда
+    # возобновления (ADR-0014).
+    step = definition.steps[state.current_step]
+    if interpreter.waits_for_person(step) and state.resumed_step != state.current_step:
+        async with session_scope() as session:
+            await append_event(
+                session,
+                claimed.instance_id,
+                EventType.INSTANCE_PAUSED,
+                {"step": state.current_step},
+            )
+            instance_row = await session.get(WorkflowInstance, claimed.instance_id)
+            if instance_row is not None:
+                instance_row.status = InstanceStatus.PAUSED
+            # Срок планируется здесь же, в той же транзакции, что и пауза:
+            # событие без таймера оставило бы паузу без будильника, а таймер
+            # без события не был бы виден в разборе.
+            seconds = interpreter.pause_deadline(step)
+            if seconds is not None and not await deadline.deadline_planned(
+                session, claimed.instance_id, state.current_step
+            ):
+                await deadline.schedule_deadline(
+                    session, claimed.instance_id, state.current_step, seconds
+                )
+            await lease.release(session, claimed.instance_id, worker_id)
+        return CycleResult(handled=True, step_executed=False, terminal=False, lease_lost=False)
+
     # Ожидание с таймером не требует исполнения: таймер сам разбудит инстанс.
     if state.status is InstanceStatus.WAITING:
         async with session_scope() as session:
@@ -317,7 +461,6 @@ async def run_cycle(
     # Ожидание, объявленное в дефинишене, планируется здесь, а не внутри шага:
     # это позволяет отдать транзакцию до внешнего вызова (§3.2) и сделать паузу
     # переживающей рестарт — таймер лежит в БД, а не в памяти процесса.
-    step = definition.steps[state.current_step]
     delay = interpreter.wait_before(step)
     if delay > 0:
         async with session_scope() as session:
@@ -346,13 +489,35 @@ async def run_cycle(
             )
             instance_row.error = None if outcome.success else "шаг не выполнен"
             await session.commit()
+    except LeaseLostError:
+        # Аренда ушла другому воркеру во время шага: результат не записан, и
+        # записывать его было бы уже нельзя (§3.3).
+        logger.warning(
+            "step.lease_lost",
+            extra={"step": state.current_step, "worker_id": worker_id},
+        )
+        async with session_scope() as session:
+            await lease.release(session, claimed.instance_id, worker_id)
+        return CycleResult(
+            handled=True,
+            step_executed=False,
+            terminal=False,
+            lease_lost=True,
+            instance_id=claimed.instance_id,
+        )
     except Exception:
         logger.exception(
             "step.failed_unexpected", extra={"step": state.current_step, "worker_id": worker_id}
         )
         async with session_scope() as session:
             await lease.release(session, claimed.instance_id, worker_id)
-        return CycleResult(handled=True, step_executed=False, terminal=False, lease_lost=True)
+        return CycleResult(
+            handled=True,
+            step_executed=False,
+            terminal=False,
+            lease_lost=True,
+            instance_id=claimed.instance_id,
+        )
 
     terminal = not outcome.success
     # Аренда освобождается всегда: удерживать её после шага означало бы ждать
@@ -404,16 +569,43 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
         },
     )
 
-    definition_cache: dict[uuid.UUID, WorkflowDefinitionSchema] = {}
+    # Реестр воркеров (ADR-0018). Без него простаивающий воркер не виден нигде:
+    # аренды у него нет, и след в системе не остаётся.
+    async with session_scope() as session:
+        await registry.register(session, worker_id)
+
+    definition_cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]] = {}
     try:
         while not stop_event.is_set():
             steps_done = 0
+            cycles = 0
+            lease_lost = 0
             while steps_done < settings.worker_max_steps_per_cycle and not stop_event.is_set():
-                result = await run_cycle(worker_id, definition_cache)
+                result = await run_batch_cycle(worker_id, definition_cache)
                 if not result.handled:
                     break
+                cycles += 1
+                if result.lease_lost:
+                    lease_lost += 1
+                    # Цикл оборвался недоведённо: без паузы воркер сразу забрал бы
+                    # следующий инстанс и упал бы на нём тем же самым.
+                    logger.warning(
+                        "cycle.aborted",
+                        extra={
+                            "worker_id": worker_id,
+                            "instance_id": str(result.instance_id),
+                        },
+                    )
+                    await asyncio.sleep(settings.worker_poll_interval_seconds)
                 if result.step_executed:
                     steps_done += 1
+            # Сердце продлевается раз за цикл опроса, а не за шаг: запись в БД
+            # на каждом шаге съедала бы часть выигранного времени, а «воркер жив»
+            # должно означать «воркер опрашивает базу», а не «часто исполняет шаги».
+            async with session_scope() as session:
+                await registry.heartbeat(
+                    session, worker_id, cycles=cycles, steps=steps_done, lease_lost=lease_lost
+                )
             # wait_for вместо sleep: событие останавливает цикл немедленно,
             # а не по истечении интервала опроса.
             with contextlib.suppress(TimeoutError):
@@ -421,7 +613,17 @@ async def run_worker(stop_event: asyncio.Event | None = None) -> None:
                     stop_event.wait(), timeout=settings.worker_poll_interval_seconds
                 )
     finally:
+        # Отметка об остановке не должна мешать выходу: если БД недоступна,
+        # воркер всё равно должен завершиться, а строка просто останется stale.
+        with contextlib.suppress(Exception):
+            async with session_scope() as session:
+                await registry.mark_stopped(session, worker_id)
         await dispose_engine()
+        # Файлы метрик умершего воркера остаются в общем
+        # каталоге: иначе счётчики падавшего воркера продолжали бы давать
+        # весь снимок выбранных инстансов (ADR-0012).
+        if IS_MULTIPROCESS:
+            multiprocess.mark_process_dead(os.getpid())
         logger.info("worker.stopped", extra={"worker_id": worker_id})
 
 

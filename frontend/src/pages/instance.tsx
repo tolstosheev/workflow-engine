@@ -1,13 +1,36 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 
 import { instances as instancesApi, definitions as definitionsApi } from '@/api/client'
 import { useEventStream } from '@/api/stream'
 import { DefinitionGraph } from '@/components/DefinitionGraph'
+import { InventoryPanel } from '@/components/InventoryPanel'
+import { LeaseDetails } from '@/components/LeaseDetails'
+import { ReplayCheck } from '@/components/ReplayCheck'
 import { RollbackLane, TimerCountdown } from '@/components/RollbackLane'
+import { StepTimeline } from '@/components/StepTimeline'
 import { Button, Card, EmptyState, ErrorState, StatusBadge } from '@/components/ui'
-import { eventLabel, formatDuration, formatDateTime, statusLabel, statusTone, stepTone } from '@/lib/status'
-import type { InstanceState, StepRun, TimelineEntry, WorkflowDefinition, WorkflowInstance } from '@/types/api'
+import { useAbortable } from '@/hooks/useAbortable'
+import { usePolling } from '@/hooks/usePolling'
+import { describeEvent } from '@/lib/events'
+import { pollingIntervalMs } from '@/lib/polling'
+import { buildInstanceReport, reportFileName } from '@/lib/report'
+import {
+  formatDuration,
+  formatDateTime,
+  statusLabel,
+  statusTone,
+  stepLabel,
+  stepTone,
+} from '@/lib/status'
+import type {
+  InstanceState,
+  StepRun,
+  TimelineEntry,
+  WorkflowDefinition,
+  WorkflowEvent,
+  WorkflowInstance,
+} from '@/types/api'
 
 export default function InstancePage() {
   const { id } = useParams<{ id: string }>()
@@ -18,51 +41,126 @@ export default function InstancePage() {
   const [definition, setDefinition] = useState<WorkflowDefinition | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [connected, setConnected] = useState(false)
+  // Определение перечитывается только при смене инстанса: это единственная
+  // строка без изменений, и запрос на каждый цикл повторялся бы десятки раз.
+  const loadedDefinition = useRef<string | null>(null)
+
+  // Текущий запрос: без ссылки на него нечем отменить предыдущий.
+  const { next: beginRequest, abort } = useAbortable()
 
   const load = useCallback(async () => {
     if (!id) return
+    // Ответ предыдущей загрузки мог прийти позже текущего и откатить экран на
+    // шаг назад, а после ухода со страницы он писал бы в состояние уже не
+    // существующего компонента. Оба запроса отменяются одним сигналом.
+    const controller = beginRequest()
     try {
       const [one, rebuilt, runs, flow] = await Promise.all([
-        instancesApi.get(id),
-        instancesApi.state(id),
-        instancesApi.steps(id),
-        instancesApi.timeline(id),
+        instancesApi.get(id, controller.signal),
+        instancesApi.state(id, controller.signal),
+        instancesApi.steps(id, controller.signal),
+        instancesApi.timeline(id, controller.signal),
       ])
+      if (controller.signal.aborted) return
       setInstance(one)
       setState(rebuilt)
       setSteps(runs.items)
       setTimeline(flow.items)
       setError(null)
 
-      // Определение нужно для схемы графа. Ошибка не должна ронять страницу:
-      // журнал и таймлайн показывают суть процесса и без схемы.
-      try {
-        setDefinition(await definitionsApi.get(one.definition.id))
-      } catch {
-        setDefinition(null)
+      // Определение — единственная строка без изменений. Запрашивать его на
+      // каждый цикл значило бы лишний запрос, который на длинном процессе
+      // повторялся бы десятки раз.
+      if (loadedDefinition.current !== one.definition.id) {
+        try {
+          const loaded = await definitionsApi.get(one.definition.id)
+          if (controller.signal.aborted) return
+          setDefinition(loaded)
+          loadedDefinition.current = one.definition.id
+        } catch {
+          setDefinition(null)
+        }
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Не удалось загрузить инстанс')
+      // Отменённый запрос — не ошибка: он отменён намеренно, следующий
+      // запустится по своему расписанию.
+      if (controller.signal.aborted) return
+      setError(cause instanceof Error ? cause.message : 'Не удалось загрузить процесс')
     }
-  }, [id])
+  }, [beginRequest, id])
 
-  useEffect(() => {
-    void load()
-    // Перечитывание страхует от пропущенных событий SSE: поток не гарантирует
-    // доставку, а журнал на сервере остаётся полным.
-    const timer = setInterval(() => void load(), 1500)
-    return () => clearInterval(timer)
-  }, [load])
+  // Страховка на потерянные события: поток не гарантирует доставку, а журнал
+  // на сервере остаётся полным. Завершённый процесс не опрашивается вовсе,
+  // а при живом потоке интервал редкий — события и так приносят изменения.
+  usePolling(load, pollingIntervalMs(instance?.status ?? null, connected))
+  useEffect(() => abort, [abort])
+  const [reportError, setReportError] = useState<string | null>(null)
 
-  // События открытого инстанса применяются сразу: перечитывание раз в полторы
-  // секунды оставляло бы заметную задержку между действием движка и экраном.
+  // Отчёт переживает стенд: экран закрывается, контейнер останавливается, а
+  // разбор инцидента остаётся возможным. Скачивание делается в браузере, без
+  // новой ручки: отчёт — это текст, а не операция над данными.
+  const downloadReport = useCallback(() => {
+    if (!instance) return
+    try {
+      setReportError(null)
+      const text = buildInstanceReport({
+        instance,
+        state,
+        steps,
+        timeline,
+        events: timeline
+          .filter((entry) => entry.kind === 'event' && entry.seq !== null)
+          .map((entry) => ({
+            seq: entry.seq as number,
+            type: (entry.type ?? 'INSTANCE_CREATED') as WorkflowEvent['type'],
+            payload: entry.payload ?? {},
+            created_at: entry.created_at ?? '',
+          })),
+      })
+      const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = reportFileName(instance)
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (cause) {
+      setReportError(cause instanceof Error ? cause.message : 'Отчёт не собран')
+    }
+  }, [instance, state, steps, timeline])
+
+  // Приведение экрана запускает запрос, а не каждое событие: шаги идут пачками,
+  // и без общего счётчика страница запрашивала бы данные на каждый шаг.
+  // Сборка затем, но последнее из любого события.
+  const refreshAt = useRef(0)
+  const scheduled = useRef<number | null>(null)
+
   useEventStream({
+    // Состояние потока определяет частоту опроса: пока поток жив, события
+    // приносят изменения сами и подстраховка может быть редкой.
+    onStatusChange: setConnected,
     onEvent: (event) => {
-      if (event.instance_id === id) void load()
+      if (event.instance_id !== id) return
+      const now = Date.now()
+      if (now - refreshAt.current < 400) return
+      refreshAt.current = now
+      if (scheduled.current !== null) return
+      scheduled.current = window.setTimeout(() => {
+        scheduled.current = null
+        void load()
+      }, 400)
     },
   })
 
-  if (!id) return <EmptyState message="Идентификатор инстанса не указан" />
+  useEffect(
+    () => () => {
+      if (scheduled.current !== null) window.clearTimeout(scheduled.current)
+    },
+    [],
+  )
+
+  if (!id) return <EmptyState message="Идентификатор процесса не указан" />
   if (error && !instance) return <ErrorState message={error} onRetry={() => void load()} />
   if (!instance) return <EmptyState message="Загрузка…" />
 
@@ -77,28 +175,40 @@ export default function InstancePage() {
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge label={statusLabel(instance.status)} toneClass={statusTone(instance.status)} />
+          <Button onClick={downloadReport}>Скачать отчёт</Button>
           <Actions instance={instance} onDone={load} onError={setActionError} />
         </div>
       </div>
 
       {actionError && <ErrorState message={actionError} />}
 
+      {/* Отчёт собирается из уже загруженного: журнал приходит на страницу в
+          любом случае, а второй запрос за теми же данными читался бы как
+          «страница тяжелее, чем кажется». События берутся из ленты времени,
+          где они уже есть вперемешку с шагами. */}
+      {reportError && <ErrorState message={reportError} />}
+
       {error && <ErrorState message={error} onRetry={() => void load()} />}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Состояние по журналу" className="lg:col-span-1">
           {state ? (
-            <dl className="space-y-2 text-sm">
-              <Row label="Статус" value={statusLabel(state.status)} />
+            <>
+              <dl className="space-y-2 text-sm">
+                <Row label="Статус" value={statusLabel(state.status)} />
               <Row label="Текущий шаг" value={state.current_step ?? '—'} />
               <Row label="Выполнено" value={state.completed_steps.join(' → ') || '—'} />
-              <Row label="К откату" value={state.pending_compensations.join(' → ') || '—'} />
-              <Row label="Аренда" value={instance.lease_owner ?? 'свободна'} />
+              <Row label="К компенсации" value={state.pending_compensations.join(' → ') || '—'} />
               <Row
                 label="Ожидание"
                 value={
                   instance.status === 'WAITING' ? (
                     <TimerCountdown timeline={timeline} waiting />
+                  ) : instance.status === 'PAUSED' ? (
+                    // Отсчёт показывается и для паузы: без него «ждёт решения»
+                    // и «ждёт, пока не отменится» выглядят одинаково, а
+                    // разница в том, вернётся ли человек вообще.
+                    <TimerCountdown timeline={timeline} waiting kind="pause_deadline" />
                   ) : (
                     '—'
                   )
@@ -114,13 +224,36 @@ export default function InstancePage() {
                 }
               />
               <Row label="Создан" value={formatDateTime(instance.created_at)} />
-            </dl>
+              </dl>
+
+              {/* Закрепление вместо блокировок не читается в коде, а строка «Аренда:
+                  worker-1» ничего не говорила о том, что срок истечёт и процесс
+                  освободится сам. */}
+              <LeaseDetails
+                owner={instance.lease_owner}
+                expiresAt={instance.lease_expires_at}
+                heartbeatAt={instance.heartbeat_at}
+              />
+            </>
           ) : (
             <EmptyState message="Нет данных" />
           )}
+
+          {/* Состояние сверху — разбор журнала, а рядом проверка, что колонка
+              с ним согласна. Утверждение «источник истины — журнал» из
+              документации должно проверяться нажатием, иначе оно остаётся
+              словами. */}
+          <ReplayCheck
+            instanceId={instance.id}
+            status={instance.status}
+            currentStep={instance.current_step}
+            journalPrunedAt={instance.journal_pruned_at}
+          />
         </Card>
 
-        <Card title="Переменные инстанса" className="lg:col-span-2">
+        <InventoryPanel />
+
+        <Card title="Переменные процесса" className="lg:col-span-2">
           {Object.keys(instance.variables).length === 0 ? (
             <EmptyState message="Переменные появятся после первого шага" />
           ) : (
@@ -137,21 +270,25 @@ export default function InstancePage() {
         </Card>
       )}
 
+      {/* Лента времени рядом с порядком отката: порядок отвечает на вопрос
+          «в каком порядке», лента — «когда и сколько ждал». Одного из двух мало. */}
+      <StepTimeline steps={steps} />
+
       <RollbackLane instance={state} steps={steps} />
 
       <Card title="Шаги">
         {steps.length === 0 ? (
           <EmptyState message="Шаги ещё не выполнялись" />
         ) : (
-          <table className="w-full text-left text-sm">
+          <table aria-label="Выполнения шагов" className="w-full text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-white/40">
               <tr>
-                <th className="pb-2">Шаг</th>
-                <th className="pb-2">Попытка</th>
-                <th className="pb-2">Статус</th>
-                <th className="pb-2">Длительность</th>
-                <th className="pb-2">Компенсация</th>
-                <th className="pb-2">Ошибка</th>
+                <th scope="col" className="pb-2">Шаг</th>
+                <th scope="col" className="pb-2">Попытка</th>
+                <th scope="col" className="pb-2">Статус</th>
+                <th scope="col" className="pb-2">Длительность</th>
+                <th scope="col" className="pb-2">Компенсация</th>
+                <th scope="col" className="pb-2">Ошибка</th>
               </tr>
             </thead>
             <tbody>
@@ -160,7 +297,7 @@ export default function InstancePage() {
                   <td className="py-2">{run.step_name}</td>
                   <td className="py-2 text-white/50">{run.attempt}</td>
                   <td className="py-2">
-                    <StatusBadge label={run.status} toneClass={stepTone(run.status)} />
+                    <StatusBadge label={stepLabel(run.status)} toneClass={stepTone(run.status)} />
                   </td>
                   <td className="py-2 text-white/60">{formatDuration(run.started_at, run.finished_at)}</td>
                   <td className="py-2 text-white/50">{run.compensated ? 'выполнена' : '—'}</td>
@@ -189,7 +326,7 @@ export default function InstancePage() {
                   <>
                     <span className="w-20 shrink-0 text-white/30">#{entry.seq}</span>
                     <span className="min-w-0">
-                      <span className="block">{eventLabel((entry.type ?? 'INSTANCE_CREATED') as never)}</span>
+                      <span className="block">{describeEvent(entry)}</span>
                       {/* payload — то, чем журнал доказывает: без него видно
                           «шаг выполнен», но не видно, каким был переход. */}
                       <EventPayload payload={entry.payload} />
@@ -201,7 +338,7 @@ export default function InstancePage() {
                     <span className="min-w-0">
                       <span className="block">{entry.step_name}</span>
                       <span className="text-xs text-white/40">
-                        {entry.status?.toLowerCase()}
+                        {entry.status ? stepLabel(entry.status) : ''}
                         {entry.compensated ? ', компенсация выполнена' : ''}
                       </span>
                     </span>
@@ -235,6 +372,7 @@ function EventPayload({ payload }: { payload: Record<string, unknown> | null | u
     <>
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
         className="mt-0.5 text-[11px] text-accent/80 hover:text-accent"
       >
@@ -242,7 +380,7 @@ function EventPayload({ payload }: { payload: Record<string, unknown> | null | u
       </button>
       {open && (
         <pre className="mt-1 overflow-auto rounded bg-surface p-2 text-[11px] text-white/60">
-          {JSON.stringify(Object.fromEntries(entries), null, 2)}
+          {JSON.stringify(payload, null, 2)}
         </pre>
       )}
     </>
@@ -255,9 +393,16 @@ interface ActionsProps {
   onError: (message: string) => void
 }
 
-/** Действия доступны не во всех состояниях: отменять завершённый процесс бессмысленно. */
+/**
+ * Действия доступны не во всех состояниях: отменять завершённый процесс
+ * бессмысленно.
+ *
+ * У процесса, застрявшего на компенсации, остаётся только повтор: две кнопки
+ * в одно состояние — значит оператор выберет ту, что не сработает.
+ */
 function Actions({ instance, onDone, onError }: ActionsProps) {
   const terminal = ['COMPLETED', 'COMPENSATED', 'CANCELLED', 'FAILED'].includes(instance.status)
+  const stuck = instance.status === 'COMPENSATION_FAILED'
 
   const run = async (action: () => Promise<unknown>, fallback: string) => {
     try {
@@ -271,15 +416,24 @@ function Actions({ instance, onDone, onError }: ActionsProps) {
 
   return (
     <>
+      {instance.status === 'PAUSED' && (
+        // Процесс стоит и ждёт именно этого решения: без кнопки снять паузу
+        // можно было бы только из консоли.
+        <Button variant="primary" onClick={() => void run(() => instancesApi.resume(instance.id), 'Не удалось продолжить процесс')}>
+          Продолжить
+        </Button>
+      )}
       {instance.status === 'COMPENSATION_FAILED' && (
         <Button
           variant="primary"
-          onClick={() => void run(() => instancesApi.retryCompensation(instance.id), 'Не удалось повторить откат')}
+          onClick={() => void run(() => instancesApi.retryCompensation(instance.id), 'Не удалось повторить компенсацию')}
         >
-          Повторить откат
+          Повторить компенсацию
         </Button>
       )}
-      {!terminal && (
+      {!terminal && !stuck && (
+        // Отмена работает и из паузы: компенсировать выполненные шаги нужно
+        // независимо от того, чем процесс занимался.
         <Button onClick={() => void run(() => instancesApi.cancel(instance.id), 'Не удалось отменить')}>
           Отменить
         </Button>
@@ -287,12 +441,23 @@ function Actions({ instance, onDone, onError }: ActionsProps) {
       {!terminal && (
         <Button
           variant="danger"
-          onClick={() =>
+          onClick={() => {
+            // Действие необратимо: выполненные шаги останутся применёнными, а
+            // процесс станет завершённым и повторить откат уже нельзя. Вопрос
+            // обязателен — эта кнопка стоит рядом с «Отменить» и отличается от
+            // неё одними словами.
+            if (
+              !window.confirm(
+                'Завершить без компенсаций? Выполненные шаги останутся применёнными, и отменить это будет нельзя.',
+              )
+            ) {
+              return
+            }
             void run(
               () => instancesApi.forceComplete(instance.id, 'завершено оператором из интерфейса'),
               'Не удалось завершить принудительно',
             )
-          }
+          }}
         >
           Завершить без компенсаций
         </Button>

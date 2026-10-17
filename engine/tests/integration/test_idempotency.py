@@ -11,6 +11,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine import idempotency
@@ -224,17 +225,13 @@ async def test_registration_is_rolled_back_with_transaction(db_session: AsyncSes
 # --- Диагностика -----------------------------------------------------------
 
 
-async def test_list_applied_returns_operations_in_order(db_session: AsyncSession) -> None:
-    instance_id = await _new_instance(db_session)
-    await idempotency.mark_applied(db_session, make_key(instance_id, "a", 1))
-    await idempotency.mark_applied(db_session, make_key(instance_id, "b", 1))
+async def test_mark_rejects_unknown_instance(db_session: AsyncSession) -> None:
+    """Нарушение внешнего ключа — не гонка, а ошибка данных.
 
-    applied = await idempotency.list_applied(db_session, instance_id)
+    Главное отличие: всё ведёт кей в `catch IntegrityError` без разбора,
+    и операция была применена невестимой, а теперь теперяла не возникает вообще.
+    """
+    key = make_key(uuid.uuid4(), "a")
 
-    assert applied == [f"{instance_id}:a:1", f"{instance_id}:b:1"]
-
-
-async def test_list_applied_is_empty_for_new_instance(db_session: AsyncSession) -> None:
-    instance_id = await _new_instance(db_session)
-
-    assert await idempotency.list_applied(db_session, instance_id) == []
+    with pytest.raises(IntegrityError):
+        await idempotency.mark_applied(db_session, key)

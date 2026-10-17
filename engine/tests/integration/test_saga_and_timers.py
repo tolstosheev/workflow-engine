@@ -247,7 +247,7 @@ async def test_attempt_start_writes_event(db_session: AsyncSession) -> None:
 
 async def test_successful_attempt_marks_step_compensated(db_session: AsyncSession) -> None:
     instance_id = await _new_instance(db_session)
-    await _completed_step(db_session, instance_id, "reserve")
+    step_run_id = await _completed_step(db_session, instance_id, "reserve")
     item = (
         await saga.plan(db_session, instance_id, {"reserve": "app.demo.handlers:release_inventory"})
     )[0]
@@ -258,7 +258,11 @@ async def test_successful_attempt_marks_step_compensated(db_session: AsyncSessio
     assert outcome.succeeded is True
     assert log.status == CompensationStatus.COMPLETED
     assert log.finished_at is not None
-    assert (await saga.is_compensated(db_session, instance_id)) is True
+    # Откатанный шаг помечен: второй проход плана обязан его пропустить, иначе
+    # компенсация вернула бы средства дважды.
+    step_run = await db_session.get(StepRun, step_run_id)
+    assert step_run is not None
+    assert step_run.compensated is True
 
 
 async def test_failed_attempt_is_visible_for_manual_review(db_session: AsyncSession) -> None:
@@ -296,15 +300,6 @@ async def test_failure_event_carries_error(db_session: AsyncSession) -> None:
     assert state.status.value == "COMPENSATION_FAILED"
 
 
-async def test_skipped_step_is_recorded(db_session: AsyncSession) -> None:
-    instance_id = await _new_instance(db_session)
-
-    await saga.mark_skipped(db_session, instance_id, "validate")
-
-    events = await read_events(db_session, instance_id)
-    assert [e.type for e in events] == [EventType.COMPENSATION_SKIPPED]
-
-
 async def test_attempts_counted_from_log(db_session: AsyncSession) -> None:
     # Счётчик обязан переживать перезапуск воркера, поэтому берётся из БД.
     instance_id = await _new_instance(db_session)
@@ -321,41 +316,18 @@ async def test_attempts_counted_from_log(db_session: AsyncSession) -> None:
 
 async def test_operation_key_is_namespaced_by_compensation(db_session: AsyncSession) -> None:
     # Ключ компенсации не должен совпадать с ключом основного шага: иначе
-    # откат был бы признан уже применённым.
+    # откат был бы признан уже применённым. И он не зависит от номера попытки:
+    # компенсация — одна операция, и повтор обязан узнать свою отметку.
     instance_id = await _new_instance(db_session)
     await _completed_step(db_session, instance_id, "reserve")
     item = (
         await saga.plan(db_session, instance_id, {"reserve": "app.demo.handlers:release_inventory"})
     )[0]
 
-    key = saga.operation_key(instance_id, item, 1)
+    key = saga.operation_key(instance_id, item)
 
     assert key.step_name == "compensate:reserve"
-    assert str(key) == f"{instance_id}:compensate:reserve:1"
-
-
-async def test_stream_pending_steps_yields_uncompensated(db_session: AsyncSession) -> None:
-    instance_id = await _new_instance(db_session)
-    await _completed_step(db_session, instance_id, "reserve")
-    compensated_id = await _completed_step(db_session, instance_id, "validate")
-    step_run = await db_session.get(StepRun, compensated_id)
-    assert step_run is not None
-    step_run.compensated = True
-    await db_session.flush()
-
-    names = [sr.step_name async for sr in saga.stream_pending_steps(db_session, instance_id)]
-
-    assert names == ["reserve"]
-
-
-async def test_status_update_is_visible_in_journal_state(db_session: AsyncSession) -> None:
-    instance_id = await _new_instance(db_session)
-    instance = await db_session.get(WorkflowInstance, instance_id)
-    assert instance is not None
-
-    await saga.set_instance_status(db_session, instance, "COMPENSATING")
-
-    assert instance.status == "COMPENSATING"
+    assert str(key) == f"{instance_id}:compensate:reserve:0"
 
 
 # --- Durable-таймеры ---------------------------------------------------------

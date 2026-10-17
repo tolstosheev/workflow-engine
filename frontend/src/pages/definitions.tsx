@@ -6,15 +6,10 @@ import { formatDateTime } from '@/lib/status'
 import type { DefinitionSummary, ValidationResult } from '@/types/api'
 
 /**
- * Образец определения.
- *
- * Совпадает с тем, что загружает `scripts/seed.py`, но назван иначе:
- * `make seed` создаёт `order_fulfillment` версии 1, и определение с тем же
- * именем и версией сохранить нельзя — сервер вернул бы 409. Образец должен
- * сохраняться всегда, независимо от состояния базы.
- *
- * Ожидание в конце нужно, чтобы процесс дошёл до состояния «Ожидание»:
- * без него весь процесс проходит за секунду и ждать нечего.
+ * Образец схемы: совпадает с тем, что загружает `scripts/seed.py`, но назван
+ * иначе — определение с тем же именем и версией сохранить нельзя, сервер
+ * вернул бы 409. Ожидание в конце нужно, чтобы процесс дошёл до состояния
+ * «Ожидание»: без него он проходит за секунду и ждать нечего.
  */
 const SAMPLE = `{
   "name": "demo_order",
@@ -62,6 +57,19 @@ export default function DefinitionsPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [startInput, setStartInput] = useState(START_INPUT)
+  const [busy, setBusy] = useState(false)
+  const dirty = source !== SAMPLE || startInput !== START_INPUT
+
+  // Несохранённый JSON терялся бы молча: браузер или F5 уносят
+  // набранный текст. Без этого возвращение нашло бы его снова.
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
 
   const load = useCallback(async () => {
     try {
@@ -77,8 +85,23 @@ export default function DefinitionsPage() {
   }, [load])
 
   const save = async () => {
+    // Кнопка во время выполнения должна быть заблокирована: save выполняет
+    // три последовательных запроса, и второй клик создал бы
+    // два одинаковых определения.
+    if (busy) return
+    setBusy(true)
     try {
-      const parsed = JSON.parse(source)
+      let parsed: Record<string, unknown>
+      try {
+        parsed = JSON.parse(source) as Record<string, unknown>
+      } catch {
+        // Нераспознаваемый JSON — обычное дело при вставке из буфера. Сообщение
+        // движка на русской странице ничего не объясняет: «Unexpected token»
+        // читается как отказ сервера, а это ошибка того, что введено в поле.
+        setError('JSON не разбирается — проверьте синтаксис')
+        setValidation(null)
+        return
+      }
       const name = String(parsed.name ?? '')
       const version = Number(parsed.version ?? 1)
 
@@ -87,10 +110,23 @@ export default function DefinitionsPage() {
       // обновить снимает тупик, в который попадает каждый, кто сохранил
       // образец дважды.
       const clash = list.find((item) => item.name === name && item.version === version)
-      const definition =
-        clash && window.confirm(`Определение «${name}» версии ${version} уже есть. Обновить его?`)
-          ? await definitionsApi.update(clash.id, parsed)
-          : await definitionsApi.create(parsed)
+      if (
+        clash &&
+        !window.confirm(
+          `Определение «${name}» версии ${version} уже есть. Обновить его?`,
+        )
+      ) {
+        return
+      }
+      // Обновление принимает только саму схему без имени и версии:
+      // DefinitionUpdate с extra="forbid" отвергает name и version,
+      // и запрос падал бы с 422.
+      const definition = clash
+        ? await definitionsApi.update(clash.id, {
+            definition: parsed.definition,
+            is_active: true,
+          })
+        : await definitionsApi.create(parsed)
 
       await definitionsApi.activate(definition.id)
       setError(null)
@@ -99,6 +135,8 @@ export default function DefinitionsPage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось сохранить определение')
       setNotice(null)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -127,13 +165,29 @@ export default function DefinitionsPage() {
   }
 
   const start = async (definitionId: string) => {
+    // Без такой блокировки двойной клик создаст два инстанса: запросы уйдут
+    // почти одновременно, а пользователь увидит только один из них.
+    if (busy) return
+    setBusy(true)
     try {
-      const created = await instancesApi.start(definitionId, JSON.parse(startInput))
+      let input: Record<string, unknown>
+      try {
+        input = JSON.parse(startInput) as Record<string, unknown>
+      } catch {
+        // Причина та же, что и при сохранении: входные данные вводятся руками,
+        // и обрывок в поле — обычное дело, а не сбой сервиса.
+        setError('JSON не разбирается — проверьте синтаксис')
+        setNotice(null)
+        return
+      }
+      const created = await instancesApi.start(definitionId, input)
       setError(null)
-      setNotice(`Инстанс ${created.id} запущен`)
+      setNotice(`Процесс ${created.id} запущен`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось запустить процесс')
       setNotice(null)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -151,38 +205,57 @@ export default function DefinitionsPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Редактор определения">
           <textarea
+            aria-label="Определение workflow в формате JSON"
             value={source}
             onChange={(event) => setSource(event.target.value)}
             spellCheck={false}
             className="h-96 w-full rounded-md border border-surface-border bg-surface p-3 font-mono text-xs"
           />
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="primary" onClick={() => void save()}>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button variant="primary" disabled={busy} onClick={() => void save()}>
               Сохранить и активировать
             </Button>
-            <Button onClick={() => void validateSource()}>Проверить</Button>
-            <Button onClick={() => setSource(SAMPLE)}>Сбросить к образцу</Button>
+            <Button disabled={busy} onClick={() => void validateSource()}>
+              Проверить
+            </Button>
+            <Button
+              disabled={busy || source === SAMPLE}
+              onClick={() => {
+                // Сброс затирает набранный JSON молча: без вопроса потеряться работа.
+                if (window.confirm('Сбросить набранный текст определения?')) {
+                  setSource(SAMPLE)
+                  setValidation(null)
+                  setError(null)
+                }
+              }}
+            >
+              Сбросить к образцу
+            </Button>
+            {dirty && !busy && (
+              <span className="text-xs text-warning">Есть несохранённые изменения</span>
+            )}
           </div>
           <p className="mt-2 text-xs text-white/40">
             «Проверить» разбирает текст и показывает проблемы без сохранения: ошибка в определении
-            видна до того, как под неё создадут инстанс.
+            видна до того, как под неё создадут процесс.
           </p>
         </Card>
 
         <div className="space-y-4">
           <Card title="Запуск процесса">
             <p className="mb-2 text-sm text-white/60">
-              Входные данные инстанса. JSON потому, что его читает тот же бэкенд,
-              что проверяет дефинишен.
+              Входные данные процесса. JSON потому, что его читает тот же бэкенд,
+              что проверяет схему.
             </p>
             <textarea
+              aria-label="Входные данные процесса в формате JSON"
               value={startInput}
               onChange={(event) => setStartInput(event.target.value)}
               spellCheck={false}
               className="h-40 w-full rounded-md border border-surface-border bg-surface p-3 font-mono text-xs"
             />
             {selected && (
-              <Button className="mt-3" variant="primary" onClick={() => void start(selected)}>
+              <Button className="mt-3" variant="primary" disabled={busy} onClick={() => void start(selected)}>
                 Запустить выбранное определение
               </Button>
             )}
@@ -196,14 +269,14 @@ export default function DefinitionsPage() {
         {list.length === 0 ? (
           <EmptyState message="Определений пока нет" />
         ) : (
-          <table className="w-full text-left text-sm">
+          <table aria-label="Определения workflow" className="w-full text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-white/40">
               <tr>
-                <th className="pb-2">Имя</th>
-                <th className="pb-2">Версия</th>
-                <th className="pb-2">Состояние</th>
-                <th className="pb-2">Создано</th>
-                <th className="pb-2">Действия</th>
+                <th scope="col" className="pb-2">Имя</th>
+                <th scope="col" className="pb-2">Версия</th>
+                <th scope="col" className="pb-2">Состояние</th>
+                <th scope="col" className="pb-2">Создано</th>
+                <th scope="col" className="pb-2">Действия</th>
               </tr>
             </thead>
             <tbody>
@@ -224,9 +297,14 @@ export default function DefinitionsPage() {
                   <td className="py-2 text-white/50">{formatDateTime(item.created_at)}</td>
                   <td className="py-2">
                     <div className="flex gap-2">
-                      <Button onClick={() => setSelected(item.id)}>Выбрать</Button>
+                      {/* Выбор виден только цветом кнопки: с клавиатуры и для
+                          скринридера было непонятно, какое из определений сейчас
+                          выбрано, а от этого зависит карточка запуска. */}
+                      <Button aria-pressed={selected === item.id} onClick={() => setSelected(item.id)}>
+                        Выбрать
+                      </Button>
                       <Button onClick={() => void validate(item.id)}>Проверить</Button>
-                      <Button onClick={() => void start(item.id)}>Запустить</Button>
+                      <Button disabled={busy} onClick={() => void start(item.id)}>Запустить</Button>
                     </div>
                   </td>
                 </tr>

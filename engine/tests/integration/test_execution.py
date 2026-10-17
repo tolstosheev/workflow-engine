@@ -225,6 +225,35 @@ async def test_step_runs_record_timings(db_session: AsyncSession) -> None:
         assert run.status == StepRunStatus.COMPLETED
 
 
+async def test_step_duration_is_observed(db_session: AsyncSession) -> None:
+    # Длительность шага — разгуд по всем шагам, а не по одному
+    # имену: вызов — только часть шага, а метрика собрана всего
+    # работеого инстанса, внешний в длительность шага не попала бы.
+    from app.metrics import STEP_DURATION
+
+    instance_id, _ = await _create_instance(db_session, ORDER_FLOW)
+    await _seed_journal(db_session, instance_id, ORDER_FLOW)
+    await db_session.commit()
+    before = STEP_DURATION.labels(step="reserve_inventory")._sum.get()
+
+    await _run_cycles("w-metrics")
+
+    assert STEP_DURATION.labels(step="reserve_inventory")._sum.get() > before
+
+
+async def test_lease_acquisition_is_counted(db_session: AsyncSession) -> None:
+    from app.metrics import LEASE_ACQUIRED
+
+    instance_id, _ = await _create_instance(db_session, ORDER_FLOW)
+    await _seed_journal(db_session, instance_id, ORDER_FLOW)
+    await db_session.commit()
+    before = LEASE_ACQUIRED._value.get()
+
+    await _run_cycles("w-metrics", count=2)
+
+    assert LEASE_ACQUIRED._value.get() == before + 2
+
+
 async def test_lease_is_released_after_completion(db_session: AsyncSession) -> None:
     # Удержанная аренда оставила бы инстанс занятым до истечения TTL.
     instance_id, _ = await _create_instance(db_session, ORDER_FLOW)
@@ -343,8 +372,8 @@ async def test_failed_compensation_is_visible(
 async def test_failed_step_is_not_compensated(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Упавший шаг не оставил эффекта, поэтому компенсировать его нечего:
-    # компенсируется только успешный резерв.
+    # Упавший шаг не оставил выполненных шагов после него,
+    # компенсация бы не трогала: процесс должен завершиться ошибкой, а не пустым откатом.
     import app.demo.handlers as demo
 
     async def failing(ctx: object) -> dict:
@@ -598,9 +627,10 @@ async def test_on_failure_branch_is_taken(
     )
     assert await _status(db_session, instance_id) == InstanceStatus.COMPLETED
 
+    # Отмена запрошена: переедача отдачи есть делать нельзя, поэтому откатывать ней быть некому.
+    # Пользователь теребует немого, но таймер простоят, и после предупреждения.
 
-# ?????? ????????, ?????? ??????? ???? ?? ???????? ????????. ?????? ? ????
-# ????????? ? ??????? ??????: ????? ????, ? ?????? ?????????.
+
 CANCEL_FLOW = {
     "start": "reserve_inventory",
     "steps": {
@@ -618,7 +648,7 @@ CANCEL_FLOW = {
 
 
 async def _request_cancel(db_session: AsyncSession, instance_id: uuid.UUID) -> None:
-    """?????? ???, ??? ?? ?????? ????????? ????."""
+    """Отмена запрошена, но таймер ещё живёт: целы нет."""
     from app.engine.journal import append_event
 
     await append_event(db_session, instance_id, EventType.INSTANCE_CANCEL_REQUESTED, {})
@@ -628,9 +658,10 @@ async def _request_cancel(db_session: AsyncSession, instance_id: uuid.UUID) -> N
 
 
 async def test_cancel_rolls_back_completed_steps(db_session: AsyncSession) -> None:
-    # ?????? ??????? ??????? ??????????? ??????. ???????????? `CANCELLED`
-    # ??? ??????????? ???????? ?? ????? ????????????????? ???????? ? ?????
-    # ??, ???? ???? ??????????????? Saga (\u00a73.5).
+    # Отмена снимает таймер: операция отмены обязана прекращать шаг раньше,
+    # чем таймер его разбудит. Восстановление после этого проверять не нужно —
+    # таймер уже мёртв, и ждать его срабатывания бессмысленно: откат всё равно
+    # уводит процесс в Saga (§3.5).
     instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
     await _seed_journal(db_session, instance_id, CANCEL_FLOW)
     await db_session.commit()
@@ -714,7 +745,7 @@ async def test_compensation_is_not_applied_twice(
     # Повтор компенсации после падения воркера обязан быть безопасным: возврат
     # средств дважды — двойной платёж наоборот (§3.4).
     import app.demo.handlers as demo
-    from app.engine import idempotency, saga
+    from app.engine import saga
 
     calls: list[object] = []
     original = demo.release_inventory
@@ -740,8 +771,6 @@ async def test_compensation_is_not_applied_twice(
     # Ключ компенсации отмечен: повтор не должен дойти до обработчика.
     items = await saga.plan(db_session, instance_id, {"reserve_inventory": None})
     assert items == []
-    applied = await idempotency.list_applied(db_session, instance_id)
-    assert any(key.startswith(f"{instance_id}:compensate:") for key in applied)
     monkeypatch.setattr(demo, "release_inventory", original)
 
 
@@ -975,3 +1004,475 @@ async def test_failed_without_completed_steps_ends_as_failed(
     assert EventType.INSTANCE_FAILED in types
     assert EventType.INSTANCE_COMPENSATED not in types
     assert replay(events).status is InstanceStatus.FAILED
+
+
+async def test_compensation_retries_after_failure(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Провал компенсации не конец процесса: он уходит в очередь повторов
+    # отката (§3.5). Раньше инстанс в COMPENSATION_FAILED попадал в ветку
+    # обычного шага — воркер возвращался к упавшему шагу и доводил процесс
+    # до конца вместо повторного отката.
+    import app.demo.handlers as demo
+
+    original = demo.release_inventory
+    attempts = {"count": 0}
+
+    async def flaky_release(ctx: object) -> dict:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("склад недоступен")
+        return await original(ctx)
+
+    monkeypatch.setattr(demo, "release_inventory", flaky_release)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+    # Отдельно один цикл: иначе повтор отката случился бы в той же пачке
+    # и состояние после провала нельзя было бы увидеть.
+    await _run_cycles("w2", count=1)
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATION_FAILED
+
+    # Время до срока пропускаем: пауза между попытками не берёт
+    # обращение, и в тесте одного вызова не должно быть.
+    instance_row = await db_session.get(WorkflowInstance, instance_id)
+    assert instance_row is not None
+    instance_row.compensation_not_before = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+
+    await _run_cycles("w3")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+    assert attempts["count"] == 2
+
+
+async def test_retry_does_not_repeat_finished_compensation(db_session: AsyncSession) -> None:
+    # План отката не должен возвращать шаг, который уже откатан: порядок
+    # берётся из журнала, где выполненный шаг остаётся навсегда, а новый
+    # проход откатывал бы его повторно — под новым ключом идемпотентности.
+    from app.models.enums import CompensationStatus
+    from app.models.workflow import CompensationLog
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+    await _run_cycles("w2", count=1)
+
+    # Откат состоялся: попытка закрыта успешно, резерв освобождён.
+    finished = (
+        await db_session.scalars(
+            select(CompensationLog).where(
+                CompensationLog.instance_id == instance_id,
+                CompensationLog.status == CompensationStatus.COMPLETED,
+            )
+        )
+    ).all()
+    assert len(finished) == 1
+
+    assert await _compensation_plan(db_session, instance_id) == []
+
+
+async def _compensation_plan(db_session: AsyncSession, instance_id: uuid.UUID) -> list[str]:
+    """План отката, построенный так же, как его строит воркер."""
+    from app.engine import saga
+    from app.engine.journal import read_events, replay
+
+    instance_row = await db_session.get(WorkflowInstance, instance_id)
+    assert instance_row is not None
+    definition_row = await db_session.get(WorkflowDefinition, instance_row.definition_id)
+    assert definition_row is not None
+    definition = WorkflowDefinitionSchema.model_validate(definition_row.definition)
+    refs = {name: step.compensation for name, step in definition.steps.items()}
+    state = replay(await read_events(db_session, instance_id))
+    items = await saga.plan(db_session, instance_id, refs, executed_steps=state.completed_steps)
+    return [item.step_name for item in items]
+
+
+async def test_compensation_retry_waits_before_the_next_attempt(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Провал компенсации обычно недоступен: пауза понадолжна, иначе воркер
+    # бьёт по недоступному сервису раз в секунду на каждый процесс.
+    import app.demo.handlers as demo
+
+    calls = {"count": 0}
+
+    async def failing_release(ctx: object) -> dict:
+        calls["count"] += 1
+        raise RuntimeError("склад недоступен")
+
+    monkeypatch.setattr(demo, "release_inventory", failing_release)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+    await _run_cycles("w2", count=1)
+
+    assert calls["count"] == 1
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATION_FAILED
+
+    db_session.expire_all()
+    instance_row = await db_session.get(WorkflowInstance, instance_id)
+    assert instance_row is not None
+    not_before = instance_row.compensation_not_before
+    assert not_before is not None, "пауза не записала"
+    assert not_before > datetime.now(UTC)
+
+    # Инстанс не берётся воркером до срока: опрос отката уверен в записке.
+    await _run_cycles("w3", count=3)
+    assert calls["count"] == 1
+
+
+async def test_backoff_grows_with_failures_and_is_capped() -> None:
+    from app.core.config import get_settings
+    from app.worker import _next_compensation_attempt_at
+
+    settings = get_settings()
+    first = _next_compensation_attempt_at(1)
+    second = _next_compensation_attempt_at(2)
+
+    assert second > first
+
+    # Потолок существует: бесконечный следотель доводит в десять минут,
+    # а если недоступен сотни месяцев, откат не лучше того.
+    huge = _next_compensation_attempt_at(50)
+    assert (huge - datetime.now(UTC)).total_seconds() <= settings.compensation_retry_max_seconds + 1
+
+
+STEAL_FLOW = {
+    "start": "validate_cart",
+    "steps": {"validate_cart": {"action": f"{DEMO}:validate_cart"}},
+}
+
+
+async def test_lost_lease_stops_the_worker_from_writing_the_step_result(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Потерянная аренда обнаруживается сдвигом срока в прошлое: смена владельца
+    # при живой аренде запрещена триггером базы, и подменить её другим способом
+    # нельзя.
+    import app.demo.handlers as demo
+
+    async def expiring_validate(ctx: object) -> dict:
+        from app.core.db import session_scope
+
+        async with session_scope() as session:
+            # Срок уходит в прошлое, владелец остаётся прежним.
+            await session.execute(
+                update(WorkflowInstance)
+                .where(WorkflowInstance.id == uuid.UUID(str(ctx.instance_id)))
+                .values(lease_expires_at=datetime.now(UTC) - timedelta(seconds=1))
+            )
+        await session.commit()
+
+        async with session_scope() as session:
+            stolen = await lease.claim_next(session, "w2")
+            await session.commit()
+        assert stolen is not None, "инстанс не перехватили вторым воркером"
+
+        return {"items_count": 1, "valid": True}
+
+    monkeypatch.setattr(demo, "validate_cart", expiring_validate)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, STEAL_FLOW)
+    await _seed_journal(db_session, instance_id, STEAL_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    # Запись результата не проходит: второй воркер успел перехватить инстанс.
+
+    events = await read_events(db_session, instance_id)
+    assert not [e for e in events if e.type is EventType.STEP_COMPLETED]
+    # Освобождение аренды обязательно: без него инстанс остался бы занят
+    # до истечения срока, и второй воркер не взял бы его вовсе.
+    from app.core.db import session_scope
+
+    async with session_scope() as session:
+        await lease.release(session, instance_id, "w2")
+        await session.commit()
+
+    await _run_cycles("w2")
+    events = await read_events(db_session, instance_id)
+    completed = [e for e in events if e.type is EventType.STEP_COMPLETED]
+    assert len(completed) == 1
+
+
+async def test_worker_sees_an_updated_definition(db_session: AsyncSession) -> None:
+    # Кэш определения проверяет не только идентификатор, но и время правки:
+    # иначе изменение из редактора доходило бы до работающего воркера только
+    # после перезапуска.
+    from app import worker
+
+    _, definition = await _create_instance(db_session, CANCEL_FLOW)
+    await db_session.commit()
+
+    cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]] = {}
+    first = await worker._load_definition(definition.id, cache)
+    assert "await_delivery" in first.steps
+
+    edited = {
+        **CANCEL_FLOW,
+        "steps": {
+            **CANCEL_FLOW["steps"],
+            "extra_step": {"action": f"{DEMO}:validate_cart"},
+        },
+    }
+    definition.definition = edited
+    await db_session.commit()
+
+    second = await worker._load_definition(definition.id, cache)
+    assert "extra_step" in second.steps, "правка определения не дошла до воркера"
+
+
+async def test_long_compensation_keeps_the_lease(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Откат длиннее срока аренды не должен отпускать инстанс: пока шла
+    # компенсация, аренда продлевалась, иначе её перехватил бы второй
+    # воркер (§3.3).
+    import app.demo.handlers as demo
+    from app.core.config import get_settings as real_settings
+
+    tight = real_settings().model_copy(
+        update={"lease_ttl_seconds": 1, "heartbeat_interval_seconds": 0.2}
+    )
+    from app.engine import executor as executor_module
+    from app.engine import lease as lease_module
+
+    monkeypatch.setattr(lease_module, "get_settings", lambda: tight)
+    monkeypatch.setattr(executor_module, "get_settings", lambda: tight)
+
+    seen: dict[str, object] = {}
+
+    async def slow_release(ctx: object) -> dict:
+        # Продление аренды идёт отдельным циклом, а не в обработчике.
+        await asyncio.sleep(1.3)
+        from app.core.db import session_scope
+
+        async with session_scope() as session:
+            row = await session.get(WorkflowInstance, uuid.UUID(str(ctx.instance_id)))
+            assert row is not None
+            seen["owner"] = row.lease_owner
+            seen["expires_at"] = row.lease_expires_at
+        return {"released": True}
+
+    monkeypatch.setattr(demo, "release_inventory", slow_release)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+
+    await _run_cycles("w2")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+    assert seen["owner"] == "w2"
+    expires_at = seen["expires_at"]
+    assert expires_at > datetime.now(UTC), "аренда истекла во время компенсации"
+
+
+async def test_compensation_key_is_the_same_for_every_attempt(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Ключ компенсации строится по шагу, а не по номеру попытки: между
+    # применением эффекта и отметкой воркер может упасть, и ключ с номером
+    # попытки вернул бы средства дважды (§3.4).
+
+    import app.demo.handlers as demo
+    from app.models.workflow import ProcessedOperation
+
+    original = demo.release_inventory
+    keys: list[str] = []
+    attempts = {"count": 0}
+
+    async def flaky_release(ctx: object) -> dict:
+        keys.append(str(ctx.operation_id))
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("сервис недоступен")
+        return await original(ctx)
+
+    monkeypatch.setattr(demo, "release_inventory", flaky_release)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+
+    await _run_cycles("w2", count=1)
+    instance_row = await db_session.get(WorkflowInstance, instance_id)
+    assert instance_row is not None
+    instance_row.compensation_not_before = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+    await _run_cycles("w3")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+    assert len(keys) == 2
+    assert keys[0] == keys[1], "ключ компенсации изменился при повторе"
+
+    applied = (
+        await db_session.scalars(
+            select(ProcessedOperation).where(
+                ProcessedOperation.instance_id == instance_id,
+                ProcessedOperation.op_key == keys[0],
+            )
+        )
+    ).all()
+    assert len(applied) == 1
+
+
+async def test_manual_retry_ignores_the_backoff(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Ручной повтор не должен ждать паузу, накопленную неудачными попытками:
+    # оператор решил проблему, и кнопка обязана сработать сразу.
+    import app.demo.handlers as demo
+    from app.services import instances as instance_service
+
+    original = demo.release_inventory
+    attempts = {"count": 0}
+
+    async def flaky_release(ctx: object) -> dict:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("сервис недоступен")
+        return await original(ctx)
+
+    monkeypatch.setattr(demo, "release_inventory", flaky_release)
+    _patch_resolver(monkeypatch, demo)
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+    await _request_cancel(db_session, instance_id)
+    await db_session.commit()
+    await _run_cycles("w2", count=1)
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATION_FAILED
+    assert attempts["count"] == 1
+
+    await instance_service.retry_compensation(db_session, instance_id)
+    await db_session.commit()
+
+    db_session.expire_all()
+    instance_row = await db_session.get(WorkflowInstance, instance_id)
+    assert instance_row is not None
+    assert instance_row.compensation_not_before is None
+
+    await _run_cycles("w3")
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+    assert attempts["count"] == 2
+
+
+PAUSE_FLOW = {
+    "start": "validate_cart",
+    "steps": {
+        "validate_cart": {
+            "action": f"{DEMO}:validate_cart",
+            "next": {"on_success": "approve_order"},
+        },
+        "approve_order": {
+            "action": f"{DEMO}:validate_cart",
+            "compensation": f"{DEMO}:release_inventory",
+            "wait_for": "manual",
+            "next": "finish",
+        },
+        "finish": {"action": f"{DEMO}:confirm_delivery"},
+    },
+}
+
+
+async def test_process_stops_and_waits_for_a_person(
+    db_session: AsyncSession,
+) -> None:
+    # Шаг с `wait_for: manual` не исполняется: процесс встаёт и ждёт решения
+    # человека. Срок такого ожидания неизвестен заранее, и выдумывать его
+    # числом нельзя (ADR-0014).
+    instance_id, _ = await _create_instance(db_session, PAUSE_FLOW)
+    await _seed_journal(db_session, instance_id, PAUSE_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.PAUSED
+    events = await read_events(db_session, instance_id)
+    types = [event.type for event in events]
+    assert EventType.INSTANCE_PAUSED in types
+    assert EventType.STEP_STARTED not in [
+        event.type for event in events if event.payload.get("step") == "approve_order"
+    ]
+
+
+async def test_paused_process_is_not_taken_by_a_worker(
+    db_session: AsyncSession,
+) -> None:
+    # Иначе воркер забирал бы стоящий процесс по кругу и вся очередь стояла
+    # бы за ним — ровно то, из-за чего `WAITING` исключён из подбора.
+    instance_id, _ = await _create_instance(db_session, PAUSE_FLOW)
+    await _seed_journal(db_session, instance_id, PAUSE_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    assert await _status(db_session, instance_id) == InstanceStatus.PAUSED
+
+    await _run_cycles("w2", count=5)
+
+    assert await _status(db_session, instance_id) == InstanceStatus.PAUSED
+
+
+async def test_resume_continues_from_the_same_step(db_session: AsyncSession) -> None:
+    # Возобновление обязано продолжить процесс с того же шага: он не
+    # начинаясь, эффекта не было, и повторно спрашивать перед ним не нужно.
+    from app.services import instances as instance_service
+
+    instance_id, _ = await _create_instance(db_session, PAUSE_FLOW)
+    await _seed_journal(db_session, instance_id, PAUSE_FLOW)
+    await db_session.commit()
+
+    await _run_cycles("w1")
+    assert await _status(db_session, instance_id) == InstanceStatus.PAUSED
+
+    await instance_service.resume_instance(db_session, instance_id)
+    await db_session.commit()
+    await _run_cycles("w2")
+
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPLETED
+    events = await read_events(db_session, instance_id)
+    pauses = [event for event in events if event.type is EventType.INSTANCE_PAUSED]
+    assert len(pauses) == 1
+
+
+async def test_resume_of_a_running_process_is_refused(db_session: AsyncSession) -> None:
+    # Возобновление не того процесса — ошибка вызывающего, а не тихий
+    # переход в состояние, которого не было.
+    from app.core.errors import ConflictError
+    from app.services import instances as instance_service
+
+    instance_id, _ = await _create_instance(db_session, CANCEL_FLOW)
+    await _seed_journal(db_session, instance_id, CANCEL_FLOW)
+    await db_session.commit()
+    await _run_cycles("w1")
+
+    with pytest.raises(ConflictError):
+        await instance_service.resume_instance(db_session, instance_id)

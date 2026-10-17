@@ -7,7 +7,7 @@ INSTANCES ?= 300
 
 .PHONY: help up down logs migrate api worker check check-backend check-frontend \
         test test-fast test-integration test-chaos test-full coverage \
-        seed smoke bench chaos-demo
+        seed smoke bench chaos-demo prune
 
 help:  ## Список целей
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -58,6 +58,12 @@ coverage:  ## HTML-отчёт покрытия
 
 seed:  ## Загрузить демонстрационные определения workflow
 	cd engine && python -m scripts.seed
+
+prune:  ## Показать, сколько журналов попадёт под уборку (ADR-0019)
+	cd engine && python -m scripts.prune
+
+prune-apply:  ## Убрать журналы старых архивных процессов (необратимо)
+	cd engine && python -m scripts.prune --apply
 
 smoke:  ## Сквозная проверка работающей системы (нужен запущенный API)
 	cd engine && python -m scripts.smoke --url $(API_URL)

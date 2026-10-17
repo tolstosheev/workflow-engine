@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.core.errors import NotFoundError
+from app.metrics import INSTANCES_TOTAL
 from app.models.enums import InstanceStatus
 from app.models.workflow import WorkflowDefinition, WorkflowInstance
 from app.schemas.api import (
     ActionResult,
+    ArchiveRequest,
+    ArchiveResult,
     DefinitionRef,
     EventListOut,
     EventOut,
@@ -55,6 +59,8 @@ def _to_out(instance: WorkflowInstance, definition: WorkflowDefinition) -> Insta
         lease_owner=instance.lease_owner,
         lease_expires_at=instance.lease_expires_at,
         heartbeat_at=instance.heartbeat_at,
+        archived_at=instance.archived_at,
+        journal_pruned_at=instance.journal_pruned_at,
         created_at=instance.created_at,
         updated_at=instance.updated_at,
     )
@@ -66,6 +72,9 @@ async def create_instance(
 ) -> InstanceCreated:
     instance = await service.create_instance(db_session, payload.definition_id, payload.input)
     await db_session.commit()
+    # Счётчик растёт после коммита: откат не создаёт инстанса, и считать его
+    # некому — загрузка показала бы больше созданных, чем их есть.
+    INSTANCES_TOTAL.inc()
 
     definition = await _definition_of(db_session, instance)
     return InstanceCreated(
@@ -85,16 +94,53 @@ async def list_instances(
     offset: int = Query(default=0, ge=0),
     status_filter: str | None = Query(default=None, alias="status"),
     definition_id: uuid.UUID | None = None,
+    archived: Literal["active", "archived", "all"] = Query(default="active"),
     db_session: AsyncSession = Depends(get_db),
 ) -> InstanceListOut:
     rows, total = await service.list_instances(
-        db_session, limit, offset, status_filter, definition_id
+        db_session, limit, offset, status_filter, definition_id, archived
     )
     return InstanceListOut(
         items=[_to_out(instance, definition) for instance, definition in rows],
         total=total,
         limit=limit,
         offset=offset,
+        archived_total=await service.count_archived(db_session),
+    )
+
+
+@router.post("/archive", response_model=ArchiveResult)
+async def archive_finished(
+    request: ArchiveRequest,
+    db_session: AsyncSession = Depends(get_db),
+) -> ArchiveResult:
+    """Убирает завершённые процессы из списка (ADR-0017).
+
+    Это не удаление: журнал остаётся целым, и состояние по-прежнему
+    выводится его повтором. Архивируются только терминальные процессы —
+    `COMPENSATION_FAILED` ждёт человека, и спрятать такой процесс значило бы
+    спрятать незакрытый инцидент.
+    """
+    archived_count = await service.archive_terminal(db_session, request.before)
+    await db_session.commit()
+    return ArchiveResult(
+        archived=archived_count,
+        message=f"в архив убрано процессов: {archived_count}",
+    )
+
+
+@router.post("/{instance_id}/unarchive", response_model=ActionResult)
+async def unarchive_instance(
+    instance_id: uuid.UUID,
+    db_session: AsyncSession = Depends(get_db),
+) -> ActionResult:
+    """Возвращает процесс из архива в список."""
+    restored = await service.unarchive(db_session, instance_id)
+    if restored is None:
+        raise NotFoundError(f"инстанс {instance_id} не найден в архиве")
+    await db_session.commit()
+    return ActionResult(
+        status=InstanceStatus(restored.status), message="процесс возвращён из архива"
     )
 
 
@@ -126,9 +172,11 @@ async def get_events(
 
 @router.get("/{instance_id}/steps", response_model=StepListOut)
 async def get_steps(
-    instance_id: uuid.UUID, db_session: AsyncSession = Depends(get_db)
+    instance_id: uuid.UUID,
+    limit: int = Query(default=500, ge=1, le=2000),
+    db_session: AsyncSession = Depends(get_db),
 ) -> StepListOut:
-    runs = await service.get_steps(db_session, instance_id)
+    runs = await service.get_steps(db_session, instance_id, limit)
     return StepListOut(items=[StepRunOut.model_validate(run) for run in runs])
 
 
@@ -175,6 +223,15 @@ async def force_complete(
     return ActionResult(
         status=InstanceStatus(instance.status), message="инстанс завершён без компенсаций"
     )
+
+
+@router.post("/{instance_id}/resume", response_model=ActionResult)
+async def resume_instance(
+    instance_id: uuid.UUID, db_session: AsyncSession = Depends(get_db)
+) -> ActionResult:
+    instance = await service.resume_instance(db_session, instance_id)
+    await db_session.commit()
+    return ActionResult(status=InstanceStatus(instance.status), message="процесс продолжен")
 
 
 @router.post("/{instance_id}/compensation/retry", response_model=ActionResult)

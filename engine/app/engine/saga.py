@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -27,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.engine.idempotency import OperationKey
 from app.engine.journal import append_event
 from app.models.enums import CompensationStatus, EventType, StepRunStatus
-from app.models.workflow import CompensationLog, StepRun, WorkflowInstance
+from app.models.workflow import CompensationLog, StepRun
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +117,9 @@ async def plan(
     выродила бы в «нечего откатывать», хотя резерв уже занят.
 
     Шаги без компенсации в план не попадают: у них нечего отменять, и воркер
-    запишет для них `COMPENSATION_SKIPPED`.
+    запишет для них `COMPENSATION_SKIPPED`. Уже откатанные шаги тоже не
+    попадают: порядок берётся из журнала, где они остаются навсегда, и второй
+    проход откатывал бы их повторно — под новым ключом идемпотентности.
     """
     if executed_steps is None:
         # `completed_steps` уже развёрнут: сортировка по времени завершения
@@ -134,6 +135,11 @@ async def plan(
         if not compensation_ref:
             continue
         step_run = await find_step_run(db_session, instance_id, step_name)
+        if step_run is not None and step_run.compensated:
+            # Шаг откатан и лежит в `state.completed_steps`: план строим по
+            # порядку из журнала, и повторный проход откатывал бы его снова —
+            # уже под новым ключом идемпотентности.
+            continue
         if step_run is None:
             # Шаг выполнен по журналу, но прогона нет: данных о нём нет, и
             # компенсировать нечего. Молча пропустить опаснее, чем упасть,
@@ -239,46 +245,18 @@ async def finish_attempt(
     )
 
 
-async def mark_skipped(db_session: AsyncSession, instance_id: uuid.UUID, step_name: str) -> None:
-    """Фиксирует шаг без компенсации.
-
-    Отсутствие компенсации — не ошибка: часть шагов обратима по умолчанию.
-    Событие нужно, чтобы по журналу было видно, что шаг откатан не будет.
-    """
-    await append_event(db_session, instance_id, EventType.COMPENSATION_SKIPPED, {"step": step_name})
-
-
-def operation_key(instance_id: uuid.UUID, item: CompensationItem, attempt: int) -> OperationKey:
+def operation_key(instance_id: uuid.UUID, item: CompensationItem) -> OperationKey:
     """Ключ идемпотентности для компенсации.
 
-    Компенсация необратима, но повтор после сбоя обязан быть безопасным — ключ
-    строится по той же схеме, что и для основного шага.
+    Компенсация необратима, но повтор после сбоя обязан быть безопасным, и
+    повтор обязан узнать свою отметку. Поэтому ключ строится по шагу, а не по
+    номеру попытки: попытки — это попытки, а операция одна. С ключом, растущим
+    вместе с попыткой, падение воркера между эффектом и отметкой привело бы к
+    повторному возврату средств.
     """
     return OperationKey(
-        instance_id=instance_id, step_name=f"compensate:{item.step_name}", attempt=attempt
+        instance_id=instance_id, step_name=f"compensate:{item.step_name}", attempt=0
     )
-
-
-async def stream_pending_steps(
-    db_session: AsyncSession, instance_id: uuid.UUID, batch_size: int = 10
-) -> AsyncIterator[StepRun]:
-    """Пошаговая выдача непокрытых шагов — для отката длинных процессов.
-
-    Потоковая выборка нужна, чтобы не держать в памяти тысячи строк `step_runs`
-    процесса, который живёт сутки.
-    """
-    result = await db_session.stream(
-        select(StepRun)
-        .where(
-            StepRun.instance_id == instance_id,
-            StepRun.status == StepRunStatus.COMPLETED,
-            StepRun.compensated.is_(False),
-        )
-        .order_by(StepRun.finished_at.desc())
-        .execution_options(yield_per=batch_size, stream_results=True)
-    )
-    async for step_run in result.scalars():
-        yield step_run
 
 
 async def failed_count(db_session: AsyncSession, instance_id: uuid.UUID) -> int:
@@ -295,20 +273,3 @@ async def failed_count(db_session: AsyncSession, instance_id: uuid.UUID) -> int:
             )
         )
     ) or 0
-
-
-async def is_compensated(db_session: AsyncSession, instance_id: uuid.UUID) -> bool:
-    """Все ли выполненные шаги компенсированы."""
-    return (await completed_steps(db_session, instance_id)) == []
-
-
-async def set_instance_status(
-    db_session: AsyncSession, instance: WorkflowInstance, status: str
-) -> None:
-    """Обновляет статус инстанса. Только рядом с записью события журнала.
-
-    Прямое `UPDATE status` в обход журнала сделало бы состояние
-    невосстанавливаемым.
-    """
-    instance.status = status
-    await db_session.flush()

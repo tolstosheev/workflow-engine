@@ -199,7 +199,7 @@ def test_wait_before_is_durable_delay() -> None:
     assert wait_before(_step(definition, "a")) == 60
 
 
-# --- ??????? ?????????????? -------------------------------------------------
+# --- Параллельные ветки (не исполняются) -----------------------------------------
 
 
 def test_fork_returns_branches() -> None:

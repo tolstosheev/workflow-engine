@@ -5,7 +5,7 @@ export default function NotFoundPage() {
     <section className="text-center">
       <h1 className="text-xl font-semibold">Страница не найдена</h1>
       <Link to="/" className="mt-4 inline-block text-sm text-accent hover:underline">
-        Вернуться к списку инстансов
+        Вернуться к списку заказов
       </Link>
     </section>
   )

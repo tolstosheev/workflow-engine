@@ -1,14 +1,11 @@
 /**
- * Граф определения workflow.
+ * Граф схемы процесса.
  *
- * Схема рисуется своими средствами: граф линейный, и библиотека раскладки
- * обошлась бы дороже кода, который она заменила бы.
- *
- * Цвет узла — его фактическое состояние в инстансе. Именно это делает
- * схему показательной: видно не только «как объявлено», но и «что с этим
- * произошло» — шаг, который откатили, и шаг, который упал, видны разными
- * цветами на одном графе.
+ * Рисуется своими средствами: граф линейный, и библиотека раскладки обошлась
+ * бы дороже кода, который она заменила бы. Цвет узла — его фактическое
+ * состояние в процессе, а не то, что объявлено в схеме.
  */
+
 
 import { useMemo, useState } from 'react'
 
@@ -23,8 +20,8 @@ const STATE_STYLES: Record<NodeState, { box: string; dot: string; label: string 
   running: { box: 'fill-accent/20 stroke-accent', dot: 'fill-accent', label: 'выполняется' },
   done: { box: 'fill-success/20 stroke-success/50', dot: 'fill-success', label: 'выполнен' },
   failed: { box: 'fill-danger/20 stroke-danger/60', dot: 'fill-danger', label: 'упал' },
-  compensated: { box: 'fill-warning/20 stroke-warning/50', dot: 'fill-warning', label: 'откатан' },
-  compensating: { box: 'fill-warning/20 stroke-warning/50', dot: 'fill-warning', label: 'откатывается' },
+  compensated: { box: 'fill-warning/20 stroke-warning/50', dot: 'fill-warning', label: 'компенсирован' },
+  compensating: { box: 'fill-warning/20 stroke-warning/50', dot: 'fill-warning', label: 'компенсируется' },
 }
 
 const EDGE_STYLES: Record<string, string> = {
@@ -35,16 +32,15 @@ const EDGE_STYLES: Record<string, string> = {
 }
 
 /**
- * Состояние шага выводится из прогона шага, а не из статуса инстанса:
- * `COMPENSATED` у процесса и `COMPENSATED` у конкретного шага — разные вещи.
- */
-/**
  * Схема шагов определения с фактическим состоянием исполнения.
  *
  * Цвет узла — его состояние в инстансе. Именно это делает схему
  * показательной: видно не только «как объявлено», но и «что с этим
  * произошло» — шаг, который откатили, и шаг, который упал, видны разными
  * цветами на одном графе.
+ *
+ * Состояние шага выводится из прогона шага, а не из статуса инстанса:
+ * `COMPENSATED` у процесса и `COMPENSATED` у конкретного шага — разные вещи.
  */
 interface GraphProps {
   definition: WorkflowDefinitionSchema
@@ -189,8 +185,25 @@ function Node({ node, state, iterations, active, onHover, onSelect }: NodeProps)
       transform={`translate(${node.x} ${node.y})`}
       onMouseEnter={() => onHover(node.name)}
       onMouseLeave={() => onHover(null)}
+      onFocus={() => onHover(node.name)}
+      onBlur={() => onHover(null)}
       onClick={() => onSelect?.(node.name)}
-      className={onSelect ? 'cursor-pointer' : ''}
+      // Узел выбирается и с клавиатуры: иначе карта шагов недоступна тому,
+      // кто не держит мышь, а состояние шага — единственное, ради чего
+      // карта и рисуется.
+      //
+      // Фокус открывает ту же подпись, что и наведение: раньше она была
+      // только по мыши, и человек с клавиатуры видел голые прямоугольники без
+      // действия, компенсации и правил повтора.
+      role={onSelect ? 'button' : undefined}
+      tabIndex={0}
+      aria-label={`Шаг ${node.name}: ${style.label}`}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        onSelect?.(node.name)
+      }}
+      className={onSelect ? 'cursor-pointer focus:outline-none focus-visible:stroke-accent' : ''}
     >
       <rect
         width={node.width}
