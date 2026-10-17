@@ -438,6 +438,20 @@ curl http://localhost:8000/api/instances/{id}/steps
 curl http://localhost:8000/api/instances/{id}
 ```
 
+### `attempt to write a readonly database` при прогоне с покрытием
+
+Файл данных покрытия лежит в `engine/.coverage`, и в репозитории под OneDrive
+OneDrive отдаёт его только для чтения: прогоны идут, а на слиянии параллельных
+файлов `pytest` падает с `INTERNALERROR`, и ни одного падения теста при этом не
+показано — выглядит как зелёный прогон, оборванный на последнем слове.
+
+```bash
+cd engine && rm -f .coverage .coverage.*
+```
+
+Признак узнаваем по `INTERNALERROR` при нуле `FAILED`: упало не тестирование, а
+запись результата.
+
 ---
 
 ## 7. Работа с миграциями
