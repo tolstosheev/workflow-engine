@@ -99,10 +99,14 @@ const DEFINITION = {
       validate_cart: {
         action: 'app.demo.handlers:validate_cart',
         compensation: 'app.demo.handlers:release_inventory',
+        description: 'Проверка корзины перед любым побочным эффектом',
         next: 'approve_order',
       },
       approve_order: { action: 'app.demo.handlers:charge_payment', next: 'finish' },
-      finish: { action: 'app.demo.handlers:confirm_delivery' },
+      finish: {
+        action: 'app.demo.handlers:confirm_delivery',
+        description: 'Подтверждение доставки',
+      },
     },
   },
 }
@@ -467,7 +471,30 @@ describe('разбор журнала', () => {
 
     await open('RUNNING')
 
-    expect(await screen.findByText('validate_cart → reserve_inventory')).toBeTruthy()
+    // Шаги идут списком, а не одной склейкой: заголовок каждого читается, а
+    // между ними стоит соединитель порядка. Проверка по всему тексту строки, иначе
+    // разбивка на элементы дала бы «текст разбит» вместо отсутствия шага.
+    const row = (await screen.findByText('Выполнено')).closest('div') as HTMLElement
+    expect(row.textContent).toContain('validate_cart')
+    expect(row.textContent).toContain('reserve_inventory')
+    expect(row.textContent).toContain('→')
+  })
+
+  it('читает шаг по описанию из схемы, а имя оставляет рядом', async () => {
+    state.mockResolvedValue({
+      ...REBUILT,
+      completed_steps: ['validate_cart'],
+    })
+
+    await open('RUNNING')
+
+    // Описание читается по-человечески, имя остаётся вторым текстом: без него
+    // разбор процесса и вопрос «а какой это шаг» не работают. Описание встречается
+    // в нескольких местах страницы, поэтому ищем все вхождения, а не одно.
+    expect(
+      (await screen.findAllByText('Проверка корзины перед любым побочным эффектом')).length,
+    ).toBeGreaterThan(0)
+    expect((await screen.findAllByText('validate_cart')).length).toBeGreaterThan(0)
   })
 
   it('раскрывает данные события по требованию', async () => {

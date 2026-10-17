@@ -79,6 +79,36 @@ describe('порядок компенсации', () => {
     expect(names).toEqual(['charge_payment', 'reserve_inventory', 'validate_cart'])
   })
 
+  it('называет шаги по описанию из схемы', () => {
+    // Полоса отката — место, где человек читает названия впервые: по именам
+    // `charge_payment` порядок компенсации приходилось угадывать.
+    const { container } = render(
+      <RollbackLane
+        instance={state()}
+        steps={[]}
+        titles={{
+          charge_payment: 'Списание средств',
+          reserve_inventory: 'Резерв товара на складе',
+          validate_cart: 'Проверка корзины',
+        }}
+      />,
+    )
+    const labels = Array.from(container.querySelectorAll('li')).map((row) =>
+      row.querySelectorAll('span')[2].textContent,
+    )
+
+    expect(labels).toEqual(['Списание средств', 'Резерв товара на складе', 'Проверка корзины'])
+  })
+
+  it('без схемы оставляет имена: порядок отката читается и по ним', () => {
+    const { container } = render(<RollbackLane instance={state()} steps={[]} />)
+    const names = Array.from(container.querySelectorAll('li')).map(
+      (row) => row.querySelectorAll('span')[2].textContent,
+    )
+
+    expect(names).toEqual(['charge_payment', 'reserve_inventory', 'validate_cart'])
+  })
+
   it('нумерует шаги в порядке отката, а не выполнения', () => {
     const { container } = render(<RollbackLane instance={state()} steps={[]} />)
     const numbers = Array.from(container.querySelectorAll('li')).map(

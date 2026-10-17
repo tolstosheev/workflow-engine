@@ -14,6 +14,8 @@ import type { InstanceState, StepRun, TimelineEntry } from '@/types/api'
 interface RollbackLaneProps {
   instance: InstanceState | null
   steps: StepRun[]
+  /** Описание шага из схемы; без него полоса показывает имена. */
+  titles?: Record<string, string>
 }
 
 type Marker = 'compensated' | 'planned' | 'kept'
@@ -24,7 +26,7 @@ const MARKER_STYLES: Record<Marker, string> = {
   kept: 'bg-surface-border/40 text-white/40 border-transparent',
 }
 
-export function RollbackLane({ instance, steps }: RollbackLaneProps) {
+export function RollbackLane({ instance, steps, titles }: RollbackLaneProps) {
   const done = instance?.completed_steps ?? []
   if (!instance || done.length === 0) return null
 
@@ -68,7 +70,7 @@ export function RollbackLane({ instance, steps }: RollbackLaneProps) {
               >
                 {already ? 'компенсирован' : planned ? 'компенсация' : 'остаётся'}
               </span>
-              <span className="font-mono text-white/80">{name}</span>
+              <span className="font-mono text-white/80">{titles?.[name] ?? name}</span>
               {failed && <span className="text-danger/70">упал, компенсации нет</span>}
             </li>
           )

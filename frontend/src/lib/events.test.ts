@@ -1,8 +1,34 @@
 import { describe, expect, it } from 'vitest'
 
 import { describeEvent, describeStreamEvent } from './events'
+import { stepResolver } from './steps'
 
 describe('фраза о событии', () => {
+  it('называет шаг по описанию из схемы, когда подмена передана', () => {
+    // Фраза живёт в журнале на странице, где схема уже загружена, а имя шага
+    // рядом с подписью «Платёж отклонён» читается как служебная выдача.
+    const resolve = stepResolver({
+      reserve_inventory: { action: 'a', description: 'Резерв товара на складе' },
+      charge_payment: { action: 'b', description: 'Списание средств' },
+    })
+
+    expect(
+      describeEvent(
+        { type: 'STEP_COMPLETED', payload: { step: 'reserve_inventory', next: 'charge_payment' } },
+        resolve,
+      ),
+    ).toBe('Шаг Резерв товара на складе выполнен, дальше Списание средств')
+  })
+
+  it('без подстановки оставляет имя: без схемы фраза обязана собираться', () => {
+    expect(
+      describeEvent({
+        type: 'COMPENSATION_FAILED',
+        payload: { for_step: 'reserve_inventory', attempt: 2, error: 'склад недоступен' },
+      }),
+    ).toBe('Компенсация шага reserve_inventory не выполнена на попытке 2: склад недоступен')
+  })
+
   it('называет шаг и следующий переход', () => {
     expect(
       describeEvent({ type: 'STEP_COMPLETED', payload: { step: 'reserve_inventory', next: 'charge_payment' } }),

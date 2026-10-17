@@ -37,9 +37,14 @@ function reason(payload: Payload): string {
 }
 
 /** `«Шаг <имя>: <хвост>»`; без имени — подпись события, см. `step`. */
-function withStep(type: EventType, payload: Payload, tail: string): string {
+function withStep(
+  type: EventType,
+  payload: Payload,
+  tail: string,
+  resolve: (name: string) => string,
+): string {
   const name = step(payload)
-  return name === null ? eventLabel(type) : `Шаг ${name}: ${tail}`
+  return name === null ? eventLabel(type) : `Шаг ${resolve(name)}: ${tail}`
 }
 
 /**
@@ -48,46 +53,54 @@ function withStep(type: EventType, payload: Payload, tail: string): string {
  * `type` бывает и `null`, и `undefined`: запись ленты объединяет событие и
  * выполнение шага, а у выполнения поля события нет.
  *
+ * `resolve` подставляет описание шага вместо имени. Без него фраза остаётся с
+ * именем: собираться она должна и там, где схемы нет — в отчёте, в сравнении и в
+ * потоке, который приходит раньше, чем загружено определение.
+ *
  * Неизвестный тип показывается подписью из словаря, неизвестное значение —
  * самим значением: событие, которого движок ещё не знает, должно быть видно.
  */
-export function describeEvent(event: { type?: string | null; payload?: unknown }): string {
+export function describeEvent(
+  event: { type?: string | null; payload?: unknown },
+  resolve: (name: string) => string = (name) => name,
+): string {
   const type = (event.type ?? 'INSTANCE_CREATED') as EventType
   const payload: Payload =
     event.payload && typeof event.payload === 'object' ? (event.payload as Payload) : {}
+  const named = (name: string | null): string | null => (name === null ? null : resolve(name))
 
   switch (type) {
     case 'INSTANCE_CREATED':
       return 'Процесс создан'
 
     case 'INSTANCE_PAUSED':
-      return withStep(type, payload, 'процесс ждёт решения человека')
+      return withStep(type, payload, 'процесс ждёт решения человека', resolve)
 
     case 'INSTANCE_RESUMED':
-      return withStep(type, payload, 'ожидание снято, процесс продолжен')
+      return withStep(type, payload, 'ожидание снято, процесс продолжен', resolve)
 
     case 'STEP_STARTED': {
-      const name = step(payload)
+      const name = named(step(payload))
       if (name === null) return eventLabel(type)
       const number = count(payload, 'attempt')
       return `Шаг ${name}${number === null ? '' : `, попытка ${number}`}`
     }
 
     case 'STEP_COMPLETED': {
-      const name = step(payload)
+      const name = named(step(payload))
       if (name === null) return eventLabel(type)
       const next = text(payload, 'next')
-      return `Шаг ${name} выполнен${next === null ? '' : `, дальше ${next}`}`
+      return `Шаг ${name} выполнен${next === null ? '' : `, дальше ${resolve(next)}`}`
     }
 
     case 'STEP_FAILED': {
-      const name = step(payload)
+      const name = named(step(payload))
       if (name === null) return eventLabel(type)
       return `Шаг ${name} не выполнен${attempt(payload)}${reason(payload)}`
     }
 
     case 'STEP_RETRY_SCHEDULED': {
-      const name = step(payload)
+      const name = named(step(payload))
       if (name === null) return eventLabel(type)
       const number = count(payload, 'attempt')
       const next = number === null ? '' : `, следующая попытка ${number}`
@@ -95,7 +108,7 @@ export function describeEvent(event: { type?: string | null; payload?: unknown }
     }
 
     case 'LOOP_EXHAUSTED': {
-      const name = step(payload)
+      const name = named(step(payload))
       if (name === null) return eventLabel(type)
       const iterations = count(payload, 'iterations')
       const limit = count(payload, 'max_iterations')
@@ -105,7 +118,7 @@ export function describeEvent(event: { type?: string | null; payload?: unknown }
     }
 
     case 'TIMER_SCHEDULED': {
-      const name = step(payload)
+      const name = named(step(payload))
       if (name === null) return eventLabel(type)
       const due = text(payload, 'due_at')
       // Срок ожидания решения планируется тем же событием, что и ожидание шага:
@@ -117,10 +130,10 @@ export function describeEvent(event: { type?: string | null; payload?: unknown }
     }
 
     case 'TIMER_FIRED':
-      return withStep(type, payload, 'ожидание сработало')
+      return withStep(type, payload, 'ожидание сработало', resolve)
 
     case 'COMPENSATION_STARTED': {
-      const name = step(payload, 'for_step')
+      const name = named(step(payload, 'for_step'))
       if (name === null) return eventLabel(type)
       const compensation = text(payload, 'compensation')
       const action = compensation === null ? '' : ` вызывается ${compensation}`
@@ -128,13 +141,13 @@ export function describeEvent(event: { type?: string | null; payload?: unknown }
     }
 
     case 'COMPENSATION_COMPLETED': {
-      const name = step(payload, 'for_step')
+      const name = named(step(payload, 'for_step'))
       if (name === null) return eventLabel(type)
       return `Компенсация шага ${name} выполнена${attempt(payload)}`
     }
 
     case 'COMPENSATION_FAILED': {
-      const name = step(payload, 'for_step')
+      const name = named(step(payload, 'for_step'))
       if (name === null) return eventLabel(type)
       return `Компенсация шага ${name} не выполнена${attempt(payload)}${reason(payload)}`
     }
