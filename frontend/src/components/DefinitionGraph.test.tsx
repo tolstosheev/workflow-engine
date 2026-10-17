@@ -4,7 +4,7 @@
  *
  * Ценность схемы в том, что на ней видно не только «как объявлено», но и «что
  * с этим произошло». Значит проверяются две вещи: раскладка строится по
- * объявлению, а цвет узла берётся из выполнения шага шага, а не из статуса процесса —
+ * объявлению, а цвет узла берётся из выполнения шага, а не из статуса процесса —
  * `COMPENSATED` у процесса и у шага означают разное.
  */
 
@@ -58,6 +58,7 @@ function state(over: Partial<InstanceState> = {}): InstanceState {
     completed_steps: ['validate_cart', 'reserve_inventory'],
     pending_compensations: [],
     is_terminal: false,
+    cancel_requested: false,
     step_iterations: {},
     ...over,
   } as unknown as InstanceState
@@ -234,5 +235,56 @@ describe('схема шагов', () => {
     fireEvent.click(screen.getByRole('button', { name: /validate_cart/ }))
 
     expect(chosen).toEqual(['validate_cart'])
+  })
+
+  it('открывает шаг с клавиатуры — и Enter, и пробелом', () => {
+    // Клавиша без обработчика оставляет карту доступной только зрением: узел
+    // получает фокус, но выбрать его нельзя.
+    const chosen: string[] = []
+    render(
+      <DefinitionGraph
+        definition={DEFINITION}
+        steps={[]}
+        onSelect={(name: string) => chosen.push(name)}
+      />,
+    )
+    const node = screen.getByRole('button', { name: /charge/ })
+
+    fireEvent.keyDown(node, { key: 'Enter' })
+    fireEvent.keyDown(node, { key: ' ' })
+
+    expect(chosen).toEqual(['charge', 'charge'])
+  })
+
+  it('не отвечает на остальные клавиши', () => {
+    const chosen: string[] = []
+    render(
+      <DefinitionGraph
+        definition={DEFINITION}
+        steps={[]}
+        onSelect={(name: string) => chosen.push(name)}
+      />,
+    )
+
+    fireEvent.keyDown(screen.getByRole('button', { name: /finish/ }), { key: 'Escape' })
+
+    expect(chosen).toEqual([])
+  })
+
+  it('закрывает подпись, когда фокус и мышь ушли', () => {
+    // Подпись, которая не закрывается, висит поверх следующего шага и читается
+    // как его свойства: уводишь взгляд, а на экране всё то же самое.
+    render(<DefinitionGraph definition={DEFINITION} steps={[]} />)
+    focusNode('charge')
+    expect(screen.getByText('app.demo.handlers:charge_payment')).toBeTruthy()
+
+    fireEvent.blur(screen.getByLabelText(/^Шаг charge/))
+    expect(screen.queryByText('app.demo.handlers:charge_payment')).toBeNull()
+
+    fireEvent.mouseEnter(screen.getByLabelText(/^Шаг finish/))
+    expect(screen.getByText('app.demo.handlers:confirm_delivery')).toBeTruthy()
+
+    fireEvent.mouseLeave(screen.getByLabelText(/^Шаг finish/))
+    expect(screen.queryByText('app.demo.handlers:confirm_delivery')).toBeNull()
   })
 })

@@ -91,6 +91,19 @@ async def heartbeat(
     )
 
 
+async def touch(session: AsyncSession, worker_id: str) -> None:
+    """Продлевает сердце без счётчиков: исполнитель занят и ни о чём не отчитывается.
+
+    Отдельный вызов, а не `heartbeat` с нулями: счётчики дописывает вызов в конце
+    цикла, и повторное прибавление выдало бы шаги дважды. Нужен там, где цикл или
+    шаг длятся дольше границы молчания, — иначе занятый исполнитель объявляется
+    не отвечающим, а это ложь: он работает.
+    """
+    await session.execute(
+        update(Worker).where(Worker.worker_id == worker_id).values(heartbeat_at=datetime.now(UTC))
+    )
+
+
 async def mark_stopped(session: AsyncSession, worker_id: str) -> None:
     """Отмечает воркера остановленным.
 

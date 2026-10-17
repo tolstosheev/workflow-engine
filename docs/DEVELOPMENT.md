@@ -25,7 +25,7 @@
 npm run lint
 npm run typecheck
 npm test              # тесты
-npm run test:coverage # тесты и порог покрытия (94/84/96/97)
+npm run test:coverage # тесты и порог покрытия (95/85/97/97)
 npm run build
 npm run test:e2e      # сквозные через браузер, нужен поднятый стенд
 ```

@@ -157,14 +157,25 @@ async def heartbeat_loop(instance_id: uuid.UUID, worker_id: str, stop: asyncio.E
     Продление продолжается до `stop` и молча заканчивается, когда аренда ушла
     к другому воркеру: решение принимает проверка перед записью результата,
     где оно учитывается ровно один раз.
+
+    Тем же ходом продлевается сердце в реестре: цикл воркера пишет его раз за
+    цикл, а шаг или откат могут длиться дольше границы молчания. Без этого
+    исполнитель, занятый долгим шагом, объявлялся бы не отвечающим — а он жив.
     """
     settings = get_settings()
     from app.core.db import session_scope
+    from app.services import registry as worker_registry
+
+    silent_after = worker_registry.stale_after(settings.worker_poll_interval_seconds)
+    # Вдвое быстрее границы: одно опоздание не должно выглядеть как смерть.
+    interval = min(settings.heartbeat_interval_seconds, silent_after.total_seconds() / 2)
 
     while not stop.is_set():
         try:
             async with session_scope() as session:
                 renewed = await lease.heartbeat(session, instance_id, worker_id)
+                if renewed:
+                    await worker_registry.touch(session, worker_id)
             if not renewed:
                 return
         except Exception:
@@ -173,7 +184,7 @@ async def heartbeat_loop(instance_id: uuid.UUID, worker_id: str, stop: asyncio.E
             # обязан завершиться.
             logger.warning("heartbeat.failed", extra={"instance_id": str(instance_id)})
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=settings.heartbeat_interval_seconds)
+            await asyncio.wait_for(stop.wait(), timeout=interval)
 
 
 @contextlib.asynccontextmanager

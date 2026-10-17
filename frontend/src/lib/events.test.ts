@@ -4,6 +4,17 @@ import { describeEvent, describeStreamEvent } from './events'
 import { stepResolver } from './steps'
 
 describe('фраза о событии', () => {
+  it('называет обработчик компенсации, когда он записан в событии', () => {
+    // Хвост «вызывается <обработчик>» — единственное место, где видно, какая
+    // именно компенсация должна отработать; без него разбор нечего читать.
+    expect(
+      describeEvent({
+        type: 'COMPENSATION_STARTED',
+        payload: { for_step: 'reserve_inventory', compensation: 'app.demo.handlers:release_inventory' },
+      }),
+    ).toContain('вызывается app.demo.handlers:release_inventory')
+  })
+
   it('называет шаг по описанию из схемы, когда подмена передана', () => {
     // Фраза живёт в журнале на странице, где схема уже загружена, а имя шага
     // рядом с подписью «Платёж отклонён» читается как служебная выдача.

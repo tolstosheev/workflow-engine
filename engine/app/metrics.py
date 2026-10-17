@@ -24,7 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import CompensationStatus, InstanceStatus, StepRunStatus
-from app.models.workflow import CompensationLog, StepRun, WorkflowInstance
+from app.models.workflow import CompensationLog, StepRun, WorkflowDefinition, WorkflowInstance
 
 # Отдельный реестр: глобальный содержал бы метрики дублирующих приложений
 # в одном процессе тестов.
@@ -96,6 +96,11 @@ LEASE_LOST = Counter(
     registry=REGISTRY,
 )
 
+#: Ряды, которые уже публиковались хотя бы раз. Gauge без нового значения
+#: показывает прежнее, поэтому исчезнувшие ряды обнуляются по этому списку.
+_PUBLISHED_STEPS: set[str] = set()
+_PUBLISHED_COMPENSATIONS: set[str] = set()
+
 
 async def collect_from_db(db_session: AsyncSession) -> None:
     """Обновляет метрики состояния из БД."""
@@ -118,13 +123,20 @@ async def collect_from_db(db_session: AsyncSession) -> None:
     for step_name, step_status, count in step_rows.all():
         steps[(step_name, _step_result(step_status))] = count
 
-    for step_name in _step_names(steps):
+    # Шаги объявлены в схемах, а не в журнале: их имена известны и тогда, когда ни
+    # один прогон не состоялся. Иначе метрика начинает с нуля на каждом пустом
+    # стенде, а имя из схемы остаётся опубликованным в общем файле с прежним
+    # значением — и таблица показывает прогоны, которых не было.
+    steps_by_definition, compensations_by_definition = await _declared_names(db_session)
+    for step_name in _with_previous(_step_names(steps), _PUBLISHED_STEPS) | steps_by_definition:
         STEPS_BY_RESULT.labels(step=step_name, result="success").set(
             steps.get((step_name, "success"), 0)
         )
         STEPS_BY_RESULT.labels(step=step_name, result="failure").set(
             steps.get((step_name, "failure"), 0)
         )
+    _PUBLISHED_STEPS.clear()
+    _PUBLISHED_STEPS.update(_step_names(steps))
 
     compensation_rows = await db_session.execute(
         select(CompensationLog.compensation_step, CompensationLog.status, func.count()).group_by(
@@ -135,13 +147,55 @@ async def collect_from_db(db_session: AsyncSession) -> None:
     for step_name, compensation_status, count in compensation_rows.all():
         compensations[(step_name, _compensation_result(compensation_status))] = count
 
-    for step_name in _step_names(compensations):
+    for step_name in (
+        _with_previous(_step_names(compensations), _PUBLISHED_COMPENSATIONS)
+        | compensations_by_definition
+    ):
         COMPENSATIONS_BY_RESULT.labels(step=step_name, result="success").set(
             compensations.get((step_name, "success"), 0)
         )
         COMPENSATIONS_BY_RESULT.labels(step=step_name, result="failure").set(
             compensations.get((step_name, "failure"), 0)
         )
+    _PUBLISHED_COMPENSATIONS.clear()
+    _PUBLISHED_COMPENSATIONS.update(_step_names(compensations))
+
+
+async def _declared_names(db_session: AsyncSession) -> tuple[set[str], set[str]]:
+    """Имена шагов и обработчиков компенсации из всех схем.
+
+    Читается JSON, а не отдельная таблица: имена живут внутри схемы, и их
+    отдельная копия разошлась бы с ней при первой же правке определения.
+    """
+    rows = await db_session.execute(select(WorkflowDefinition.definition))
+    steps: set[str] = set()
+    compensations: set[str] = set()
+    for (definition,) in rows.all():
+        declared = definition.get("steps") if isinstance(definition, dict) else None
+        if not isinstance(declared, dict):
+            continue
+        steps.update(str(name) for name in declared)
+        for step in declared.values():
+            handler = step.get("compensation") if isinstance(step, dict) else None
+            if isinstance(handler, str) and handler:
+                compensations.add(handler)
+    return steps, compensations
+
+
+def _with_previous(current: list[str], previous: set[str]) -> set[str]:
+    """Имена, для которых значение обязано быть выставлено: нынешние и прошлые.
+
+    Gauge, которому не выставили значение, не показывает ноль — он продолжает
+    показывать последнее записанное. Пустая `step_runs` не вызывает ни одного
+    `set`, и ряд про выполнявшиеся шаги остаётся жить после того, как шагов не
+    осталось: на стенде страница состояния показывала «14 успешных списаний» при
+    таблице без единой строки. Хуже нулей это потому, что выглядит как работающая
+    система.
+
+    Состояние живёт в процессе, а пересчитывает из БД только API — единственный,
+    кто отдаёт `/metrics`.
+    """
+    return set(current) | previous
 
 
 def _step_names(rows: dict[tuple[str, str], int]) -> list[str]:

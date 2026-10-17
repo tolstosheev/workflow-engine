@@ -187,6 +187,12 @@ class InstanceStateOut(BaseModel):
     completed_steps: list[str]
     pending_compensations: list[str]
     is_terminal: bool
+    # Просили ли отмену. Отмена с выполненными шагами приходит в
+    # `COMPENSATED`, а не в `CANCELLED`: последнее означает «отменили, отменять
+    # было нечего». Без этого поля интерфейс не может отличить отменённый
+    # процесс от упавшего по сбою — а вопрос «это отмена или сбой?» задают
+    # на разборе, и ответ лежит в журнале, а не в колонке.
+    cancel_requested: bool = False
     # Сколько раз шаг успешно завершился: интерфейсу нужен для показа
     # «проход 2 из 3» у цикла.
     step_iterations: dict[str, int] = Field(default_factory=dict)

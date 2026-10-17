@@ -28,6 +28,7 @@ function state(partial: Partial<InstanceState>): InstanceState {
     completed_steps: [],
     pending_compensations: [],
     is_terminal: false,
+    cancel_requested: false,
     step_iterations: {},
     ...partial,
   }
