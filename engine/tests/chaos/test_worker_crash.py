@@ -402,9 +402,13 @@ async def test_rollback_survives_a_crash_inside_it(db_session: AsyncSession) -> 
 
     await _run_cycles("w2", count=10)
 
-    # Прерванная попытка закрыта провалом, и разбор её виден: без этого на
-    # экране у застрявшего процесса не было бы ни одного признака.
+    # Прерванная попытка закрыта, и в журнале видно, что именно она: без
+    # этого у застрявшего процесса не было бы ни одного признака. И видно,
+    # что это не провал: падение исполнителя не должно выглядеть на стенде
+    # как отказ компенсации со всеми его последствиями.
     db_session.expire_all()
+    from app.models.enums import EventType
+
     logs = (
         await db_session.scalars(
             select(CompensationLog)
@@ -412,8 +416,12 @@ async def test_rollback_survives_a_crash_inside_it(db_session: AsyncSession) -> 
             .order_by(CompensationLog.started_at)
         )
     ).all()
-    interrupted = [log for log in logs if log.error is not None and "прервана" in log.error]
-    assert interrupted, "прерванная попытка обязана быть закрыта с причиной"
+    interrupted = [log for log in logs if log.status == CompensationStatus.INTERRUPTED]
+    assert interrupted, "прерванная попытка обязана быть закрыта как прерванная"
+    assert all(log.error and "прервана" in log.error for log in interrupted)
+    events = await read_events(db_session, instance_id)
+    assert [e for e in events if e.type == EventType.COMPENSATION_FAILED] == []
+    assert [e for e in events if e.type == EventType.COMPENSATION_INTERRUPTED]
 
     # И главное: откат всё-таки дошёл до конца, а резерв вернулся на склад.
     assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED

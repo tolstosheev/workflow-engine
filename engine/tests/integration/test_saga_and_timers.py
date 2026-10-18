@@ -312,21 +312,32 @@ async def test_interrupted_attempt_does_not_block_the_next_one(
 
     retry = await saga.start_attempt(db_session, instance_id, item, attempt=item.attempts_made + 1)
 
-    # Прерванная попытка обязана быть закрыта и видна как провал: иначе на
-    # экране не будет ничего, за что можно взяться.
-    assert interrupted.status == CompensationStatus.FAILED
+    # Прерванная попытка обязана быть закрыта — и видна как прерывание, а не
+    # как провал. Разница не в словах: провалы считает `failed_count`, от
+    # которого растёт пауза перед повтором, то есть упавший исполнитель
+    # удваивал бы ожидание после каждого падения.
+    assert interrupted.status == CompensationStatus.INTERRUPTED
     assert interrupted.finished_at is not None
     assert interrupted.error is not None
+    assert await saga.failed_count(db_session, instance_id) == 0
     assert retry.id != interrupted.id
     assert retry.step_run_id == step_run_id
-    pending = await saga.pending_compensations(db_session, instance_id)
-    assert [p.error for p in pending] == [interrupted.error]
+    # Список ручного разбора прерывание не показывает: следом идёт новая
+    # попытка, и ждать человека там нечего. Раньше попытка попадала в список,
+    # потому что закрывалась как провал, — и человек видел процесс, который
+    # разбирать не нужно.
+    assert await saga.pending_compensations(db_session, instance_id) == []
 
 
 async def test_interrupted_attempt_is_reflected_in_the_journal(
     db_session: AsyncSession,
 ) -> None:
-    """Прерванная попытка пишется в журнал, а не остаётся в базе молча."""
+    """Прерванная попытка пишется в журнал, а не остаётся в базе молча.
+
+    Журнал — единственный источник истины (§3.1), и запись о прерывании
+    обязана отличать его от провала: иначе разбор инцидента показывает
+    «компенсация не удалась» там, где обработчик не выдавал вердикта.
+    """
     instance_id = await _new_instance(db_session)
     await _completed_step(db_session, instance_id, "reserve")
     item = (
@@ -337,15 +348,17 @@ async def test_interrupted_attempt_is_reflected_in_the_journal(
     await saga.start_attempt(db_session, instance_id, item, attempt=2)
 
     events = await read_events(db_session, instance_id)
-    failures = [e for e in events if e.type == EventType.COMPENSATION_FAILED]
-    assert len(failures) == 1
-    # Провал виден в разборе журнала, а не в колонке: закрытая провалом
-    # попытка пишет `COMPENSATION_FAILED`, и следующая попытка возвращает
-    # процесс в откат — читается это по журналу (§3.1), и по нему же видно,
-    # что попытка была прервана, а не провалена обработчиком.
+    interruptions = [e for e in events if e.type == EventType.COMPENSATION_INTERRUPTED]
+    assert len(interruptions) == 1
+    assert [e for e in events if e.type == EventType.COMPENSATION_FAILED] == []
+
+    # Состояние процесса прерывание не меняет: он и был в откате, и в откате
+    # остался. Провал перевёл бы его в `COMPENSATION_FAILED` и позвал человека
+    # разбирать руками то, что восстановится само.
     replayed = replay(events)
+    assert replayed.status == InstanceStatus.COMPENSATING
     assert replayed.compensation_for == "reserve"
-    errors = [e.payload.get("error") for e in failures]
+    errors = [e.payload.get("error") for e in interruptions]
     assert errors and all("прервана" in str(error) for error in errors)
 
 
