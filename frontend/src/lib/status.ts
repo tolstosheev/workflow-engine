@@ -66,6 +66,7 @@ const EVENT_LABELS: Record<EventType, string> = {
   COMPENSATION_STARTED: 'Компенсация начата',
   COMPENSATION_COMPLETED: 'Компенсация выполнена',
   COMPENSATION_FAILED: 'Компенсация не выполнена',
+  COMPENSATION_INTERRUPTED: 'Попытка компенсации прервана',
 
   INSTANCE_COMPLETED: 'Процесс завершён',
   INSTANCE_COMPENSATED: 'Процесс компенсирован',

@@ -152,6 +152,15 @@ export function describeEvent(
       return `Компенсация шага ${name} не выполнена${attempt(payload)}${reason(payload)}`
     }
 
+    case 'COMPENSATION_INTERRUPTED': {
+      // Прерывание — не вердикт обработчика, поэтому и фраза говорит о том,
+      // что случилось, а не о том, что компенсация не удалась. На экране
+      // разница видна сразу: «не выполнена» зовёт человека разбирать руками.
+      const name = named(step(payload, 'for_step'))
+      if (name === null) return eventLabel(type)
+      return `Попытка компенсации шага ${name} прервана${attempt(payload)}${reason(payload)}`
+    }
+
     case 'INSTANCE_COMPLETED':
       return 'Процесс завершён: все шаги выполнены'
 
