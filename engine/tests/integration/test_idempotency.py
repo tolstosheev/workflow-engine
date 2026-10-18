@@ -11,12 +11,13 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine import idempotency
 from app.engine.idempotency import OperationKey, make_key
-from app.models.workflow import WorkflowDefinition, WorkflowInstance
+from app.models.workflow import ProcessedOperation, WorkflowDefinition, WorkflowInstance
 
 pytestmark = pytest.mark.integration
 
@@ -130,6 +131,34 @@ async def test_keys_are_scoped_to_instance(db_session: AsyncSession) -> None:
 async def _record(calls: list[str], marker: str) -> None:
     """Эффект шага: асинхронный, потому что внешний вызов нельзя сделать синхронным."""
     calls.append(marker)
+
+
+async def test_mark_applied_writes_the_label_not_the_key(
+    db_session: AsyncSession,
+) -> None:
+    """В колонку `step_name` пишется подпись, а не часть ключа.
+
+    Ключ компенсации длиннее колонки `varchar(128)`, и запись значения ключа
+    роняла откат не на уникальности, а на длине строки. Регрессия из аудита,
+    достижимая из редактора: имя шага в 120 символов плюс префикс и прогон.
+    """
+    instance_id = await _new_instance(db_session)
+    long_name = "s" + "t" * 119
+    key = OperationKey(
+        instance_id=instance_id,
+        step_name=f"compensate:{long_name}:{uuid.uuid4()}",
+        attempt=0,
+        label=long_name,
+    )
+
+    await idempotency.mark_applied(db_session, key)
+
+    stored = await db_session.scalar(
+        select(ProcessedOperation).where(ProcessedOperation.instance_id == instance_id)
+    )
+    assert stored is not None
+    assert stored.step_name == long_name
+    assert stored.op_key == str(key)
 
 
 async def test_apply_once_runs_effect(db_session: AsyncSession) -> None:
