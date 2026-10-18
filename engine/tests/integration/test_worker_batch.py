@@ -163,6 +163,44 @@ async def test_step_name_fits_the_engine(db_session: AsyncSession) -> None:
         WorkflowDefinitionSchema.model_validate(build("s" + "t" * 64))
 
 
+async def test_unexpected_error_inside_the_step_does_not_kill_the_worker(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Защита обязана стоять на своём месте, а не рядом.
+
+    Регрессия из третьего прохода: проверка выше роняет чтение определения, то
+    есть точку *до* `try` вокруг исполнения шага. Сама защита — единственное,
+    что стоит между сбойным обработчиком и падением исполнителя, и ни один
+    тест в неё не попадал: сбой обработчика, битая строка, неожиданный тип из
+    JSON — всё это исключение из `execute_step`, а не из чтения определения.
+    """
+    from app.engine import lease
+
+    [instance_id] = await _pending(db_session, 1)
+
+    async def _explode(*args: object, **kwargs: object):
+        raise RuntimeError("сбой обработчика")
+
+    monkeypatch.setattr(worker.executor, "execute_step", _explode)
+
+    result = await worker.run_batch_cycle("w1", {})  # type: ignore[arg-type]
+
+    # Циклу возвращается результат, а не исключение, и цикл обязан увидеть в
+    # нём потерю аренды: без неё он взял бы следующий инстанс и упал на нём
+    # тем же самым.
+    assert result.handled is True
+    assert result.lease_lost is True
+    # Аренда освобождена: застрявший инстанс ждал бы только истечения срока.
+    assert await lease.current_owner(db_session, instance_id) is None
+
+    # Защита вокруг шага, а не вокруг инстанса: у них одинаковый исход и разная
+    # запись в журнал, и по записи видно, где именно перехвачен сбой. Без этой
+    # строки проверка проходит и при снятой защите — сбой поймал бы внешний.
+    assert "step.failed_unexpected" in [record.getMessage() for record in caplog.records]
+
+
 async def test_unexpected_error_does_not_kill_the_cycle(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
