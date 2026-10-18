@@ -27,8 +27,8 @@ export function LeaseDetails({ owner, expiresAt, heartbeatAt }: LeaseDetailsProp
   if (!owner) {
     return (
       <p className="mt-2 text-xs text-white/40">
-        Закрепления нет: процесс свободен для захвата. По истечении срока закрепления это
-        снятия блокировок вручную.
+        Закрепления нет: процесс свободен для захвата. Срок закрепления снимается сам —
+        вручную ничего отпускать не нужно.
       </p>
     )
   }
@@ -56,8 +56,9 @@ export function LeaseDetails({ owner, expiresAt, heartbeatAt }: LeaseDetailsProp
       )}
       {!expiresAt && <span className="text-white/40"> · срок закрепления неизвестен</span>}
       <span className="block text-white/30">
-        Закрепление продлевается отметкой активности, а не удержанием блокировки: упавший
-        оставляет висеть.
+        Закрепление продлевается отметкой активности, а не удержанием блокировки:
+        упавший исполнитель не оставляет процесс висеть — срок истечёт, и процесс
+        подхватит другой.
       </span>
     </p>
   )

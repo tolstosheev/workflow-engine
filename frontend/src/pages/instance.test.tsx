@@ -524,9 +524,43 @@ describe('разбор журнала', () => {
     // между ними стоит соединитель порядка. Проверка по всему тексту строки, иначе
     // разбивка на элементы дала бы «текст разбит» вместо отсутствия шага.
     const row = (await screen.findByText('Выполнено')).closest('div') as HTMLElement
-    expect(row.textContent).toContain('validate_cart')
+    expect(row.textContent).toContain('Проверка корзины перед любым побочным эффектом')
+    // У второго шага в этой схеме описания нет, и заголовком остаётся имя:
+    // подставлять вместо него прочерк значило бы потерять шаг с экрана.
     expect(row.textContent).toContain('reserve_inventory')
     expect(row.textContent).toContain('→')
+  })
+
+  it('отдаёт одну строку на шаг, а имя убирает в подсказку', async () => {
+    state.mockResolvedValue({
+      ...REBUILT,
+      completed_steps: ['validate_cart', 'reserve_inventory'],
+    })
+
+    await open('RUNNING')
+
+    // Шесть шагов по две строки делали карточку втрое выше, и блок «Проверить:
+    // состояние = журнал» уезжал за пределы видимости. Имя остаётся в
+    // подсказке: без него вопрос «а какой это шаг» на списке не задать.
+    const row = (await screen.findByText('Выполнено')).closest('div') as HTMLElement
+    const lines = row.querySelectorAll('dd > span.block > span.block.truncate')
+    expect(lines).toHaveLength(2)
+    const hints = [...row.querySelectorAll('[title]')].map((node) => node.getAttribute('title'))
+    expect(hints).toContain('Проверка корзины перед любым побочным эффектом (validate_cart)')
+  })
+
+  it('не даёт значению строки расталкивать карточку вправо', async () => {
+    state.mockResolvedValue({ ...REBUILT, completed_steps: ['validate_cart'] })
+
+    await open('RUNNING')
+
+    // У обрезанного текста минимальная ширина равна всей строке, а значение
+    // без `min-w-0` не сжимается ниже своего минимума: длинный шаг уезжал за
+    // правый край карточки. Ширину в jsdom не измерить, поэтому проверяется
+    // условие, при котором обрезка вообще возможна.
+    const row = (await screen.findByText('Выполнено')).closest('div') as HTMLElement
+    const value = row.querySelector('dd') as HTMLElement
+    expect(value.className).toContain('min-w-0')
   })
 
   it('читает шаг по описанию из схемы, а имя оставляет рядом', async () => {

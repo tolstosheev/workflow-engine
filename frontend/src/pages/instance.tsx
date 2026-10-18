@@ -408,16 +408,24 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-3">
       <dt className="text-white/50">{label}</dt>
-      <dd className="text-right">{value}</dd>
+      {/* `min-w-0` обязателен: без него значение не сжимается ниже своего
+          минимума, а у обрезанного текста минимум равен всей строке — и длинный
+          шаг выталкивал карточку за правый край. */}
+      <dd className="min-w-0 flex-1 text-right">{value}</dd>
     </div>
   )
 }
 
 /**
- * Порядок шагов строкой: «Оплата → Резерв → …».
+ * Порядок шагов списком, по одной строке на шаг: «Оплата», «Резерв», …
  *
- * Соединитель между названиями повторяет «порядок выполнения», который человек
- * читает по строкам; без него список шагов слипается в одну фразу.
+ * Соединитель повторяет «порядок выполнения», который человек читает по строкам;
+ * без него список слипается в одну фразу.
+ *
+ * Список — блок, а не ряд гибких элементов: у обрезанного текста минимальная
+ * ширина равна всей строке, и в ряду он расталкивал карточку вправо. Строка
+ * получает ширину значения и обрезается многоточием, полное название — в
+ * подсказке.
  */
 function StepList({
   names,
@@ -428,11 +436,11 @@ function StepList({
 }) {
   if (names.length === 0) return <>—</>
   return (
-    <span className="inline-flex flex-wrap items-baseline justify-end gap-x-1.5 gap-y-1">
+    <span className="block">
       {names.map((name, index) => (
-        <span key={name} className="inline-flex items-baseline gap-1.5">
-          {index > 0 && <span className="text-white/30">→</span>}
-          <StepLabel title={stepTitle(steps, name)} />
+        <span key={name} className="block truncate">
+          {index > 0 && <span className="text-white/30">→ </span>}
+          <StepLabel title={stepTitle(steps, name)} showIdentifier={false} />
         </span>
       ))}
     </span>

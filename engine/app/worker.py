@@ -255,9 +255,9 @@ async def _invoke_compensation(
             definition,
             variables,
             instance_input,
-            instance_id,
             item.step_name,
             attempt,
+            key,
         )
         pending = handler(context)
         if inspect.isawaitable(pending):

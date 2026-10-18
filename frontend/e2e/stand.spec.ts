@@ -411,6 +411,33 @@ test('состояние процесса подтверждается разб�
   await expect(page.getByText(/Совпадает/).first()).toBeVisible()
 })
 
+test('карточка состояния не выпускает текст за свой край', async ({ page, request }) => {
+  // Регрессия с репетиции: длинные названия шагов расталкивали карточку вправо,
+  // и блок «Проверить: состояние = журнал» уезжал следом. В jsdom ширину не
+  // измерить, поэтому проверка идёт через настоящий браузер и меряет её.
+  const definitionId = await demoDefinition(request)
+  const id = await startInstance(request, definitionId)
+  await expectStatus(page, id, ['Завершён', 'Компенсирован'])
+  await expect(page.getByText('Выполнено')).toBeVisible()
+
+  const card = page
+    .getByRole('heading', { name: 'Состояние по журналу' })
+    .locator('xpath=ancestor::section[1]')
+
+  const overflow = await card.evaluate((node) => ({
+    scroll: node.scrollWidth,
+    client: node.clientWidth,
+  }))
+  expect(overflow.scroll).toBeLessThanOrEqual(overflow.client + 1)
+
+  // Горизонтальная прокрутка страницы — тот же дефект, замеченный снаружи.
+  const pageOverflow = await page.evaluate(() => ({
+    scroll: document.documentElement.scrollWidth,
+    client: document.documentElement.clientWidth,
+  }))
+  expect(pageOverflow.scroll).toBeLessThanOrEqual(pageOverflow.client + 1)
+})
+
 test('страницы не пишут в консоль об ошибках', async ({ page }) => {
   // Дефект, который не виден глазом: браузер просил /favicon.ico и получал 404
   // на каждой странице. Единственный признак был в консоли, которую во время

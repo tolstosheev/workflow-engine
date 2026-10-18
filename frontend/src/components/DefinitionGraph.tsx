@@ -28,7 +28,6 @@ const EDGE_STYLES: Record<string, string> = {
   next: 'stroke-white/40',
   branch: 'stroke-accent/60',
   back: 'stroke-accent/70',
-  compensation: 'stroke-warning/50',
 }
 
 /**
@@ -84,40 +83,12 @@ export function DefinitionGraph({ definition, steps = [], instance = null, onSel
             >
               <path d="M 0 0 L 10 5 L 0 10 z" className="fill-white/50" />
             </marker>
-            <marker
-              id="arrow-warning"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" className="fill-warning" />
-            </marker>
           </defs>
 
           {layout.edges.map((edge) => {
             const from = byName.get(edge.from)
             const to = byName.get(edge.to)
             if (!from || !to) return null
-
-            if (edge.kind === 'compensation') {
-              // Петля компенсации рисуется под узлом: обработчик — не узел
-              // графа, и вести к нему стрелку было бы указанием в пустоту.
-              return (
-                <g key={`${edge.from}-compensation`}>
-                  <path
-                    d={`M ${from.x + 24} ${from.y + from.height} q 30 26 60 0`}
-                    className={EDGE_STYLES.compensation}
-                    fill="none"
-                    strokeWidth={1.5}
-                    strokeDasharray="3 3"
-                    markerEnd="url(#arrow-warning)"
-                  />
-                </g>
-              )
-            }
 
             const points = edgePoints(from, to)
             const marker = edge.kind === 'next' ? 'url(#arrow)' : 'url(#arrow)'
@@ -197,7 +168,7 @@ function Node({ node, state, iterations, active, onHover, onSelect }: NodeProps)
       // действия, компенсации и правил повтора.
       role={onSelect ? 'button' : undefined}
       tabIndex={0}
-      aria-label={`Шаг ${node.name}: ${style.label}`}
+      aria-label={`Шаг ${node.name}: ${style.label}${node.step.compensation ? ', есть компенсация' : ''}`}
       onKeyDown={(event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return
         event.preventDefault()
@@ -213,6 +184,24 @@ function Node({ node, state, iterations, active, onHover, onSelect }: NodeProps)
         strokeWidth={active ? 2 : 1.5}
       />
       <circle cx={14} cy={node.height / 2} r={4.5} className={style.dot} />
+      {/* Компенсация помечена точкой на рамке, а не стрелкой «шаг в себя»: такая
+          стрелка читалась как повтор шага, то есть как цикл, и спрашивающий
+          «почему шаг указывает сам на себя» получал ответ, которого рисунок не
+          давал. Точка не путается с обратным ребром цикла и стоит в углу, где
+          название шага её не задевает. */}
+      {node.step.compensation && (
+        <g>
+          <circle
+            data-compensation-marker="true"
+            cx={node.width - 13}
+            cy={13}
+            r={4}
+            className="fill-warning"
+          >
+            <title>{`Компенсация: ${node.step.compensation}`}</title>
+          </circle>
+        </g>
+      )}
       <text x={26} y={node.height / 2 - 2} className="fill-white text-[13px]">
         {node.name}
       </text>
@@ -262,6 +251,10 @@ function Legend() {
       <span className="flex items-center gap-1.5">
         <span className="h-0 w-4 border-t-2 border-dashed border-accent/70" />
         обратное ребро цикла
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="h-2.5 w-2.5 rounded-full bg-warning" />
+        есть компенсация
       </span>
     </div>
   )

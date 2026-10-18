@@ -309,7 +309,7 @@ class CompensationLog(Base):
             postgresql_where="finished_at IS NULL",
         ),
         # Индекс без условия: партиальный уникальный действовал бы только на
-        # невыполненных запусках, а `find_step_run` ищет по всем записям.
+        # невыполненных запусках, а план отката ищет прогоны по всем записям.
         Index("ix_compensation_log_step_run", "step_run_id"),
     )
 
