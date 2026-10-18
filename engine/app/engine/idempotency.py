@@ -77,9 +77,7 @@ async def mark_applied(db_session: AsyncSession, key: OperationKey) -> bool:
     без эффекта, потеряла бы работу, а эффект без отметки — повторился бы.
     """
     db_session.add(
-        ProcessedOperation(
-            instance_id=key.instance_id, op_key=str(key), step_name=key.label_name
-        )
+        ProcessedOperation(instance_id=key.instance_id, op_key=str(key), step_name=key.label_name)
     )
     try:
         await db_session.flush()

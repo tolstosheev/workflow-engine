@@ -310,9 +310,7 @@ async def test_interrupted_attempt_does_not_block_the_next_one(
     assert interrupted.finished_at is None
     assert interrupted.status == CompensationStatus.RUNNING
 
-    retry = await saga.start_attempt(
-        db_session, instance_id, item, attempt=item.attempts_made + 1
-    )
+    retry = await saga.start_attempt(db_session, instance_id, item, attempt=item.attempts_made + 1)
 
     # Прерванная попытка обязана быть закрыта и видна как провал: иначе на
     # экране не будет ничего, за что можно взяться.
