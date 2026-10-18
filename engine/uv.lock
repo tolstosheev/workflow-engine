@@ -1405,7 +1405,7 @@ wheels = [
 
 [[package]]
 name = "workflow-engine"
-version = "1.4.2"
+version = "1.4.3"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
