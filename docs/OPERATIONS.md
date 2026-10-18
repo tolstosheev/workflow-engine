@@ -601,31 +601,37 @@ cd engine && python -m scripts.seed && cd ..
 `Makefile` — те же команды, это только сокращение.
 
 ```bash
-# Проверки без работающих воркеров: они забирают тестовые инстансы (§10)
+# 1. Проверки кода — без работающих исполнителей: они забирают аренду тестовых
+#    инстансов и проверки видят чужой прогресс (§10).
 docker compose stop worker worker-2
 cd engine && python -m pytest -q && cd ..
 cd frontend && npm run lint && npm run typecheck && npm run test:coverage && cd ..
 
-# Порт стенда берётся из .env и обязан быть в окружении: смоук и сквозные
-# проверки идут по HTTP, и без адреса уедут на порт по умолчанию 8000 —
-# на этой машине он занят соседним проектом.
+# 2. Вернуть исполнителей: дальше проверки идут по HTTP и ждут, пока процесс
+#    дойдёт до конца, а выполняет его воркер. С остановленными исполнителями
+#    смоук падает сразу: инстанс навсегда остаётся PENDING.
+docker compose up -d --no-deps --scale worker=2 worker
+cd engine && python -m scripts.seed && cd ..
+
+# 3. Порт стенда берётся из .env и обязан быть в окружении: смоук и сквозные
+#    проверки идут по HTTP, и без адреса уедут на порт по умолчанию 8000 —
+#    на этой машине он занят соседним проектом.
 export API_PORT=$(grep '^API_PORT=' .env | cut -d= -f2)
 export API=http://localhost:$API_PORT
 cd engine && python -m scripts.smoke --url $API && cd ..
 
-# Сквозные проверки идут против поднятого стенда и сами гоняют все сценарии
+# 4. Сквозные проверки идут против того же стенда и сами гоняют все сценарии
 cd frontend && E2E_API_URL=$API npm run test:e2e && cd ..
-
-# Вернуть стенд в рабочее состояние
-cd engine && python -m scripts.seed && cd ..
-docker compose up -d --no-deps --scale worker=2 worker
 ```
 
-PowerShell: вместо двух `export` — одна строка
+PowerShell: вместо двух `export` — две строки, и адрес обращается как `$env:API`.
+Без `env:` переменная окажется пустой, и смоук пожалуется «expected one argument»
+— то есть на свой адрес, а не на то, что адрес не задан:
 
 ```powershell
 $env:API_PORT = (Get-Content .env | Select-String '^API_PORT=').ToString().Split('=')[1]
 $env:API = "http://localhost:$env:API_PORT"
+cd engine; python -m scripts.smoke --url "$env:API"; cd ..
 ```
 
 Смоук читает `API_PORT` и сам, если переменная задана, — `--url` в примере
