@@ -220,8 +220,9 @@ def _collector() -> Collector:
 def render() -> tuple[bytes, str]:
     """Текст метрик в экспозиционном формате Prometheus.
 
-    Формат и заголовок должны совпадать: `generate_latest` пишет
-    классический текст (`text/plain; version=0.0.4`), а не OpenMetrics. Раньше здесь объявлялся
-    тип содержимый правильной только, и скрайер, дайт это разбирая парсень, ошибка ли неверный.
+    Формат и заголовок должны совпадать: `generate_latest` пишет классический
+    текст (`text/plain; version=0.0.4`), а не OpenMetrics. Раньше объявлялся
+    заголовок верный для OpenMetrics при теле в формате Prometheus, и строгий
+    скрайпер отверг бы весь ответ целиком.
     """
     return generate_latest(_collector()), _PROM_CONTENT_TYPE
