@@ -26,11 +26,24 @@ Effect = Callable[[], Awaitable[None]]
 
 @dataclass(frozen=True, slots=True)
 class OperationKey:
-    """Ключ операции: однозначно определяет одну попытку одного шага."""
+    """Ключ операции: однозначно определяет одну попытку одного шага.
+
+    `step_name` здесь — часть ключа, а не имя шага: компенсация кладёт в него
+    `compensate:{шаг}:{прогон}`, и наивная запись этого значения в колонку
+    `step_name` переполняла её. Идентичность операции живёт в `op_key`, а колонка
+    получает имя из `label` — см. `ProcessedOperation`.
+    """
 
     instance_id: uuid.UUID
     step_name: str
     attempt: int
+    #: Что записывать в колонку-подпись. `None` — писать `step_name` как есть.
+    label: str | None = None
+
+    @property
+    def label_name(self) -> str:
+        """Значение для колонки `step_name`: всегда длиной одного имени шага."""
+        return self.label or self.step_name
 
     def __str__(self) -> str:
         # Формат передаётся наружу во внешний сервис, поэтому он должен быть
@@ -64,7 +77,7 @@ async def mark_applied(db_session: AsyncSession, key: OperationKey) -> bool:
     без эффекта, потеряла бы работу, а эффект без отметки — повторился бы.
     """
     db_session.add(
-        ProcessedOperation(instance_id=key.instance_id, op_key=str(key), step_name=key.step_name)
+        ProcessedOperation(instance_id=key.instance_id, op_key=str(key), step_name=key.label_name)
     )
     try:
         await db_session.flush()

@@ -115,3 +115,19 @@ def test_migrations_service_keeps_its_own_address(compose_text: str) -> None:
 
     assert "SYNC_DATABASE_URL:" in block
     assert "@db:5432/" in block
+
+
+@pytest.mark.parametrize("service", ("api", "worker", "worker-2"))
+def test_long_running_services_restart_after_a_crash(compose_text: str, service: str) -> None:
+    """Долгоживущий сервис поднимается сам после падения.
+
+    Найдено аудитом: цикл воркера не имел защиты, любое непойманное исключение
+    доходило до event loop и убивало процесс, а политики перезапуска не было
+    вовсе. На стенде это читалось как «воркер остановлен» без причины, и
+    освободившуюся мощность никто не возвращал.
+    """
+    block = _service_block(compose_text, service)
+
+    assert "restart: unless-stopped" in block, (
+        f"{service}: падение оставит сервис лежать — перезапуск обязателен"
+    )

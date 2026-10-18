@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.engine import lease
 from app.engine.journal import read_events, replay
-from app.models.enums import InstanceStatus, StepRunStatus
-from app.models.workflow import StepRun, WorkflowDefinition, WorkflowInstance
+from app.models.enums import CompensationStatus, InstanceStatus, StepRunStatus
+from app.models.workflow import CompensationLog, StepRun, WorkflowDefinition, WorkflowInstance
 
 pytestmark = [pytest.mark.chaos, pytest.mark.usefixtures("inventory")]
 
@@ -351,6 +351,75 @@ async def test_all_active_statuses_are_recoverable(db_session: AsyncSession) -> 
 
     db_session.expire_all()
     assert await _status(db_session, instance_id) is not None
+
+
+async def test_rollback_survives_a_crash_inside_it(db_session: AsyncSession) -> None:
+    """Падение посреди отката не запирает процесс в компенсации.
+
+    Пробел, который закрыл аудит: все десять тестов этого файла — про шаги, и ни
+    один не проверял окно между открытием попытки компенсации и её закрытием.
+    Исполнитель, убитый в этом окне, оставляет попытку незакрытой; частичный
+    уникальный индекс допускает такую запись одну на прогон, поэтому следующая
+    попытка падала на нарушении уникальности и откат не мог продолжиться.
+    """
+    from app.engine import saga
+    from app.engine.journal import append_event
+    from app.models.enums import EventType
+
+    instance_id = await _create_instance(db_session, ORDER_FLOW)
+
+    # Резерв взят, платёж ещё не выполнен, отмена переводит процесс в откат.
+    await _run_cycles("w1", count=2)
+    state = replay(await read_events(db_session, instance_id))
+    assert "reserve_inventory" in state.completed_steps
+    assert "charge_payment" not in state.completed_steps
+    await append_event(db_session, instance_id, EventType.INSTANCE_CANCEL_REQUESTED, {})
+    await db_session.commit()
+    state = replay(await read_events(db_session, instance_id))
+    assert state.cancel_requested is True
+
+    item = (
+        await saga.plan(
+            db_session,
+            instance_id,
+            {"reserve_inventory": f"{DEMO}:release_inventory"},
+            executed_steps=state.completed_steps,
+        )
+    )[0]
+
+    # Погибший исполнитель: попытка открыта, но не закрыта.
+    orphan = CompensationLog(
+        instance_id=instance_id,
+        step_run_id=item.step_run_id,
+        compensation_step=item.compensation_ref,
+        attempt=1,
+        status=CompensationStatus.RUNNING,
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(orphan)
+    await db_session.commit()
+    assert orphan.finished_at is None
+
+    await _run_cycles("w2", count=10)
+
+    # Прерванная попытка закрыта провалом, и разбор её виден: без этого на
+    # экране у застрявшего процесса не было бы ни одного признака.
+    db_session.expire_all()
+    logs = (
+        await db_session.scalars(
+            select(CompensationLog)
+            .where(CompensationLog.instance_id == instance_id)
+            .order_by(CompensationLog.started_at)
+        )
+    ).all()
+    interrupted = [log for log in logs if log.error is not None and "прервана" in log.error]
+    assert interrupted, "прерванная попытка обязана быть закрыта с причиной"
+
+    # И главное: откат всё-таки дошёл до конца, а резерв вернулся на склад.
+    assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
+    from tests.conftest import reserved_units
+
+    assert await reserved_units(DEFAULT_SKU) == 0
 
 
 async def test_step_runs_survive_interruption(db_session: AsyncSession) -> None:

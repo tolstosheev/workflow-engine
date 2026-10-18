@@ -49,8 +49,7 @@
 | `TIMER_SCHEDULED` / `TIMER_FIRED` | ожидание создано / сработало |
 | `COMPENSATION_STARTED` | начало компенсации |
 | `COMPENSATION_COMPLETED` | компенсация успешна |
-| `COMPENSATION_FAILED` | компенсация провалена |
-| `COMPENSATION_SKIPPED` | компенсация не объявлена |
+| `COMPENSATION_FAILED` | компенсация провалена либо попытка прервана |
 | `INSTANCE_COMPLETED` | процесс завершён успешно |
 | `INSTANCE_COMPENSATED` | откат завершён |
 | `INSTANCE_FAILED` | отказ завершён без отката: упал шаг, откатывать нечему |
@@ -450,11 +449,10 @@ sequenceDiagram
     I->>SL: SELECT шаги со статусом COMPLETED<br/>ORDER BY finished_at DESC
     SL-->>I: reserve_inventory, confirm_order, validate_cart
 
-    loop для каждого шага в обратном порядке
+    loop для каждого выполнения шага в обратном порядке
         I->>I: проверить наличие компенсации в дефинишене
-        alt компенсация не объявлена
-            I->>J: INSERT COMPENSATION_SKIPPED
-        else компенсация объявлена
+        alt компенсация объявлена
+            I->>I: закрыть незакрытые попытки этого прогона провалом
             I->>J: INSERT COMPENSATION_STARTED
             I->>C: вызов компенсации
             alt компенсация успешна

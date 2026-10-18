@@ -370,7 +370,42 @@ async def _handle_claimed(
     worker_id: str,
     cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]],
 ) -> CycleResult:
-    """Обрабатывает уже захваченный инстанс до конца: шаг, откат или завершение."""
+    """Обрабатывает уже захваченный инстанс до конца: шаг, откат или завершение.
+
+    Защита стоит снаружи всей обработки, а не вокруг шага: падать может и
+    чтение журнала, и разбор определения, и сама компенсация. Без защиты
+    исключение дошло бы до `run_worker`, который не ловит ничего, и унесло бы
+    исполнителя целиком — вместе со всеми процессами, которые он разбирал, и
+    без права подняться снова: политики перезапуска в compose нет.
+    """
+    try:
+        return await _advance(claimed, worker_id, cache)
+    except Exception:
+        # Аренда отпускается обязательно: удерживать её на процессе, который
+        # только что упал, значит заблокировать его до конца срока.
+        logger.exception(
+            "instance.failed_unexpected",
+            extra={"instance_id": str(claimed.instance_id), "worker_id": worker_id},
+        )
+        async with session_scope() as session:
+            await lease.release(session, claimed.instance_id, worker_id)
+        # `lease_lost` — сигнал циклу: инстанс стоит, повторять немедленно
+        # бессмысленно, и без паузы воркер забрал бы его же и упал бы снова.
+        return CycleResult(
+            handled=True,
+            step_executed=False,
+            terminal=False,
+            lease_lost=True,
+            instance_id=claimed.instance_id,
+        )
+
+
+async def _advance(
+    claimed: lease.ClaimedInstance,
+    worker_id: str,
+    cache: dict[uuid.UUID, tuple[datetime, WorkflowDefinitionSchema]],
+) -> CycleResult:
+    """Чтение состояния, затем откат, шаг или завершение."""
     async with session_scope() as session:
         instance_row = await session.get(
             WorkflowInstance, claimed.instance_id, with_for_update=True

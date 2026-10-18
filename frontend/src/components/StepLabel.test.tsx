@@ -30,4 +30,20 @@ describe('StepLabel', () => {
 
     expect(container.textContent).toBe('')
   })
+
+  it('в узком списке оставляет имя доступным без мыши', () => {
+    render(
+      <StepLabel
+        title={{ title: 'Резерв товара на складе', identifier: 'reserve_inventory' }}
+        showIdentifier={false}
+      />,
+    )
+
+    // Имя не видно глазом — строка одна, — но оно в дереве доступности.
+    // Раньше оно жило только в подсказке `title`, которую скринридеры на
+    // неинтерактивном элементе не читают, и вопрос «а какой это шаг»
+    // оставался без ответа для человека с клавиатуры.
+    expect(screen.getByText(/reserve_inventory/)).toBeTruthy()
+    expect(screen.getByTitle('Резерв товара на складе (reserve_inventory)')).toBeTruthy()
+  })
 })

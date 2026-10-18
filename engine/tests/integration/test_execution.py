@@ -1291,6 +1291,13 @@ async def test_long_compensation_keeps_the_lease(
             assert row is not None
             seen["owner"] = row.lease_owner
             seen["expires_at"] = row.lease_expires_at
+            # Время снимается здесь же, а не в утверждении. Продление цикла
+            # заканчивается вместе с компенсацией, и срок, прочитанный в
+            # обработчике, успевает истечь к моменту проверки — от отката это
+            # не зависит, и падал прогон под нагрузкой, где проверка
+            # выполнялась чуть позже. Утверждать надо то, что видно в момент
+            # самой компенсации.
+            seen["now"] = datetime.now(UTC)
         return {"released": True}
 
     monkeypatch.setattr(demo, "release_inventory", slow_release)
@@ -1303,12 +1310,15 @@ async def test_long_compensation_keeps_the_lease(
     await _request_cancel(db_session, instance_id)
     await db_session.commit()
 
+    # Откат заведомо длиннее срока аренды: без продления второй воркер забрал бы
+    # инстанс посреди компенсации и вернул товар дважды.
     await _run_cycles("w2")
 
     assert await _status(db_session, instance_id) == InstanceStatus.COMPENSATED
     assert seen["owner"] == "w2"
     expires_at = seen["expires_at"]
-    assert expires_at > datetime.now(UTC), "аренда истекла во время компенсации"
+    now = seen["now"]
+    assert expires_at > now, "аренда истекла во время компенсации"
 
 
 async def test_compensation_key_is_the_same_for_every_attempt(

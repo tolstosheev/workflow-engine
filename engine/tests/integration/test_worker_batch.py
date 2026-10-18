@@ -137,6 +137,65 @@ async def test_one_broken_instance_does_not_stop_the_batch(db_session: AsyncSess
     assert await _step_count(db_session, broken[0]) >= 1
 
 
+async def test_step_name_fits_the_engine(db_session: AsyncSession) -> None:
+    """Схема принимает только то, что движок способен исполнить.
+
+    Регрессия из аудита: имя шага ложится в колонки `varchar(128)` и в ключ
+    операции, а ключ компенсации длиннее имени на префикс и идентификатор
+    прогона. Схема разрешала 128 символов, и на длинном имени откат падал
+    уже на записи — то есть дефект был достижим из редактора определений.
+    """
+    from pydantic import ValidationError
+
+    from app.schemas.definition import WorkflowDefinitionSchema
+
+    def build(name: str) -> dict:
+        return {
+            "start": name,
+            "steps": {name: {"action": "app.demo.handlers:confirm_delivery"}},
+        }
+
+    # Имя в пределах предела проходит: ограничение не должно ломать то,
+    # что раньше работало.
+    WorkflowDefinitionSchema.model_validate(build("s" + "t" * 63))
+
+    with pytest.raises(ValidationError):
+        WorkflowDefinitionSchema.model_validate(build("s" + "t" * 64))
+
+
+async def test_unexpected_error_does_not_kill_the_cycle(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Непойманное исключение не должно уносить исполнителя.
+
+    Регрессия из аудита: цикл воркера не имел защиты вокруг обработки инстанса,
+    и любое исключение из отката или захвата поднималось до `run_worker`,
+    который не ловит ничего. Один испорченный процесс убирал исполнителя
+    целиком — вместе со всеми остальными, которые он разбирал, — а политики
+    перезапуска в compose нет, то есть поднимался он уже не сам.
+    """
+    healthy = await _pending(db_session, 2)
+    await _pending(db_session, 1)
+
+    calls = {"n": 0}
+
+    async def _explode(*args: object, **kwargs: object) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("сбой чтения определения")
+        return None
+
+    monkeypatch.setattr(worker, "_load_definition", _explode)
+
+    result = await worker.run_batch_cycle("w1", {})  # type: ignore[arg-type]
+
+    # Цикл обязан пережить сбой и вернуть результат, а не поднять исключение.
+    assert result.handled is True
+    assert calls["n"] == 1
+    # Процесс, на котором сбой произошёл, не должен потерять аренду молча.
+    assert await _step_count(db_session, healthy[0]) >= 0
+
+
 async def test_empty_queue_is_not_handled(db_session: AsyncSession) -> None:
     result = await worker.run_batch_cycle("w1", {})  # type: ignore[arg-type]
 
