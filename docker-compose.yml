@@ -63,6 +63,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Перезапуск после падения: раньше упавший API оставался лежать, и на стенде
+    # это выглядело как «интерфейс перестал отвечать» без всякой причины.
+    restart: unless-stopped
 
   # Две реплики воркера: они конкурируют за инстансы через SKIP LOCKED и lease.
   worker:
@@ -84,6 +87,9 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    # Перезапуск после падения: без него упавший исполнитель не поднимался
+    # сам, и в реестре оставалась строка «остановлен» без причины.
+    restart: unless-stopped
 
   worker-2:
     build:
@@ -104,6 +110,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    # Перезапуск после падения: см. комментарий у первого воркера.
+    restart: unless-stopped
 
   frontend:
     image: node:22-alpine
