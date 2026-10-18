@@ -258,6 +258,13 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
         case EventType.COMPENSATION_FAILED:
             state.status = InstanceStatus.COMPENSATION_FAILED
 
+        case EventType.COMPENSATION_INTERRUPTED:
+            # Состояние не меняется: попытку оборвал исполнитель, а не
+            # обработчик, и вердикта не выдавали. Ниже по разбору идёт
+            # `COMPENSATION_STARTED` новой попытки, но и без него процесс
+            # остаётся в компенсации — он оттуда и не выходил.
+            pass
+
         case EventType.INSTANCE_COMPLETED:
             state.status = InstanceStatus.COMPLETED
             state.current_step = None

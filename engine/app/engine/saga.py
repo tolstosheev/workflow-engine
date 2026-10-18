@@ -181,11 +181,13 @@ async def plan(
 async def pending_compensations(
     db_session: AsyncSession, instance_id: uuid.UUID
 ) -> list[CompensationLog]:
-    """Незакрытые компенсации инстанса — для ручного разбора после сбоя.
+    """Провалившиеся компенсации инстанса — для ручного разбора после сбоя.
 
-    Собираются и прерванные попытки, а не только явно провалившиеся: запись,
-    оставшаяся без закрытия, — тоже незакрытая компенсация, и по одной ей видно,
-    что процесс застрял на откате.
+    Только те, где обработчик выдал вердикт. Прерванные исполнителем сюда не
+    попадают: следующая попытка открывается сразу за ними, и ждать решения
+    человека там нечего. Раньше они попадали — тем, что закрывались как
+    провалы, — и список ручного разбора показывал процессы, которые вовсе не
+    требовали разбора.
     """
     rows = await db_session.scalars(
         select(CompensationLog)
@@ -198,13 +200,46 @@ async def pending_compensations(
     return list(rows)
 
 
+async def interrupt_attempt(
+    db_session: AsyncSession,
+    instance_id: uuid.UUID,
+    log: CompensationLog,
+    item: CompensationItem,
+    error: str,
+) -> None:
+    """Закрывает попытку, которую оборвал исполнитель.
+
+    Это не провал компенсации, и разница видна сразу в трёх местах. Обработчик
+    не выдавал вердикта — падение случилось между открытием попытки и её
+    закрытием. Состояние процесса не меняется: следующая попытка открывается
+    следом в этой же транзакции и продолжает откат. И попытка не попадает в
+    `failed_count`, от которого растёт пауза перед повтором: иначе упавший
+    исполнитель удваивал бы ожидание после каждого своего падения, при живом
+    внешнем сервисе.
+
+    Раньше закрытие шло через `finish_attempt(succeeded=False)`, то есть
+    объявляло провал. На экране процесс мигал «Компенсация не выполнена», а
+    пауза росла, хотя никто не решал, что компенсация не удалась.
+    """
+    log.status = CompensationStatus.INTERRUPTED
+    log.error = error
+    log.finished_at = datetime.now(UTC)
+
+    await append_event(
+        db_session,
+        instance_id,
+        EventType.COMPENSATION_INTERRUPTED,
+        {"for_step": item.step_name, "attempt": log.attempt, "error": error},
+    )
+
+
 async def _close_interrupted(
     db_session: AsyncSession,
     instance_id: uuid.UUID,
     item: CompensationItem,
     error: str,
 ) -> None:
-    """Закрывает попытки, оставшиеся незакрытыми, и пишет их провал в журнал.
+    """Закрывает попытки, оставшиеся незакрытыми, и пишет прерывание в журнал.
 
     Попытка открывается и закрывается разными транзакциями: обработчик
     откатывает вне них. Между ними исполнитель может упасть, и запись остаётся
@@ -223,7 +258,7 @@ async def _close_interrupted(
         .order_by(CompensationLog.started_at)
     )
     for orphan in orphans:
-        await finish_attempt(db_session, instance_id, orphan, item, succeeded=False, error=error)
+        await interrupt_attempt(db_session, instance_id, orphan, item, error)
 
 
 async def start_attempt(
@@ -332,7 +367,12 @@ def operation_key(instance_id: uuid.UUID, item: CompensationItem) -> OperationKe
 
 
 async def failed_count(db_session: AsyncSession, instance_id: uuid.UUID) -> int:
-    """Сколько компенсаций провалилось — признак ручного разбора."""
+    """Сколько компенсаций провалилось — признак ручного разбора.
+
+    Прерванные исполнителем попытки не считаются: из этого числа растёт пауза
+    перед повтором, и падение исполнителя не должно выглядеть так, будто
+    внешний сервис отвечает хуже с каждой попыткой.
+    """
     from sqlalchemy import func
 
     return (
