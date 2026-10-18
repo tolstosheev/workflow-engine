@@ -596,25 +596,44 @@ cd engine && python -m scripts.seed && cd ..
 
 ### Перед показом
 
+Команды написаны без `make`: на машине защиты его может не быть, и чек-лист,
+который начинается с `make check`, останавливается на первой же строке. Цели
+`Makefile` — те же команды, это только сокращение.
+
 ```bash
 # Проверки без работающих воркеров: они забирают тестовые инстансы (§10)
 docker compose stop worker worker-2
 cd engine && python -m pytest -q && cd ..
 cd frontend && npm run lint && npm run typecheck && npm run test:coverage && cd ..
-make smoke
 
-# Сквозные проверки идут против поднятого стенда и сами гоняют все сценарии.
-# Адрес движка — свой, на порту из .env:
-cd frontend && E2E_API_URL=http://localhost:8000 npm run test:e2e && cd ..
+# Порт стенда берётся из .env и обязан быть в окружении: смоук и сквозные
+# проверки идут по HTTP, и без адреса уедут на порт по умолчанию 8000 —
+# на этой машине он занят соседним проектом.
+export API_PORT=$(grep '^API_PORT=' .env | cut -d= -f2)
+export API=http://localhost:$API_PORT
+cd engine && python -m scripts.smoke --url $API && cd ..
+
+# Сквозные проверки идут против поднятого стенда и сами гоняют все сценарии
+cd frontend && E2E_API_URL=$API npm run test:e2e && cd ..
 
 # Вернуть стенд в рабочее состояние
 cd engine && python -m scripts.seed && cd ..
 docker compose up -d --no-deps --scale worker=2 worker
 ```
 
-Снятые инъекции: `curl -X DELETE http://localhost:8000/api/chaos` должен
-вернуть `active: []`. Оставленное правило сломает первый же сценарий — на
-защите это самая обидная причина срыва.
+PowerShell: вместо двух `export` — одна строка
+
+```powershell
+$env:API_PORT = (Get-Content .env | Select-String '^API_PORT=').ToString().Split('=')[1]
+$env:API = "http://localhost:$env:API_PORT"
+```
+
+Смоук читает `API_PORT` и сам, если переменная задана, — `--url` в примере
+оставлен для явности.
+
+Снятые инъекции: `curl -X DELETE $API/api/chaos` должен вернуть `active: []`.
+Оставленное правило сломает первый же сценарий — на защите это самая обидная
+причина срыва.
 
 После сквозных проверок в списке остаются завершённые процессы — их снимает
 кнопка «Очистить завершённые». Незакрытых они не оставляют: уборка в

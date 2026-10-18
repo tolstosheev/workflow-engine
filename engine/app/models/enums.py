@@ -77,6 +77,12 @@ class CompensationStatus(StrEnum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    # Попытку оборвал исполнитель: падение или перезапуск между её открытием и
+    # закрытием. Отдельное состояние потому, что это не вердикт обработчика.
+    # Объявлять это провалом нельзя: пауза перед следующей попыткой растёт по
+    # числу неудач, и упавший исполнитель штрафовал бы процесс за то, что он
+    # и есть, — за собственное восстановление после падения.
+    INTERRUPTED = "INTERRUPTED"
 
 
 class EventType(StrEnum):
@@ -106,6 +112,11 @@ class EventType(StrEnum):
     COMPENSATION_STARTED = "COMPENSATION_STARTED"
     COMPENSATION_COMPLETED = "COMPENSATION_COMPLETED"
     COMPENSATION_FAILED = "COMPENSATION_FAILED"
+    # Попытку компенсации оборвал исполнитель, а не обработчик. Событие нужно,
+    # чтобы прерывание было видно при разборе инцидента, и молчащим по
+    # отношению к состоянию оно остаётся: переводить процесс в
+    # `COMPENSATION_FAILED` здесь нечего — вердикта не выдавали.
+    COMPENSATION_INTERRUPTED = "COMPENSATION_INTERRUPTED"
     INSTANCE_COMPLETED = "INSTANCE_COMPLETED"
     INSTANCE_COMPENSATED = "INSTANCE_COMPENSATED"
     # Отказ без компенсации: упал первый шаг, откатывать нечего.

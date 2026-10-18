@@ -206,6 +206,78 @@ async def test_busy_worker_is_not_reported_silent(session: AsyncSession) -> None
     assert service.worker_state(rows[0], datetime.now(UTC), timedelta(seconds=3)) == "active"
 
 
+async def test_worker_loop_reports_work_and_confirms_it_is_alive(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Тело цикла — то, что видно только в реестре.
+
+    Все прочие проверки `run_worker` шли на пустой очереди, а пустая очередь не
+    исполняет ни одной строки этого тела: счётчики оставались нулевыми, и
+    подтверждение пульса внутри длинного прохода не вызывалось никогда. То
+    есть правку против «воркер молчит на занятом» можно было сломать, и ничто
+    не краснело — её проверяли замером под нагрузкой, а замер не краснеет.
+    """
+    import asyncio
+
+    from app import worker
+
+    settings = worker.get_settings().model_copy(update={"worker_poll_interval_seconds": 0.05})
+    monkeypatch.setattr(worker, "get_settings", lambda: settings)
+    # Граница молчания урезана до доли секунды: проверка не должна ждать
+    # настоящего интервала опроса, иначе она станет проверкой на удачу.
+    monkeypatch.setattr(service, "stale_after", lambda interval: timedelta(seconds=0.05))
+
+    stop_event = asyncio.Event()
+    beats: list[tuple[int, int, int]] = []
+    touches = {"n": 0}
+    calls = {"n": 0}
+    real_heartbeat, real_touch = service.heartbeat, service.touch
+
+    async def _heartbeat(db_session: AsyncSession, worker_id: str, **counters: int) -> None:
+        beats.append((counters["cycles"], counters["steps"], counters["lease_lost"]))
+        await real_heartbeat(db_session, worker_id, **counters)
+
+    async def _touch(db_session: AsyncSession, worker_id: str) -> None:
+        touches["n"] += 1
+        await real_touch(db_session, worker_id)
+
+    async def _cycle(worker_id: str, cache: dict) -> worker.CycleResult:
+        calls["n"] += 1
+        if calls["n"] > 60:
+            stop_event.set()
+            return worker.CycleResult(
+                handled=False, step_executed=False, terminal=False, lease_lost=False
+            )
+        await asyncio.sleep(0.002)
+        # Первый цикл теряет аренду: без паузы воркер забрал бы следующий
+        # инстанс и упал бы на нём тем же самым.
+        return worker.CycleResult(
+            handled=True,
+            step_executed=True,
+            terminal=False,
+            lease_lost=calls["n"] == 1,
+        )
+
+    monkeypatch.setattr(service, "heartbeat", _heartbeat)
+    monkeypatch.setattr(service, "touch", _touch)
+    monkeypatch.setattr(worker, "run_batch_cycle", _cycle)
+
+    await asyncio.wait_for(worker.run_worker(stop_event), timeout=30)
+
+    # Счётчики доходят до сердца: иначе панель показывает работающий исполнитель,
+    # который ничего не сделал.
+    assert beats, "сердце воркера не записано ни разу"
+    assert max(c for c, _, _ in beats) > 0
+    assert max(s for _, s, _ in beats) > 0
+    assert max(lost for _, _, lost in beats) >= 1, "потеря аренды не попала в сердце"
+    # Подтверждение внутри длинного прохода: цикл умеет выполнить сто шагов, и
+    # одна запись сердца на цикл означала бы «молчит» на занятом стенде.
+    assert touches["n"] >= 1
+    assert "cycle.aborted" in [record.getMessage() for record in caplog.records]
+
+
 async def test_worker_loop_registers_itself(session: AsyncSession) -> None:
     # Цикл воркера обязан вписаться в реестр сам: ручная регистрация означала бы,
     # что в реальном запуске строки не будет, а тест проверял бы то, чего нет.

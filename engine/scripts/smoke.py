@@ -16,9 +16,22 @@ from typing import Any
 
 import httpx
 
+from app.core.config import get_settings
 from scripts.definitions import DEFINITION_NAME, DEMO_INVENTORY
 
-DEFAULT_BASE_URL = "http://localhost:8000"
+
+def default_base_url() -> str:
+    """Адрес стенда — из `API_PORT`, а не из константы.
+
+    Порт публикации задаётся в `.env`, а примеры в документации написаны на
+    умолчании 8000. На машине, где 8000 занят соседним проектом, `make smoke`
+    без адреса уезжал на чужой стенд: проверки либо падали без указания
+    причины, либо — хуже — проходили по чужому ответу.
+    """
+    return f"http://localhost:{get_settings().api_port}"
+
+
+DEFAULT_BASE_URL = default_base_url()
 
 # Состояния, в которых процесс уже не изменится. Ждать дальше бессмысленно:
 # это либо успех, либо откат, либо требование ручного разбора.
