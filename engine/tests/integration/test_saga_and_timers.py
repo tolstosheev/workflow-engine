@@ -289,6 +289,68 @@ async def test_attempt_start_writes_event(db_session: AsyncSession) -> None:
     assert EventType.COMPENSATION_STARTED in [e.type for e in events]
 
 
+async def test_interrupted_attempt_does_not_block_the_next_one(
+    db_session: AsyncSession,
+) -> None:
+    """Попытка, оставшаяся незакрытой, не запирает откат навсегда.
+
+    Регрессия из аудита: исполнитель умирает или падает между вызовом
+    обработчика и закрытием попытки, и запись остаётся RUNNING. Частичный
+    уникальный индекс допускает одну незакрытую запись на прогон, поэтому
+    следующая попытка падала бы на нарушении уникальности — процесс навсегда
+    оставался бы в компенсации, а список ручного разбора был бы пустым.
+    """
+    instance_id = await _new_instance(db_session)
+    step_run_id = await _completed_step(db_session, instance_id, "reserve")
+    item = (
+        await saga.plan(db_session, instance_id, {"reserve": "app.demo.handlers:release_inventory"})
+    )[0]
+    interrupted = await saga.start_attempt(db_session, instance_id, item, attempt=1)
+    # Исполнитель пропал: попытка не закрыта — ни времени, ни статуса.
+    assert interrupted.finished_at is None
+    assert interrupted.status == CompensationStatus.RUNNING
+
+    retry = await saga.start_attempt(
+        db_session, instance_id, item, attempt=item.attempts_made + 1
+    )
+
+    # Прерванная попытка обязана быть закрыта и видна как провал: иначе на
+    # экране не будет ничего, за что можно взяться.
+    assert interrupted.status == CompensationStatus.FAILED
+    assert interrupted.finished_at is not None
+    assert interrupted.error is not None
+    assert retry.id != interrupted.id
+    assert retry.step_run_id == step_run_id
+    pending = await saga.pending_compensations(db_session, instance_id)
+    assert [p.error for p in pending] == [interrupted.error]
+
+
+async def test_interrupted_attempt_is_reflected_in_the_journal(
+    db_session: AsyncSession,
+) -> None:
+    """Прерванная попытка пишется в журнал, а не остаётся в базе молча."""
+    instance_id = await _new_instance(db_session)
+    await _completed_step(db_session, instance_id, "reserve")
+    item = (
+        await saga.plan(db_session, instance_id, {"reserve": "app.demo.handlers:release_inventory"})
+    )[0]
+    await saga.start_attempt(db_session, instance_id, item, attempt=1)
+
+    await saga.start_attempt(db_session, instance_id, item, attempt=2)
+
+    events = await read_events(db_session, instance_id)
+    failures = [e for e in events if e.type == EventType.COMPENSATION_FAILED]
+    assert len(failures) == 1
+    # Провал виден в разборе журнала, а не в колонке: закрытая провалом
+    # попытка пишет `COMPENSATION_FAILED`, и следующая попытка возвращает
+    # процесс в откат — читается это по журналу (§3.1), и по нему же видно,
+    # что попытка была прервана, а не провалена обработчиком.
+    replayed = replay(events)
+    assert replayed.compensation_for == "reserve"
+    errors = [e.payload.get("error") for e in failures]
+    assert errors and all("прервана" in str(error) for error in errors)
+
+
 async def test_successful_attempt_marks_step_compensated(db_session: AsyncSession) -> None:
     instance_id = await _new_instance(db_session)
     step_run_id = await _completed_step(db_session, instance_id, "reserve")
@@ -372,6 +434,29 @@ async def test_operation_key_is_namespaced_by_compensation(db_session: AsyncSess
 
     assert key.step_name.startswith("compensate:reserve")
     assert str(key) == f"{instance_id}:compensate:reserve:{step_run_id}:0"
+
+
+async def test_operation_key_label_fits_the_column(db_session: AsyncSession) -> None:
+    """Подпись в колонке — имя шага, а не ключ.
+
+    Ключ компенсации содержит `compensate:` и идентификатор прогона, и на длинном
+    имени шага он переставал помещаться в `processed_operations.step_name`
+    (`varchar(128)`): запись падала не на уникальности, а на длине, и это
+    исключение уходило из отката. Идентичность остаётся в `op_key`.
+    """
+    instance_id = await _new_instance(db_session)
+    long_name = "s" + "t" * 119
+    await _completed_step(db_session, instance_id, long_name)
+    item = (
+        await saga.plan(db_session, instance_id, {long_name: "app.demo.handlers:release_inventory"})
+    )[0]
+
+    key = saga.operation_key(instance_id, item)
+
+    # Ключ длиннее колонки — и это нормально: он лежит в `op_key` шириной 256.
+    assert len(str(key)) > 128
+    assert len(key.label_name) <= 128
+    assert key.label_name == long_name
 
 
 async def test_operation_key_distinguishes_passes_of_a_loop(

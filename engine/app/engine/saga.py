@@ -118,10 +118,10 @@ async def plan(
     шагах из `step_runs` выродил бы отмену в «нечего компенсировать», хотя
     резерв уже занят.
 
-    Шаги без компенсации в план не попадают — для них пишется
-    `COMPENSATION_SKIPPED`. Уже компенсированные тоже: журнал хранит их
-    навсегда, и второй проход отменил бы их повторно под новым ключом
-    идемпотентности.
+    Шаги без компенсации в план просто не попадают: события о пропуске нет,
+    и выдумывать его в докстринге нельзя — читатель ищет в перечислении то,
+    чего никто не пишет. Уже компенсированные тоже: журнал хранит их навсегда,
+    и второй проход отменил бы их повторно под новым ключом идемпотентности.
 
     Повторяющиеся имена шагов получают все свои прогоны: цикл выполняет шаг
     несколько раз, и откатывать нужно каждое выполнение. Порядок при этом
@@ -181,7 +181,12 @@ async def plan(
 async def pending_compensations(
     db_session: AsyncSession, instance_id: uuid.UUID
 ) -> list[CompensationLog]:
-    """Незакрытые компенсации инстанса — для ручного разбора после сбоя."""
+    """Незакрытые компенсации инстанса — для ручного разбора после сбоя.
+
+    Собираются и прерванные попытки, а не только явно провалившиеся: запись,
+    оставшаяся без закрытия, — тоже незакрытая компенсация, и по одной ей видно,
+    что процесс застрял на откате.
+    """
     rows = await db_session.scalars(
         select(CompensationLog)
         .where(
@@ -191,6 +196,34 @@ async def pending_compensations(
         .order_by(CompensationLog.started_at)
     )
     return list(rows)
+
+
+async def _close_interrupted(
+    db_session: AsyncSession,
+    instance_id: uuid.UUID,
+    item: CompensationItem,
+    error: str,
+) -> None:
+    """Закрывает попытки, оставшиеся незакрытыми, и пишет их провал в журнал.
+
+    Попытка открывается и закрывается разными транзакциями: обработчик
+    откатывает вне них. Между ними исполнитель может упасть, и запись остаётся
+    без `finished_at`, а частичный уникальный индекс допускает такую запись
+    только одну на прогон. Без закрытия следующая попытка того же прогона падала
+    бы на нарушении уникальности, и процесс оставался бы в компенсации навсегда
+    — при пустом списке ручного разбора, потому что прерванная попытка туда не
+    попадала.
+    """
+    orphans = await db_session.scalars(
+        select(CompensationLog)
+        .where(
+            CompensationLog.step_run_id == item.step_run_id,
+            CompensationLog.finished_at.is_(None),
+        )
+        .order_by(CompensationLog.started_at)
+    )
+    for orphan in orphans:
+        await finish_attempt(db_session, instance_id, orphan, item, succeeded=False, error=error)
 
 
 async def start_attempt(
@@ -203,7 +236,18 @@ async def start_attempt(
 
     Событие и запись лога — в одной транзакции: попытка без события была бы
     невидима при восстановлении.
+
+    Незакрытые попытки того же прогона закрываются провалом перед новой: иначе
+    уникальный индекс запретил бы саму новую попытку, а процесс застрял бы в
+    откате без видимой причины.
     """
+    await _close_interrupted(
+        db_session,
+        instance_id,
+        item,
+        "попытка прервана: исполнитель не закрыл её (падение или перезапуск)",
+    )
+
     log = CompensationLog(
         instance_id=instance_id,
         step_run_id=item.step_run_id,
@@ -281,6 +325,9 @@ def operation_key(instance_id: uuid.UUID, item: CompensationItem) -> OperationKe
         instance_id=instance_id,
         step_name=f"compensate:{item.step_name}:{item.step_run_id}",
         attempt=0,
+        # Подпись в колонке — имя шага, а не часть ключа: ключ вырос на
+        # идентификатор прогона и перестал помещаться в `varchar(128)`.
+        label=item.step_name,
     )
 
 
