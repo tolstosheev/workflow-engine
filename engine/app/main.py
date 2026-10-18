@@ -42,17 +42,41 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def api_version() -> str:
-    """Версия из метаданных данных.
+    """Версия из метаданных пакета, а без пакета — из `pyproject.toml`.
 
     Обязаться со списка пакетов, а не копировать: версия в документации расходилась на
-    полверу внеш, и в `package.json` она отставался бы на два релиза.
+    пол-версии, и в `package.json` она отставала бы на два релиза.
+
+    Запасной путь нужен потому, что образ Docker ставит зависимости поимённо и
+    копирует исходники, но сам проект не устанавливает: в контейнере метаданных
+    нет, и стенд отдавал `0.0.0` при любой версии, то есть релиз был помечен, а
+    на `/docs` значилось другое. Файл читается тот же, что объявляет версию, —
+    второго источника истины не появляется.
     """
     from importlib.metadata import PackageNotFoundError, version
 
     try:
         return version("workflow-engine")
-    except PackageNotFoundError:  # pragma: no cover - запуск без установки
-        return "0.0.0"
+    except PackageNotFoundError:
+        return _version_from_pyproject()
+
+
+def _version_from_pyproject() -> str:
+    """Версия из `pyproject.toml` рядом с пакетом.
+
+    Отсутствие файла — не повод отдавать ноль: ноль в поле версии читается как
+    «сборка без номера», и отличить его от настоящей версии нельзя.
+    """
+    import tomllib
+    from pathlib import Path
+
+    # `app/main.py` → `engine/app` → `engine`, где и лежит `pyproject.toml`.
+    # В образе тот же путь: исходники копируются в `/srv` вместе с файлом.
+    path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    if not path.exists():
+        logger.warning("version.pyproject_missing", extra={"path": str(path)})
+        return "unknown"
+    return str(tomllib.loads(path.read_text(encoding="utf-8"))["project"]["version"])
 
 
 def create_app() -> FastAPI:

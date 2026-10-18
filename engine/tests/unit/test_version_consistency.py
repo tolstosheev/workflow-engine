@@ -16,6 +16,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[3]
 RELEASE_TABLE = ROOT / "docs" / "GIT_WORKFLOW.md"
 
@@ -34,6 +36,29 @@ def test_api_reports_the_package_version() -> None:
     from app.main import api_version
 
     assert api_version() == _engine_version()
+
+
+def test_api_reports_the_version_without_an_installed_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Стенд отдаёт настоящую версию, хотя пакет в образе не установлен.
+
+    Образ ставит зависимости поимённо и копирует исходники, поэтому
+    `importlib.metadata` в контейнере молчит. Без запасного чтения API отдавал
+    `0.0.0` при любой версии: релиз помечен, а на `/docs` значится другое, и по
+    открытой схеме это не видно.
+    """
+    from importlib.metadata import PackageNotFoundError
+
+    from app.main import api_version
+
+    def absent(_name: str) -> str:
+        raise PackageNotFoundError(_name)
+
+    monkeypatch.setattr("importlib.metadata.version", absent)
+
+    assert api_version() == _engine_version()
+    assert api_version() != "0.0.0"
 
 
 def test_frontend_package_matches_backend_package() -> None:
