@@ -137,6 +137,32 @@ async def test_one_broken_instance_does_not_stop_the_batch(db_session: AsyncSess
     assert await _step_count(db_session, broken[0]) >= 1
 
 
+async def test_step_name_fits_the_engine(db_session: AsyncSession) -> None:
+    """Схема принимает только то, что движок способен исполнить.
+
+    Регрессия из аудита: имя шага ложится в колонки `varchar(128)` и в ключ
+    операции, а ключ компенсации длиннее имени на префикс и идентификатор
+    прогона. Схема разрешала 128 символов, и на длинном имени откат падал
+    уже на записи — то есть дефект был достижим из редактора определений.
+    """
+    from pydantic import ValidationError
+
+    from app.schemas.definition import WorkflowDefinitionSchema
+
+    def build(name: str) -> dict:
+        return {
+            "start": name,
+            "steps": {name: {"action": "app.demo.handlers:confirm_delivery"}},
+        }
+
+    # Имя в пределах предела проходит: ограничение не должно ломать то,
+    # что раньше работало.
+    WorkflowDefinitionSchema.model_validate(build("s" + "t" * 63))
+
+    with pytest.raises(ValidationError):
+        WorkflowDefinitionSchema.model_validate(build("s" + "t" * 64))
+
+
 async def test_unexpected_error_does_not_kill_the_cycle(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

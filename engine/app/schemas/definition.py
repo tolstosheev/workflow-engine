@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Имя шага используется как ключ словаря steps и попадает в SQL-запросы
 # выборки, поэтому ограничение защищает не только от опечаток.
-StepName = Annotated[str, Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,127}$")]
+#
+# Предел длины — не косметика. Имя ложится в колонки `varchar(128)` и в ключ
+# операции, а ключ компенсации длиннее имени на префикс и идентификатор прогона;
+# длинное имя проходило валидацию и роняло откат уже на записи. Схема принимает
+# только то, что движок способен исполнить.
+StepName = Annotated[str, Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")]
 HandlerRef = Annotated[
     str,
     Field(pattern=r"^[a-zA-Z_][a-zA-Z0-9_.]*:[a-zA-Z_][a-zA-Z0-9_]*$"),
