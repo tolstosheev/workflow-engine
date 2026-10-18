@@ -300,6 +300,11 @@ function event(type: string, forStep?: string) {
   return { seq: 1, type, payload: forStep ? { for_step: forStep } : {} } as never
 }
 
+/** Событие успешного завершения шага: журнал хранит их по одному на выполнение. */
+function stepCompleted(step: string) {
+  return { seq: 1, type: 'STEP_COMPLETED', payload: { step } } as never
+}
+
 describe('проверка утверждения по данным', () => {
 
   it('подтверждает компенсацию по журналу, а не по статусу', () => {
@@ -361,6 +366,52 @@ describe('проверка утверждения по данным', () => {
     const notes = checkEvidence(spec('loop-exhausted'), { events: [], steps: [] })
 
     expect(notes.find((note) => note.label.includes('предел'))?.passed).toBe(false)
+  })
+
+  it('требует отката каждого прохода цикла', () => {
+    // Регрессия, найденная на стенде: резерв брался дважды, а возвращался один
+    // раз. Проверка «компенсация была хоть одна» была истинной и на сломанном
+    // коде — первая итерация откатывалась, вторая проходила как «уже применено».
+    // Подпись на странице при этом утверждала, что резервы освобождены.
+    const notes = checkEvidence(spec('loop-exhausted'), {
+      events: [
+        stepCompleted('reserve_inventory'),
+        stepCompleted('reserve_inventory'),
+        event('COMPENSATION_COMPLETED', 'reserve_inventory'),
+      ],
+      steps: [],
+    })
+
+    const reserves = notes.find((note) => note.label.includes('прохода'))
+    expect(reserves?.passed).toBe(false)
+    expect(reserves?.detail).toContain('выполнений reserve_inventory: 2, откачено 1')
+  })
+
+  it('подтверждает откат, когда компенсаций столько же, сколько проходов', () => {
+    const notes = checkEvidence(spec('loop-exhausted'), {
+      events: [
+        stepCompleted('reserve_inventory'),
+        stepCompleted('reserve_inventory'),
+        event('COMPENSATION_COMPLETED', 'reserve_inventory'),
+        event('COMPENSATION_COMPLETED', 'reserve_inventory'),
+      ],
+      steps: [],
+    })
+
+    const reserves = notes.find((note) => note.label.includes('прохода'))
+    expect(reserves?.passed).toBe(true)
+    expect(reserves?.detail).toContain('выполнений reserve_inventory: 2, откачено столько же')
+  })
+
+  it('не считает откатом шаг, который не выполнялся', () => {
+    // Ноль выполнений и ноль компенсаций — равенство, и без проверки на ноль
+    // свидетельство прошло бы на процессе, где откатывать было нечего.
+    const notes = checkEvidence(spec('loop-exhausted'), {
+      events: [event('LOOP_EXHAUSTED')],
+      steps: [],
+    })
+
+    expect(notes.find((note) => note.label.includes('прохода'))?.passed).toBe(false)
   })
 
   it('считает выполнения шага по имени шага графа', () => {

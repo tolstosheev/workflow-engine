@@ -56,6 +56,7 @@ export type Evidence =
   | { kind: 'event'; event: string; label: string }
   | { kind: 'event-count'; event: string; forStep?: string; atLeast: number; label: string }
   | { kind: 'compensated'; step: string; label: string }
+  | { kind: 'compensated-every-run'; step: string; label: string }
   | { kind: 'attempts'; step: string; atLeast: number; label: string }
 
 export interface ScenarioSpec {
@@ -253,7 +254,11 @@ export const SCENARIOS: ScenarioSpec[] = [
     expect: ['COMPENSATED'],
     evidence: [
       { kind: 'event', event: 'LOOP_EXHAUSTED', label: 'предел цикла записан в журнал' },
-      { kind: 'compensated', step: 'reserve_inventory', label: 'резервы цикла освобождены' },
+      {
+        kind: 'compensated-every-run',
+        step: 'reserve_inventory',
+        label: 'резервы каждого прохода освобождены',
+      },
     ],
   },
   {
@@ -443,6 +448,33 @@ export function checkEvidence(spec: ScenarioSpec, source: EvidenceSource): Evide
             : failed.length > 0
               ? `компенсация ${item.step} провалилась — эффект остался в силе`
               : `компенсация ${item.step} не выполнялась — эффект остался в силе`,
+      }
+    }
+    if (item.kind === 'compensated-every-run') {
+      // Шаг цикла выполняется несколько раз, и откатывается каждое выполнение
+      // (ADR-0024). Проверка «компенсация была хоть одна» проходит и на
+      // сломанном коде: первая итерация откатывается, вторая приходит под
+      // занятым ключом, а подпись на странице утверждает, что резервы
+      // освобождены. Ожидаемое число берётся из самого журнала — столько раз
+      // шаг завершился, столько раз и должен быть откатан.
+      const runs = source.events.filter(
+        (event) => event.type === 'STEP_COMPLETED' && event.payload.step === item.step,
+      ).length
+      const done = source.events.filter(
+        (event) => event.type === 'COMPENSATION_COMPLETED' && event.payload.for_step === item.step,
+      ).length
+      const failed = source.events.filter(
+        (event) => event.type === 'COMPENSATION_FAILED' && event.payload.for_step === item.step,
+      ).length
+      const passed = runs > 0 && done === runs
+      return {
+        label: item.label,
+        passed,
+        detail: passed
+          ? `выполнений ${item.step}: ${runs}, откачено столько же`
+          : failed > 0
+            ? `выполнений ${item.step}: ${runs}, компенсаций: ${done}, провалов: ${failed}`
+            : `выполнений ${item.step}: ${runs}, откачено ${done}`,
       }
     }
     if (item.kind === 'event-count') {
