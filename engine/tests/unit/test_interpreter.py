@@ -290,6 +290,12 @@ def test_compensation_order_comes_from_journal_not_definition() -> None:
             payload={"step": "b"},
             created_at=datetime.now(UTC),
         ),
+        RecordedEvent(
+            seq=2,
+            type=EventType.STEP_FAILED,
+            payload={"step": "c", "terminal": True},
+            created_at=datetime.now(UTC),
+        ),
     ]
 
     assert steps_to_compensate(replay(events)) == ["b", "a"]

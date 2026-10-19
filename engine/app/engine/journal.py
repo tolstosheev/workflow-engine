@@ -60,6 +60,7 @@ class InstanceState:
     resumed_step: str | None = None
     compensation_for: str | None = None
     step_iterations: dict[str, int] = field(default_factory=dict)
+    compensations_done: dict[str, int] = field(default_factory=dict)
     cancel_requested: bool = False
 
     @property
@@ -254,6 +255,14 @@ def _apply(state: InstanceState, event: RecordedEvent) -> None:
 
         case EventType.COMPENSATION_COMPLETED:
             state.status = InstanceStatus.COMPENSATING
+            # Счётчик ведётся по шагу, а не по прогону: события несут только
+            # имя шага, а шаг цикла выполняется несколько раз — план отката
+            # считается по разнице с `step_iterations` (ADR-0024).
+            compensated = payload.get("for_step")
+            if compensated:
+                state.compensations_done[compensated] = (
+                    state.compensations_done.get(compensated, 0) + 1
+                )
 
         case EventType.COMPENSATION_FAILED:
             state.status = InstanceStatus.COMPENSATION_FAILED
@@ -311,13 +320,36 @@ def replay(events: list[RecordedEvent]) -> InstanceState:
     return state
 
 
+#: Статусы, в которых план отката существует: компенсация идёт или ждёт
+#: ручного повтора. Вне их компенсировать нечего.
+_COMPENSATION_STATUSES = frozenset(
+    {
+        InstanceStatus.COMPENSATING,
+        InstanceStatus.CANCELLING,
+        InstanceStatus.COMPENSATION_FAILED,
+    }
+)
+
+
 def steps_to_compensate(state: InstanceState) -> list[str]:
-    """Шаги к компенсации в обратном порядке выполнения.
+    """Шаги, которые ещё ждут компенсации, в обратном порядке выполнения.
 
     Порядок зеркален порядку выполнения: зависимости между шагами обратимы
-    только так.
+    только так. Уже откатанные прогоны из списка уходят, а шаг цикла,
+    выполненный дважды, остаётся, пока не откатан второй прогон (ADR-0024).
+
+    У процесса вне отката список пуст. Раньше он собирался из выполненных
+    шагов без оглядки на то, будет ли откат вообще, и у завершённого процесса
+    строка «К компенсации» показывала все его шаги — предстоящий откат,
+    которого не будет.
     """
-    return list(reversed(state.completed_steps))
+    if state.status not in _COMPENSATION_STATUSES:
+        return []
+    return [
+        name
+        for name in reversed(state.completed_steps)
+        if state.step_iterations.get(name, 0) > state.compensations_done.get(name, 0)
+    ]
 
 
 __all__ = [

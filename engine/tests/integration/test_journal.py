@@ -310,7 +310,8 @@ def test_steps_to_compensate_reverses_execution_order() -> None:
         [
             _event(0, EventType.STEP_COMPLETED, step="a", next="b"),
             _event(1, EventType.STEP_COMPLETED, step="b", next="c"),
-            _event(2, EventType.STEP_COMPLETED, step="c"),
+            _event(2, EventType.STEP_COMPLETED, step="c", next="d"),
+            _event(3, EventType.STEP_FAILED, step="d", terminal=True),
         ]
     )
 
@@ -320,9 +321,9 @@ def test_steps_to_compensate_reverses_execution_order() -> None:
 def test_steps_to_compensate_skips_incomplete_steps() -> None:
     state = replay(
         [
-            _event(0, EventType.STEP_COMPLETED, step="a"),
+            _event(0, EventType.STEP_COMPLETED, step="a", next="b"),
             _event(1, EventType.STEP_STARTED, step="b"),
-            _event(2, EventType.STEP_FAILED, step="b"),
+            _event(2, EventType.STEP_FAILED, step="b", terminal=True),
         ]
     )
 
@@ -331,6 +332,75 @@ def test_steps_to_compensate_skips_incomplete_steps() -> None:
 
 def test_fresh_state_has_no_steps_to_compensate() -> None:
     assert steps_to_compensate(InstanceState()) == []
+
+
+def test_completed_process_has_nothing_to_compensate() -> None:
+    # Регрессия: список собирался из выполненных шагов без оглядки на то, будет
+    # ли откат вообще. У завершённого процесса на экране висели все его шаги
+    # в строке «К компенсации», то есть откат, которого не будет.
+    state = replay(
+        [
+            _event(0, EventType.STEP_COMPLETED, step="a", next="b"),
+            _event(1, EventType.STEP_COMPLETED, step="b"),
+            _event(2, EventType.INSTANCE_COMPLETED),
+        ]
+    )
+
+    assert steps_to_compensate(state) == []
+
+
+def test_compensated_steps_leave_the_plan() -> None:
+    events = [
+        _event(0, EventType.STEP_COMPLETED, step="a", next="b"),
+        _event(1, EventType.STEP_COMPLETED, step="b"),
+        _event(2, EventType.STEP_FAILED, step="b", terminal=True),
+        _event(3, EventType.COMPENSATION_STARTED, for_step="b"),
+        _event(4, EventType.COMPENSATION_COMPLETED, for_step="b"),
+    ]
+
+    assert steps_to_compensate(replay(events)) == ["a"]
+
+    state = replay(
+        [
+            *events,
+            _event(5, EventType.COMPENSATION_STARTED, for_step="a"),
+            _event(6, EventType.COMPENSATION_COMPLETED, for_step="a"),
+        ]
+    )
+
+    assert steps_to_compensate(state) == []
+
+
+def test_second_run_of_a_step_returns_to_the_plan() -> None:
+    # Откат идёт по прогонам (ADR-0024): шаг цикла, выполненный дважды и
+    # откатанный один раз, ещё ждёт компенсации.
+    state = replay(
+        [
+            _event(0, EventType.STEP_COMPLETED, step="a", next="b"),
+            _event(1, EventType.STEP_COMPLETED, step="b", next="a"),
+            _event(2, EventType.STEP_COMPLETED, step="a", next="b"),
+            _event(3, EventType.STEP_FAILED, step="b", terminal=True),
+            _event(4, EventType.COMPENSATION_STARTED, for_step="a"),
+            _event(5, EventType.COMPENSATION_COMPLETED, for_step="a"),
+        ]
+    )
+
+    assert steps_to_compensate(state) == ["b", "a"]
+
+
+def test_compensation_event_without_step_changes_nothing() -> None:
+    # Событие без имени шага не должно ни падать, ни оседать в счётчике под
+    # пустым ключом: план отката адресуется шагам.
+    state = replay(
+        [
+            _event(0, EventType.STEP_COMPLETED, step="a"),
+            _event(1, EventType.STEP_FAILED, step="b", terminal=True),
+            _event(2, EventType.COMPENSATION_COMPLETED),
+        ]
+    )
+
+    assert state.compensations_done == {}
+    assert steps_to_compensate(state) == ["a"]
 
 
 # --- Запись в БД -----------------------------------------------------------
