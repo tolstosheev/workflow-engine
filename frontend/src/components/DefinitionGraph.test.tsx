@@ -215,6 +215,21 @@ describe('схема шагов', () => {
     expect(screen.getByText('по умолчанию')).toBeTruthy()
   })
 
+  it('ведёт обратное ребро цикла под узлами, а не поверх прямого', () => {
+    const { container } = render(<DefinitionGraph definition={DEFINITION} steps={[]} />)
+
+    // В определении charge.on_failure возвращается к reserve_inventory. Ребро
+    // шло по линии центров узлов: пунктир совпадал со сплошным прямым ребром
+    // в межузловом промежутке, и обе стрелки упирались в один левый край.
+    const back = container.querySelector('path[stroke-dasharray="5 4"]')
+    expect(back).not.toBeNull()
+
+    const start = back?.getAttribute('d')?.match(/^M [\d.]+ ([\d.]+)/)
+    // Центр узла — 66 (y=32 при высоте 68), дно — 100. Ребро покидает узел
+    // снизу и идёт по полосе под схемой.
+    expect(Number(start?.[1])).toBe(100)
+  })
+
   it('объясняет легенду цветов', () => {
     render(<DefinitionGraph definition={DEFINITION} steps={[]} />)
 

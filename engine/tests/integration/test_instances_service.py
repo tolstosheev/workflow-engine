@@ -184,6 +184,35 @@ async def test_rebuild_state_lists_pending_compensations(db_session: AsyncSessio
     assert state["pending_compensations"] == ["b", "a"]
 
 
+async def test_rebuild_state_has_nothing_pending_once_compensated(
+    db_session: AsyncSession,
+) -> None:
+    # Регрессия: у полностью откатанного процесса строка «К компенсации»
+    # показывала все выполненные шаги — то есть откат, который уже прошёл,
+    # читался как предстоящий.
+    instance = await _instance(db_session)
+    for step in ("a", "b"):
+        await append_event(
+            db_session, instance.id, EventType.STEP_COMPLETED, {"step": step, "next": "c"}
+        )
+    await append_event(
+        db_session, instance.id, EventType.STEP_FAILED, {"step": "c", "terminal": True}
+    )
+    for step in ("b", "a"):
+        await append_event(
+            db_session, instance.id, EventType.COMPENSATION_STARTED, {"for_step": step}
+        )
+        await append_event(
+            db_session, instance.id, EventType.COMPENSATION_COMPLETED, {"for_step": step}
+        )
+    await append_event(db_session, instance.id, EventType.INSTANCE_COMPENSATED, {})
+
+    state = await service.rebuild_state(db_session, instance.id)
+
+    assert state["status"] is InstanceStatus.COMPENSATED
+    assert state["pending_compensations"] == []
+
+
 async def test_rebuild_state_detects_terminal(db_session: AsyncSession) -> None:
     instance = await _instance(db_session)
     await append_event(db_session, instance.id, EventType.INSTANCE_COMPLETED, {})

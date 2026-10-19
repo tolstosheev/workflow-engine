@@ -384,13 +384,17 @@ chaos-тестом. Работающий воркер держит на этих
 они дают взаимоблокировку — `TRUNCATE` ждёт `AccessExclusiveLock`, а транзакция
 воркера — `AccessShareLock`.
 
-Поэтому перед тестами воркеров останавливают:
+Мешает не только воркер. Открытая в браузере страница подписана на поток
+событий (`/api/stream`), поток идёт через контейнер `api`, и его чтение
+`workflow_events` держит ту же таблицу — взаимоблокировка повторяется без
+единого работающего воркера, а выглядит как случайные падения разных тестов.
+Поэтому на время прогона останавливают и `api`:
 
 ```bash
-docker compose stop worker worker-2   # освободить базу
+docker compose stop api worker worker-2   # освободить базу
 make test
 make test-chaos
-docker compose start worker worker-2  # вернуть воркеров
+docker compose start api worker worker-2  # вернуть стенд
 ```
 
 Обратный порядок обязателен: `make smoke` и `make bench` требуют работающих

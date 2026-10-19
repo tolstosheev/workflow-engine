@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { layoutGraph } from '@/lib/graphLayout'
+import { backEdgePath, layoutGraph } from '@/lib/graphLayout'
 import type { WorkflowDefinitionSchema } from '@/types/api'
 
 const DEMO = 'app.demo.handlers'
@@ -74,6 +74,58 @@ describe('layoutGraph', () => {
 
     expect(layout.nodes).toHaveLength(3)
     expect(layout.edges.filter((edge) => edge.kind === 'back')).toHaveLength(1)
+  })
+
+  it('не растягивает слои из-за обратного ребра', () => {
+    // Регрессия: обратное ребро участвовало в раздаче слоёв, и предел обхода
+    // останавливал раскладку на возросших значениях — цикл из трёх шагов
+    // растягивал схему до седьмого слоя, оставляя между первым узлом и
+    // остальными пустую полосу в полтора экрана.
+    const layout = layoutGraph(
+      definition('a', {
+        a: { action: `${DEMO}:validate_cart`, next: 'b' },
+        b: { action: `${DEMO}:reserve_inventory`, next: 'c' },
+        c: { action: `${DEMO}:charge_payment`, next: 'a' },
+      }),
+    )
+
+    const layerOf = (name: string) => layout.nodes.find((node) => node.name === name)?.layer
+
+    expect(layerOf('a')).toBe(0)
+    expect(layerOf('b')).toBe(1)
+    expect(layerOf('c')).toBe(2)
+  })
+
+  it('уводит обратное ребро в полосу под узлами', () => {
+    // Регрессия: ребро шло от правого края источника к левому краю цели по
+    // линии центров. У цикла оба узла на одной строке, точки безье
+    // коллинеарны, кривая вырождается в прямую поверх прямого ребра, и
+    // обе стрелки упирались в один левый край.
+    const layout = layoutGraph(
+      definition('a', {
+        a: { action: `${DEMO}:reserve_inventory`, next: 'b' },
+        b: { action: `${DEMO}:charge_payment`, next: 'a' },
+      }),
+    )
+
+    const from = layout.nodes.find((node) => node.name === 'b')
+    const to = layout.nodes.find((node) => node.name === 'a')
+    if (!from || !to) throw new Error('нет узлов цикла')
+
+    expect(layout.laneY).not.toBeNull()
+    const laneY = layout.laneY ?? 0
+    expect(laneY).toBeGreaterThan(Math.max(...layout.nodes.map((node) => node.y + node.height)))
+    expect(laneY).toBeLessThan(layout.height)
+
+    const path = backEdgePath(from, to, laneY)
+    // Выход из нижней середины источника и вход в нижнюю середину цели:
+    // на линии центров ребро пересекало промежуток между узлами.
+    expect(path).toContain(`M ${from.x + from.width / 2} ${from.y + from.height}`)
+    expect(path.endsWith(`L ${to.x + to.width / 2} ${to.y + to.height}`)).toBe(true)
+    // Ни одна точка пути не лежит на линии центров узлов (высота 68 при
+    // y=32, центр — 66).
+    expect(path).not.toMatch(/(^|\s)66(\s|$)/)
+    expect(path).toContain(` ${laneY} `)
   })
 
   it('рисует недостижимый шаг вместо того, чтобы его терять', () => {
@@ -153,7 +205,7 @@ describe('layoutGraph', () => {
   it('пустое определение даёт пустую раскладку без ошибок', () => {
     const layout = layoutGraph(definition('a', {} as WorkflowDefinitionSchema['steps']))
 
-    expect(layout).toEqual({ nodes: [], edges: [], width: 0, height: 0 })
+    expect(layout).toEqual({ nodes: [], edges: [], width: 0, height: 0, laneY: null })
   })
 
   it('подставляет первый шаг, если start указывает в пустоту', () => {
@@ -165,5 +217,20 @@ describe('layoutGraph', () => {
 
     expect(layout.nodes).toHaveLength(1)
     expect(layout.nodes[0].layer).toBe(0)
+  })
+
+  it('разводит петлю шага на себя по полосе, а не в нулевую ширину', () => {
+    // Схема допускает шаг, ведущий на себя: ребро уходит вниз по той же
+    // колонке, и закругления самоопределялись бы в обе стороны.
+    const layout = layoutGraph(
+      definition('a', { a: { action: `${DEMO}:reserve_inventory`, next: 'a' } }),
+    )
+
+    const node = layout.nodes[0]
+    const path = backEdgePath(node, node, layout.laneY ?? 0)
+
+    expect(path).toContain(`M ${node.x + node.width / 2} ${node.y + node.height}`)
+    expect(path.endsWith(`L ${node.x + node.width / 2} ${node.y + node.height}`)).toBe(true)
+    expect(path).not.toMatch(/NaN/)
   })
 })

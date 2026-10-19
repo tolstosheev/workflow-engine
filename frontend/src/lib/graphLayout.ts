@@ -37,6 +37,10 @@ export interface GraphLayout {
   edges: GraphEdge[]
   width: number
   height: number
+  /**
+   * Y-полоса под узлами, по которой идут обратные рёбра; null, если циклов нет.
+   */
+  laneY: number | null
 }
 
 export interface LayoutOptions {
@@ -57,6 +61,12 @@ const DEFAULTS = {
   margin: 32,
   sweeps: 4,
 } as const
+
+/** Воздух между дном узлов и полосой обратного ребра. */
+const LANE_AIR = 18
+
+/** Высота полосы обратного ребра под узлами. */
+const LANE = 36
 
 /** Переходы шага в виде плоского списка с меткой ветки. */
 function targetsOf(step: StepDefinition): Array<{ to: string; label?: string; branch: boolean }> {
@@ -87,7 +97,7 @@ function buildAcyclicEdges(
       if (!(target.to in steps)) continue
       if (visiting.has(target.to)) {
         // Ребро в предка замыкает цикл: слою оно противоречит, поэтому
-        // помечается обратным и рисуется в обход.
+        // помечается обратным и идёт по полосе под узлами (backEdgePath).
         backEdges.add(`${name}->${target.to}`)
         continue
       }
@@ -205,7 +215,7 @@ export function layoutGraph(
   const names = Object.keys(steps)
 
   if (names.length === 0) {
-    return { nodes: [], edges: [], width: 0, height: 0 }
+    return { nodes: [], edges: [], width: 0, height: 0, laneY: null }
   }
 
   const start = names.includes(definition.start) ? definition.start : names[0]
@@ -222,7 +232,12 @@ export function layoutGraph(
   // схеме такая стрелка читалась как «шаг повторяет себя», то есть как цикл, и
   // два знака с разным смыслом выглядели одинаково. Пометка на самом узле
   // (DefinitionGraph) говорит то же и не путается с обратным ребром.
-  const layers = assignLayers(names, edges, start)
+  //
+  // Обратное ребро не участвует в раздаче слоёв: оно ведёт к предку, и его
+  // вклад рос на каждой итерации, пока предел обхода не останавливал раскладку
+  // на возросших значениях — цикл из трёх шагов растягивал схему до седьмого
+  // слоя, оставляя между первым узлом и остальными пустую полосу.
+  const layers = assignLayers(names, forward, start)
 
   const nodes: GraphNode[] = names.map((name) => ({
     name,
@@ -247,9 +262,19 @@ export function layoutGraph(
     settings.margin * 2 +
     (Math.max(...nodes.map((node) => node.layer)) + 1) * settings.nodeWidth +
     Math.max(...nodes.map((node) => node.layer)) * settings.gapX
-  const height = settings.margin * 2 + (widestLayer + 1) * settings.nodeHeight + widestLayer * settings.gapY
+  const baseHeight = settings.margin * 2 + (widestLayer + 1) * settings.nodeHeight + widestLayer * settings.gapY
+  // Обратное ребро идёт по полосе под узлами: путь от правого края источника
+  // к левому краю цели у цикла совпал бы с прямым ребром — оба узла на одной
+  // линии центров, и кривая с коллинеарными точками вырождается в прямую.
+  const laneY = edges.some((edge) => edge.kind === 'back') ? baseHeight + LANE_AIR : null
 
-  return { nodes, edges, width: Math.max(width, 1), height: Math.max(height, 1) }
+  return {
+    nodes,
+    edges,
+    width: Math.max(width, 1),
+    height: Math.max(laneY === null ? baseHeight : baseHeight + LANE, 1),
+    laneY,
+  }
 }
 
 /** Точки на границе узла для входа и выхода ребра. */
@@ -269,4 +294,38 @@ export function edgePoints(
 export function edgePath(x1: number, y1: number, x2: number, y2: number): string {
   const bend = Math.max(30, Math.abs(x2 - x1) / 2)
   return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`
+}
+
+/**
+ * Путь обратного ребра: из нижней середины источника вниз, по полосе под
+ * узлами и вверх в нижнюю середину цели.
+ *
+ * От правого края источника к левому краю цели такое ребро вестись не может:
+ * у цикла оба узла на одной линии центров, точки безье коллинеарны, и кривая
+ * вырождается в прямую поверх прямого ребра — пунктир и сплошная линия
+ * ложатся друг на друга в межузловом промежутке, а обе стрелки упираются
+ * в один левый край.
+ */
+export function backEdgePath(from: GraphNode, to: GraphNode, laneY: number): string {
+  const startX = from.x + from.width / 2
+  const startY = from.y + from.height
+  const endX = to.x + to.width / 2
+  const endY = to.y + to.height
+  const radius = 10
+
+  // Колонки совпали или почти совпали: закругления самоопределялись бы в
+  // обе стороны, поэтому путь уходит в полосу прямыми.
+  if (Math.abs(endX - startX) < radius * 2) {
+    return `M ${startX} ${startY} L ${startX} ${laneY} L ${endX} ${laneY} L ${endX} ${endY}`
+  }
+
+  const direction = endX < startX ? -1 : 1
+  return [
+    `M ${startX} ${startY}`,
+    `L ${startX} ${laneY - radius}`,
+    `Q ${startX} ${laneY} ${startX + direction * radius} ${laneY}`,
+    `L ${endX - direction * radius} ${laneY}`,
+    `Q ${endX} ${laneY} ${endX} ${laneY - radius}`,
+    `L ${endX} ${endY}`,
+  ].join(' ')
 }
