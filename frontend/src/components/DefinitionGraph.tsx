@@ -9,7 +9,7 @@
 
 import { useMemo, useState } from 'react'
 
-import { edgePath, edgePoints, layoutGraph } from '@/lib/graphLayout'
+import { backEdgePath, edgePath, edgePoints, layoutGraph } from '@/lib/graphLayout'
 import type { GraphLayout, GraphNode } from '@/lib/graphLayout'
 import { nodeStates } from '@/lib/graphState'
 import type { NodeState } from '@/lib/graphState'
@@ -95,7 +95,11 @@ export function DefinitionGraph({ definition, steps = [], instance = null, onSel
             return (
               <g key={`${edge.from}-${edge.to}-${edge.kind}`}>
                 <path
-                  d={edgePath(points.x1, points.y1, points.x2, points.y2)}
+                  d={
+                    edge.kind === 'back' && layout.laneY !== null
+                      ? backEdgePath(from, to, layout.laneY)
+                      : edgePath(points.x1, points.y1, points.x2, points.y2)
+                  }
                   className={EDGE_STYLES[edge.kind]}
                   fill="none"
                   strokeWidth={edge.kind === 'next' ? 1.5 : 2}
