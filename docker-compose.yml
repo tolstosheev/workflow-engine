@@ -48,8 +48,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:-workflow}@db:5432/${POSTGRES_DB:-workflow_engine}
       DEBUG: ${DEBUG:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
-      # Общий каталог метрик: API собирает счётчики и воркеров из своих
-      # процессов из общего каталога (ADR-0012). Без него счётчики воркера не попадут в /metrics.
+      # Общий каталог метрик: у каждого процесса свой реестр, и без общего
+      # каталога счётчики воркеров не попадают в /metrics (ADR-0012).
       PROMETHEUS_MULTIPROC_DIR: /var/prometheus-shared
     volumes:
       - prometheus_shared:/var/prometheus-shared
@@ -138,6 +138,6 @@ services:
 volumes:
   postgres_data:
   frontend_node_modules:
-  # Каталог метрик: общий для всех процессов, иначе запускается
-  # со своей стране не следут не в каталоге.
+  # Общий каталог метрик: у каждого процесса свой реестр, и без общего
+  # каталога счётчики воркеров не попадают в /metrics (ADR-0012).
   prometheus_shared:
