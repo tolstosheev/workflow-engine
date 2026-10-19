@@ -131,3 +131,29 @@ def test_long_running_services_restart_after_a_crash(compose_text: str, service:
     assert "restart: unless-stopped" in block, (
         f"{service}: падение оставит сервис лежать — перезапуск обязателен"
     )
+
+
+OPERATIONS = Path(__file__).resolve().parents[3] / "docs" / "OPERATIONS.md"
+
+
+def test_recreating_the_stand_clears_the_metric_rows() -> None:
+    """`down` не удаляет именованные тома, поэтому метрики снимают отдельно.
+
+    Найдено на живом стенде: после `docker compose down` и `up -d --build`
+    страница состояния показывала имена шагов тестовых схем, которых нет ни в
+    одной схеме, — а §8 обещал, что `down` «удаляет и общий каталог метрик».
+    Ряды живут в томе `prometheus_shared`, и обещание «нет имён из тестовых
+    схем» держится только на строке `docker volume rm` в команде пересоздания.
+    """
+    named = re.findall(r"^  ([a-z_]+):$", COMPOSE.read_text(encoding="utf-8"), re.M)
+
+    assert "prometheus_shared" in named, (
+        "каталог метрик перестал быть именованным томом: `down` снимает только "
+        "анонимные, и если этот стал анонимным, проверку ниже снимают осознанно"
+    )
+
+    doc = OPERATIONS.read_text(encoding="utf-8")
+    assert "docker volume rm workflow-engine_prometheus_shared" in doc, (
+        "§8 обещает чистые метрики после пересоздания стенда, а `down` тома не "
+        "снимает: в команде пересоздания нужна строка `docker volume rm`"
+    )
