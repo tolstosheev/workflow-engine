@@ -10,18 +10,19 @@
 ```mermaid
 erDiagram
     workflow_definitions ||--o{ workflow_instances : "порождает"
-    workflow_instances ||--o{ workflow_events : "журнал (append-only)"
+    workflow_instances ||--o{ workflow_events : "журнал (только добавление)"
     workflow_instances ||--o{ step_runs : "выполнения шагов"
     workflow_instances ||--o{ timers : "ожидания"
     workflow_instances ||--o{ processed_operations : "идемпотентность"
     workflow_instances ||--o{ compensation_log : "попытки компенсаций"
-    step_runs ||--o| compensation_log : "компенсируется"
+    workflow_instances |o--o{ chaos_rules : "правила инъекций (без внешнего ключа)"
+    step_runs ||--o{ compensation_log : "попытки компенсации"
 
     workflow_definitions {
         uuid id PK
         string name UK
         int version
-        jsonb definition "JSON дефинишена"
+        jsonb definition "определение процесса"
         bool is_active
         timestamptz created_at
     }
@@ -29,13 +30,16 @@ erDiagram
     workflow_instances {
         uuid id PK
         uuid definition_id FK
-        string status "PENDING..COMPENSATED"
+        string status "PENDING..FAILED"
         jsonb input
-        jsonb variables "состояние из replay"
+        jsonb variables "состояние из журнала"
         string current_step
+        text error
         string lease_owner
         timestamptz lease_expires_at
         timestamptz heartbeat_at
+        timestamptz compensation_not_before
+        timestamptz journal_pruned_at
         timestamptz archived_at "убран из списка"
         timestamptz created_at
     }
@@ -67,9 +71,11 @@ erDiagram
         uuid id PK
         uuid instance_id FK
         string step_name
+        string kind "step / pause_deadline"
         timestamptz due_at
         bool fired
         jsonb payload
+        timestamptz created_at
     }
 
     processed_operations {
@@ -86,10 +92,32 @@ erDiagram
         uuid step_run_id FK
         string compensation_step
         int attempt
-        string status "RUNNING..FAILED"
+        string status "RUNNING / COMPLETED / FAILED / INTERRUPTED"
         text error
         timestamptz started_at
         timestamptz finished_at
+    }
+
+    workers {
+        uuid id PK
+        string worker_id UK
+        timestamptz started_at
+        timestamptz heartbeat_at
+        timestamptz stopped_at
+        int cycles_completed
+        int steps_executed
+        int lease_lost
+    }
+
+    chaos_rules {
+        uuid id PK
+        uuid instance_id "пусто — любой процесс"
+        string step_name "пусто — любой шаг"
+        string handler_ref "адрес обработчика отката"
+        string mode "once / always / timeout"
+        text error
+        int used
+        timestamptz created_at
     }
 
     demo_inventory {
@@ -103,13 +131,16 @@ erDiagram
         uuid id PK
         uuid instance_id FK
         numeric amount
-        string status "HELD..REFUNDED"
+        string status "HELD / REFUNDED"
+        timestamptz refunded_at
     }
 
     demo_shipments {
         uuid id PK
         uuid instance_id FK
-        string status "CREATED..CANCELLED"
+        string status "CREATED / CANCELLED"
+        string tracking_number
+        timestamptz cancelled_at
     }
 ```
 
@@ -150,9 +181,12 @@ erDiagram
 | `input` | `jsonb` | Входные данные инстанса |
 | `variables` | `jsonb` | Результат replay — кэш, не источник истины |
 | `current_step` | `text` | Шаг, готовый к исполнению |
+| `error` | `text` | Причина терминального провала |
 | `lease_owner` | `text` | Идентификатор воркера-арендатора |
 | `lease_expires_at` | `timestamptz` | Момент истечения аренды |
 | `heartbeat_at` | `timestamptz` | Последнее продление |
+| `compensation_not_before` | `timestamptz` | Пауза перед повтором отката |
+| `journal_pruned_at` | `timestamptz` | Отметка об уборке журнала (ADR-0019) |
 | `archived_at` | `timestamptz` | Отметка архива: процесс убран из списка (ADR-0017) |
 | `created_at` | `timestamptz` | Создание |
 
@@ -165,9 +199,22 @@ erDiagram
 
 **`variables` — не источник истины.** Это денормализованный результат replay,
 ускоряющий выбор следующего шага. Восстановление читает журнал, а не
-`variables`: иначе рассинхронизация кэша и журнала станятся источником
+`variables`: иначе рассинхронизация кэша и журнала становятся источником
 тихих ошибок. Инвариант §3.1 `AGENTS.md` требует, чтобы статус менялся
 только записью события — прямое `UPDATE status` в обход журнала запрещено.
+
+**`compensation_not_before` — пауза, а не счётчик попыток.** Проваленная
+компенсация повторяется исполнителем, но не в следующем цикле: интервал растёт
+с числом провалов, чтобы недоступная служба не получала запрос раз в секунду.
+Времени достаточно, потому что лимита попыток у отката нет — процесс остаётся
+в `COMPENSATION_FAILED` с видимым ручным разбором, пока откат не удастся или
+оператор не повторит его вручную.
+
+**`journal_pruned_at` — отметка, без которой пустая лента лжёт.** Уборка
+архивных журналов (ADR-0019) удаляет события терминального процесса старше
+месяца, а отсутствие событий читалось бы как «журнала не было вовсе». Пометка
+отделяет одно от другого: страница процесса объявляет уборку и не предлагает
+сверку состояния, потому что сверять больше не с чем.
 
 ### 2.2a `workers`
 
@@ -186,6 +233,28 @@ erDiagram
 инстанса, поэтому и события о нём в журнал не пишутся. Упавший воркер остаётся
 строкой с устаревшим сердцем — по той же причине, по которой протухшая аренда
 не исчезает (§3.3).
+
+### 2.2b `chaos_rules`
+
+Правила неисправностей — инструмент проверки, а не часть предметной области.
+Они лежат в базе, потому что ставятся через HTTP в процессе API, а применяются
+исполнителем шага, то есть в другом процессе; правило в памяти не пережило бы
+и перезапуска.
+
+| Колонка | Тип | Назначение |
+|---|---|---|
+| `instance_id` | `uuid` | Адресат; пусто — правило подходит любому процессу |
+| `step_name` | `text` | Шаг; пусто — любой шаг процесса |
+| `handler_ref` | `text` | Обработчик отката (ADR-0015); пусто для правил шага |
+| `mode` | `text` | `once`, `always` или `timeout` |
+| `error` | `text` | Текст отказа, который увидит обработчик |
+| `used` | `integer` | Сколько раз сработало правило `once` |
+| `created_at` | `timestamptz` | Создание; задаёт порядок выбора |
+
+**Правило адресует одно действие.** `step_name` и `handler_ref` не смешиваются:
+у обработчика отката нет имени шага, и правило без этой развилки совпадало бы с
+каждым шагом. Режим `used == 0` делает `once` одноразовым: без него «сломать
+один раз» ломало бы все последующие шаги.
 
 ### 2.3 `workflow_events`
 
@@ -284,7 +353,7 @@ erDiagram
 | `step_run_id` | `uuid FK` | Компенсируемый шаг |
 | `compensation_step` | `text` | Имя компенсации |
 | `attempt` | `integer` | Номер попытки |
-| `status` | `text` | `RUNNING`/`COMPLETED`/`FAILED` |
+| `status` | `text` | `RUNNING`/`COMPLETED`/`FAILED`/`INTERRUPTED` |
 | `error` | `text` | Текст ошибки |
 | `started_at` / `finished_at` | `timestamptz` | Тайминги |
 
@@ -297,9 +366,11 @@ erDiagram
   `finished_at IS NULL`: одновременно открытая попытка на выполнение шага ровно
   одна. Он защищает от двух параллельных возвратов одного резерва, и это же
   означает, что незакрытая попытка блокирует следующую. Поэтому `start_attempt`
-  закрывает осиротевшие попытки того же прогона провалом с причиной до вставки
-  новой — иначе падение исполнителя в этом окне запирало бы откат навсегда, при
-  пустом списке ручного разбора;
+  закрывает осиротевшие попытки того же прогона как `INTERRUPTED` (а не
+  `FAILED`: вердикта обработчика не было, и штрафовать процесс паузой за
+  собственное восстановление нельзя) до вставки новой — иначе падение
+  исполнителя в этом окне запирало бы откат навсегда, при пустом списке ручного
+  разбора;
 - `ix_compensation_log_step_run` — без условия: партиальный уникальный искал бы
   попытки только среди невыполненных, а чтение идёт по всем.
 

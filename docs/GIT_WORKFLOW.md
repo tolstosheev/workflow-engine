@@ -88,11 +88,11 @@ git branch -d hotfix/lease-protyaka
 | `infra` | `Dockerfile`, `docker-compose.yml`, CI |
 | `db` | SQLAlchemy-модели, миграции Alembic |
 | `journal` | Журнал событий, последовательности, replay |
-| `interpreter` | Переходы состояний, ветвления, fork/join |
+| `interpreter` | Переходы состояний, ветвления, циклы |
 | `lease` | Захват, heartbeat, освобождение lease |
 | `recovery` | Подбор протухших инстансов, продолжение с чекпоинта |
 | `scheduler` | Durable-таймеры |
-| `saga` | Компенсации, Saga Log, `COMPENSATION_FAILED` |
+| `saga` | Компенсации, попытки отката, `COMPENSATION_FAILED` |
 | `idempotency` | `processed_operations`, защита от повторов |
 | `registry` | Резолв обработчиков по import-path |
 | `handlers` | Обработчики шагов |

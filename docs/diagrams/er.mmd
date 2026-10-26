@@ -1,17 +1,18 @@
 erDiagram
     workflow_definitions ||--o{ workflow_instances : "порождает"
-    workflow_instances ||--o{ workflow_events : "журнал (append-only)"
+    workflow_instances ||--o{ workflow_events : "журнал (только добавление)"
     workflow_instances ||--o{ step_runs : "выполнения шагов"
     workflow_instances ||--o{ timers : "ожидания"
     workflow_instances ||--o{ processed_operations : "идемпотентность"
     workflow_instances ||--o{ compensation_log : "попытки компенсаций"
-    step_runs ||--o| compensation_log : "компенсируется"
+    workflow_instances |o--o{ chaos_rules : "правила инъекций (без внешнего ключа)"
+    step_runs ||--o{ compensation_log : "попытки компенсации"
 
     workflow_definitions {
         uuid id PK
         string name UK
         int version
-        jsonb definition "JSON дефинишена"
+        jsonb definition "определение процесса"
         bool is_active
         timestamptz created_at
     }
@@ -19,13 +20,17 @@ erDiagram
     workflow_instances {
         uuid id PK
         uuid definition_id FK
-        string status "PENDING..COMPENSATED"
+        string status "PENDING..FAILED"
         jsonb input
-        jsonb variables "состояние из replay"
+        jsonb variables "состояние из журнала"
         string current_step
+        text error
         string lease_owner
         timestamptz lease_expires_at
         timestamptz heartbeat_at
+        timestamptz compensation_not_before
+        timestamptz journal_pruned_at
+        timestamptz archived_at "убран из списка"
         timestamptz created_at
     }
 
@@ -56,9 +61,11 @@ erDiagram
         uuid id PK
         uuid instance_id FK
         string step_name
+        string kind "step / pause_deadline"
         timestamptz due_at
         bool fired
         jsonb payload
+        timestamptz created_at
     }
 
     processed_operations {
@@ -75,10 +82,32 @@ erDiagram
         uuid step_run_id FK
         string compensation_step
         int attempt
-        string status "RUNNING..FAILED"
+        string status "RUNNING / COMPLETED / FAILED / INTERRUPTED"
         text error
         timestamptz started_at
         timestamptz finished_at
+    }
+
+    workers {
+        uuid id PK
+        string worker_id UK
+        timestamptz started_at
+        timestamptz heartbeat_at
+        timestamptz stopped_at
+        int cycles_completed
+        int steps_executed
+        int lease_lost
+    }
+
+    chaos_rules {
+        uuid id PK
+        uuid instance_id "пусто — любой процесс"
+        string step_name "пусто — любой шаг"
+        string handler_ref "адрес обработчика отката"
+        string mode "once / always / timeout"
+        text error
+        int used
+        timestamptz created_at
     }
 
     demo_inventory {
@@ -92,11 +121,14 @@ erDiagram
         uuid id PK
         uuid instance_id FK
         numeric amount
-        string status "HELD..REFUNDED"
+        string status "HELD / REFUNDED"
+        timestamptz refunded_at
     }
 
     demo_shipments {
         uuid id PK
         uuid instance_id FK
-        string status "CREATED..CANCELLED"
+        string status "CREATED / CANCELLED"
+        string tracking_number
+        timestamptz cancelled_at
     }

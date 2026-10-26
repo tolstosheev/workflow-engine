@@ -499,7 +499,7 @@ data: {"instance_id":"b2c3d4e5-...","type":"STEP_COMPLETED","payload":{"step":"c
 | `instance_status` | Изменился статус инстанса |
 | `step_event` | Новое событие в журнале |
 | `compensation` | Изменилось состояние компенсации |
-| `heartbeat` | Служебное, раз в `SSE_HEARTBEAT_SECONDS` |
+| `heartbeat` | Служебное, раз в `sse_heartbeat_seconds` |
 
 Фактический поток отдаёт события журнала, а не отдельные типы:
 
@@ -508,15 +508,18 @@ event: STEP_COMPLETED
 data: {"instance_id":"b2c3d4e5-...","type":"STEP_COMPLETED","payload":{"step":"reserve_inventory","output":{...}},"created_at":"2026-10-08T12:00:03Z"}
 ```
 
-Публикуются `INSTANCE_CREATED`, `INSTANCE_COMPLETED`, `INSTANCE_COMPENSATED`,
-`INSTANCE_FAILED`, `INSTANCE_CANCEL_REQUESTED`, `INSTANCE_CANCELLED`,
-`LOOP_EXHAUSTED`, `STEP_COMPLETED`,
-`STEP_FAILED`, `COMPENSATION_STARTED`, `COMPENSATION_COMPLETED`,
-`COMPENSATION_FAILED`. `LEASE_EXPIRED` не публикуется: на экране он ничего
-не меняет и только увеличивает поток.
+Публикуются `INSTANCE_CREATED`, `INSTANCE_PAUSED`, `INSTANCE_RESUMED`,
+`INSTANCE_COMPLETED`, `INSTANCE_COMPENSATED`, `INSTANCE_FAILED`,
+`INSTANCE_CANCEL_REQUESTED`, `INSTANCE_CANCELLED`, `LOOP_EXHAUSTED`,
+`STEP_STARTED`, `STEP_COMPLETED`, `STEP_FAILED`, `TIMER_SCHEDULED`,
+`TIMER_FIRED`, `COMPENSATION_STARTED`, `COMPENSATION_COMPLETED`,
+`COMPENSATION_FAILED`. Молчат `STEP_RETRY_SCHEDULED` и
+`COMPENSATION_INTERRUPTED`: состояние процесса по ним не меняется, и
+обновлять в списке нечего.
 
-Пользователь теперь опроса через `sse_poll_seconds` (по умолчанию 1 с), а heartbeat шётся отдельно в
-`sse_heartbeat_seconds` (15 с) и независит от опроса на саму явные события.
+Опрос потока идёт с интервалом `sse_poll_seconds` (по умолчанию 1 с), а
+heartbeat отправляется отдельно, раз в `sse_heartbeat_seconds` (15 с), и от
+появления новых событий не зависит.
 
 Heartbeat нужен, чтобы прокси и балансировщики не закрывали соединение по
 таймауту простоя. Заголовки ответа: `Cache-Control: no-cache` и

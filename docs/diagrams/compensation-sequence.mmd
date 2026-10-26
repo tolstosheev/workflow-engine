@@ -1,43 +1,39 @@
 sequenceDiagram
     autonumber
-    participant W as Воркер
+    participant W as Исполнитель
     participant I as Интерпретатор
-    participant SL as Saga Log (step_runs)
     participant J as Журнал событий
+    participant SL as Прогоны шагов
     participant C as Компенсация
     participant DB as PostgreSQL
 
     Note over W: Шаг charge_payment исчерпал попытки
     W->>I: шаг провален
     I->>J: INSERT STEP_FAILED, попытка 3
-    I->>I: статус → COMPENSATING
+    I->>I: состояние → COMPENSATING
 
-    I->>SL: SELECT шаги со статусом COMPLETED<br/>ORDER BY finished_at DESC
+    I->>SL: SELECT неоткатанные прогоны<br/>ORDER BY finished_at DESC
     SL-->>I: reserve_inventory, confirm_order, validate_cart
+    Note over I: Порядок шагов — из журнала,<br/>прогоны — из step_runs.<br/>Шаг без компенсации в план не попадает
 
     loop для каждого шага в обратном порядке
-        I->>I: проверить наличие компенсации в дефинишене
-        alt компенсация не объявлена
-            I->>J: INSERT COMPENSATION_SKIPPED
-        else компенсация объявлена
+        loop для каждого неоткатанного прогона шага
+            I->>I: закрыть незакрытые попытки прогона
             I->>J: INSERT COMPENSATION_STARTED
-            I->>C: вызов компенсации
+            I->>C: вызов компенсации<br/>ключ: compensate:шаг:прогон
             alt компенсация успешна
                 C-->>I: ok
                 I->>J: INSERT COMPENSATION_COMPLETED
-                I->>SL: UPDATE step_run.compensated = true
+                I->>SL: прогон.compensated = true
             else компенсация провалена
                 C-->>I: ошибка
                 I->>J: INSERT COMPENSATION_FAILED, попытка N
-                alt попытки исчерпаны
-                    I->>I: статус инстанса → COMPENSATION_FAILED
-                    Note over I: Требуется ручное разбирательство:<br/>операция осталась в силе, инстанс не откатан
-                else попытки остались
-                    I->>I: следующий цикл воркера повторит компенсацию
-                end
+                I->>I: состояние → COMPENSATION_FAILED
+                I->>I: пауза перед повтором<br/>(растёт с числом провалов)
+                Note over I: Повтор берёт исполнитель после паузы;<br/>эффект остаётся в силе до успешного отката
             end
         end
     end
 
     I->>J: INSERT INSTANCE_COMPENSATED
-    Note over I,J: Компенсации необратимы: повторный откат откатанного не выполняется
+    Note over I,J: Компенсации необратимы: откатанный прогон повторно не откатывается

@@ -41,11 +41,13 @@
 | Тип | Когда |
 |---|---|
 | `INSTANCE_CREATED` | создан инстанс |
-| `INSTANCE_STARTED` | воркер захватил lease |
+| `INSTANCE_PAUSED` | процесс встал на паузу и ждёт решения человека |
+| `INSTANCE_RESUMED` | пауза снята, шаг начинается заново |
 | `STEP_STARTED` | начало попытки исполнения шага |
 | `STEP_COMPLETED` | шаг успешен |
 | `STEP_FAILED` | попытка исчерпана или необратимая ошибка |
 | `STEP_RETRY_SCHEDULED` | шаг поставлен на повтор |
+| `LOOP_EXHAUSTED` | исчерпано число проходов цикла |
 | `TIMER_SCHEDULED` / `TIMER_FIRED` | ожидание создано / сработало |
 | `COMPENSATION_STARTED` | начало компенсации |
 | `COMPENSATION_COMPLETED` | компенсация успешна |
@@ -56,7 +58,6 @@
 | `INSTANCE_FAILED` | отказ завершён без отката: упал шаг, откатывать нечему |
 | `INSTANCE_CANCEL_REQUESTED` | запрошена отмена, откат ещё впереди |
 | `INSTANCE_CANCELLED` | отмена завершена, компенсировать было нечего |
-| `LEASE_EXPIRED` | lease протух, инстанс брошен |
 
 Запрос отмены и её завершение разнесены по разным событиям. Пока это были
 одно и то же событие, отменённый инстанс с выполненными шагами завершался с
@@ -435,46 +436,43 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant W as Воркер
+    participant W as Исполнитель
     participant I as Интерпретатор
-    participant SL as Saga Log (step_runs)
     participant J as Журнал событий
+    participant SL as Прогоны шагов
     participant C as Компенсация
     participant DB as PostgreSQL
 
     Note over W: Шаг charge_payment исчерпал попытки
     W->>I: шаг провален
     I->>J: INSERT STEP_FAILED, попытка 3
-    I->>I: статус → COMPENSATING
+    I->>I: состояние → COMPENSATING
 
-    I->>SL: SELECT шаги со статусом COMPLETED<br/>ORDER BY finished_at DESC
+    I->>SL: SELECT неоткатанные прогоны<br/>ORDER BY finished_at DESC
     SL-->>I: reserve_inventory, confirm_order, validate_cart
+    Note over I: Порядок шагов — из журнала,<br/>прогоны — из step_runs.<br/>Шаг без компенсации в план не попадает
 
-    loop для каждого выполнения шага в обратном порядке
-        I->>I: проверить наличие компенсации в дефинишене
-        alt компенсация объявлена
-            I->>I: закрыть незакрытые попытки этого прогона провалом
+    loop для каждого шага в обратном порядке
+        loop для каждого неоткатанного прогона шага
+            I->>I: закрыть незакрытые попытки прогона
             I->>J: INSERT COMPENSATION_STARTED
-            I->>C: вызов компенсации
+            I->>C: вызов компенсации<br/>ключ: compensate:шаг:прогон
             alt компенсация успешна
                 C-->>I: ok
                 I->>J: INSERT COMPENSATION_COMPLETED
-                I->>SL: UPDATE step_run.compensated = true
+                I->>SL: прогон.compensated = true
             else компенсация провалена
                 C-->>I: ошибка
                 I->>J: INSERT COMPENSATION_FAILED, попытка N
-                alt попытки исчерпаны
-                    I->>I: статус инстанса → COMPENSATION_FAILED
-                    Note over I: Требуется ручное разбирательство:<br/>операция осталась в силе, инстанс не откатан
-                else попытки остались
-                    I->>I: следующий цикл воркера повторит компенсацию
-                end
+                I->>I: состояние → COMPENSATION_FAILED
+                I->>I: пауза перед повтором<br/>(растёт с числом провалов)
+                Note over I: Повтор берёт исполнитель после паузы;<br/>эффект остаётся в силе до успешного отката
             end
         end
     end
 
     I->>J: INSERT INSTANCE_COMPENSATED
-    Note over I,J: Компенсации необратимы: повторный откат откатанного не выполняется
+    Note over I,J: Компенсации необратимы: откатанный прогон повторно не откатывается
 ```
 
 Источник — [`diagrams/compensation-sequence.mmd`](diagrams/compensation-sequence.mmd).
@@ -500,8 +498,9 @@ sequenceDiagram
    и вторая компенсация объявила бы «уже применено», не отменив ничего.
 5. **Видимость сбоя.** `COMPENSATION_FAILED` — это состояние, требующее
    ручного разбирательства, а не тихий сбой.
-6. **Счётчик попыток в БД.** Число попыток берётся из `compensation_log`, а не
-   из памяти воркера: после перезапуска иначе откат зациклился бы.
+6. **Номер попытки и число неудач — в БД.** И то и другое берётся из
+   `compensation_log`, а не из памяти воркера: от числа неудач растёт пауза перед
+   повтором, и после перезапуска отсчёт иначе начался бы заново.
 
 ### 8.2 Прерванная попытка — не провал
 
@@ -675,60 +674,75 @@ LIMIT :batch
 stateDiagram-v2
     [*] --> PENDING: POST /instances
 
-    PENDING --> RUNNING: воркер захватил lease
+    PENDING --> RUNNING: исполнитель взял аренду и начал шаг
     RUNNING --> RUNNING: STEP_STARTED / STEP_COMPLETED
     RUNNING --> WAITING: таймер ожидания создан
     WAITING --> RUNNING: таймер сработал
 
     RUNNING --> PAUSED: шаг ждёт решения человека (wait_for: manual)
     PAUSED --> RUNNING: INSTANCE_RESUMED
-    PAUSED --> CANCELLING: INSTANCE_CANCEL_REQUESTED
-    PAUSED --> CANCELLING: истёк pause_timeout_seconds (ADR-0016)
+    PAUSED --> CANCELLING: отмена или истёк срок паузы (ADR-0016)
 
     RUNNING --> COMPENSATING: STEP_FAILED и попытки исчерпаны
     RUNNING --> CANCELLING: INSTANCE_CANCEL_REQUESTED
     WAITING --> CANCELLING: INSTANCE_CANCEL_REQUESTED
+    PENDING --> CANCELLING: INSTANCE_CANCEL_REQUESTED
     CANCELLING --> COMPENSATING: есть что компенсировать
 
     COMPENSATING --> COMPENSATING: COMPENSATION_STARTED / COMPLETED
-    COMPENSATING --> COMPENSATION_FAILED: компенсация провалена, попытки исчерпаны
-    COMPENSATION_FAILED --> COMPENSATING: повтор компенсации после паузы и выбора
-
+    COMPENSATING --> COMPENSATION_FAILED: компенсация провалена
+    COMPENSATION_FAILED --> COMPENSATING: повтор после паузы или ручной перезапуск
 
     COMPENSATING --> COMPENSATED: все компенсации выполнены
     CANCELLING --> CANCELLED: компенсировать нечего
-    COMPENSATING --> CANCELLED: отмена, которой не успела откатить
-    COMPENSATING --> FAILED: отказ шага, откатывать нечему
+    COMPENSATING --> CANCELLED: отмена, компенсировать нечего
+    COMPENSATING --> FAILED: шаг провален, компенсировать нечего
     RUNNING --> FAILED: необратимая ошибка, откат невозможен
     RUNNING --> COMPLETED: все шаги выполнены
 
     COMPLETED --> [*]
     COMPENSATED --> [*]
+    CANCELLED --> [*]
     FAILED --> [*]
+
+    note right of PAUSED
+        Ждёт решения человека.
+        Исполнитель процесс не берёт;
+        срок паузы — durable-таймер,
+        по истечении — отмена и откат.
+    end note
 
     note right of COMPENSATION_FAILED
         Провал — не конец процесса:
-        повтор отката воркер берёт сам,
-        пока служба доступна. Эффекты
-        выполненных шагов остаются
-        в силе до успешного отката.
+        повтор отката берёт исполнитель
+        после паузы. Эффекты выполненных
+        шагов остаются в силе до успеха.
     end note
 
     note right of WAITING
-        Ожидание — durable-объект
-        в БД, не asyncio.sleep.
-        Переживает рестарт воркера.
-        Воркер WAITING не подбирает:
+        Ожидание — durable-объект в БД,
+        а не asyncio.sleep.
+        Переживает рестарт исполнителя.
+        WAITING не подбирается:
         его будит таймер.
     end note
 
     note right of CANCELLING
         Отмена не завершение.
-        Откат делает воркер,
-        и процесс кончится
-        COMPENSATED, а если
-        компенсировать нечего —
+        Запрос переводит сюда любой
+        незавершённый процесс, включая
+        COMPENSATING и COMPENSATION_FAILED.
+        Откат делает исполнитель,
+        и процесс кончится COMPENSATED,
+        а если компенсировать нечего —
         CANCELLED.
+    end note
+
+    note right of COMPLETED
+        Принудительное завершение оператором
+        переводит сюда любой незавершённый
+        процесс с пометкой forced: эффекты
+        выполненных шагов остаются в силе.
     end note
 ```
 
@@ -745,7 +759,7 @@ stateDiagram-v2
 | Lease потерян посреди шага | `UPDATE` вернул 0 строк | Прекратить работу с инстансом |
 | Внешний сервис недоступен | Ошибка вызова | Повтор с нарастающей задержкой |
 | Сервис «завис» | Таймаут шага | Повтор; эффект защищён `processed_operations` |
-| Компенсация провалена | Исключение | Повтор до исчерпания, затем `COMPENSATION_FAILED` |
+| Компенсация провалена | Исключение | `COMPENSATION_FAILED` сразу, повтор после паузы |
 | Инстанс брошен с `COMPENSATING` | Истёк lease | Откат продолжается с места остановки |
 | Утраченное событие | Невозможно | Append-only и одна транзакция на событие исключают |
 

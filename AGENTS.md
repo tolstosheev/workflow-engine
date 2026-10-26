@@ -86,8 +86,8 @@ workflow-engine/
 │   │   ├── core/                 # config, db, errors, deps, logging
 │   │   ├── models/               # SQLAlchemy 2.0 async модели
 │   │   ├── schemas/              # Pydantic v2 (API + валидация дефинишенов)
-│   │   ├── engine/               # ЯДРО: journal, interpreter, lease, recovery,
-│   │   │                         #       scheduler, saga, idempotency
+│   │   ├── engine/               # ЯДРО: journal, interpreter, executor, lease,
+│   │   │                         #       scheduler, deadline, saga, idempotency
 │   │   ├── handlers/             # Реестр обработчиков шагов (import-path резолв)
 │   │   ├── services/             # instances, definitions, метрики
 │   │   ├── routers/              # REST + SSE

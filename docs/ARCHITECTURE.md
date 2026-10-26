@@ -89,38 +89,42 @@ flowchart TB
 ```mermaid
 flowchart LR
     subgraph presentation["Представление"]
-        SPA["SPA (React 19)"]
-        SSE["SSE /stream"]
+        SPA["Веб-интерфейс (React 19)"]
+        SSE["Поток событий (SSE)"]
     end
 
     subgraph api["HTTP-слой"]
-        ROUT["routers: definitions, instances, chaos, metrics"]
-        SCHEMAS["schemas: Pydantic v2"]
+        ROUT["Маршруты: определения, процессы,<br/>поток событий, служба, исполнители, демонстрация"]
+        SCHEMAS["Схемы обмена (Pydantic)"]
     end
 
     subgraph services["Сервисы"]
-        DEFSVC["definition_service<br/>валидация графа"]
-        INSTSVC["instance_service<br/>запуск, отмена"]
-        METRICS["metrics"]
+        DEFSVC["Определения<br/>хранение и проверка"]
+        INSTSVC["Процессы<br/>запуск, отмена, архив"]
+        METRICS["Метрики"]
     end
 
     subgraph core["Ядро"]
-        JOURNAL["journal<br/>append + replay"]
-        LEASE["lease<br/>захват + heartbeat"]
-        INTERP["interpreter<br/>переходы, fork/join"]
-        SCHED["scheduler<br/>durable-таймеры"]
-        SAGA["saga<br/>обратный порядок"]
-        IDEMP["idempotency"]
-        REGISTRY["registry<br/>import-path резолв"]
+        JOURNAL["Журнал<br/>запись и разбор"]
+        LEASE["Аренда<br/>захват и продление"]
+        INTERP["Интерпретатор<br/>переходы и циклы"]
+        SCHED["Планировщик<br/>ожидания"]
+        DEADLINE["Срок паузы"]
+        EXEC["Исполнение шага"]
+        SAGA["Компенсации"]
+        IDEMP["Идемпотентность"]
+        REGISTRY["Реестр обработчиков<br/>резолв по import-path"]
     end
 
     subgraph domain["Предметная область"]
-        HANDLERS["handlers: inventory, payment, shipment"]
-        CHAOS["chaos-флаги<br/>инъекция отказов"]
+        HANDLERS["Склад, платёж, доставка"]
+        CHAOS["Правила инъекций"]
     end
 
+    DB[("PostgreSQL<br/>журнал, очередь, координация")]
+
     SPA --> ROUT
-    SSE -.->|"поток событий"| SPA
+    SSE -.->|"события"| SPA
     ROUT --> SCHEMAS
     ROUT --> DEFSVC & INSTSVC & METRICS
     DEFSVC --> JOURNAL
@@ -128,12 +132,18 @@ flowchart LR
     JOURNAL --> INTERP
     LEASE --> INTERP
     INTERP --> SCHED
+    INTERP --> DEADLINE
+    INTERP --> EXEC
     INTERP --> SAGA
-    INTERP --> IDEMP
-    INTERP --> REGISTRY
-    REGISTRY --> HANDLERS
-    CHAOS -.->|"управляет"| HANDLERS
+    EXEC --> IDEMP
+    SAGA --> IDEMP
+    EXEC --> REGISTRY
     SAGA --> REGISTRY
+    REGISTRY --> HANDLERS
+    CHAOS -.->|"ломает"| HANDLERS
+    JOURNAL --> DB
+    LEASE --> DB
+    HANDLERS --> DB
 ```
 
 Источник — [`diagrams/components.mmd`](diagrams/components.mmd).
@@ -141,14 +151,16 @@ flowchart LR
 | Подсистема | Модуль | Ответственность |
 |---|---|---|
 | Журнал | `app/engine/journal.py` | Append-only запись событий, выделение `seq`, replay |
-| Интерпретатор | `app/engine/interpreter.py` | Переходы состояний, ветвления, fork/join, выбор следующего шага |
-| Lease | `app/engine/lease.py` | Захват инстанса, heartbeat, освобождение |
-| Восстановление | `app/engine/recovery.py` | Подбор инстансов с истёкшим lease |
+| Интерпретатор | `app/engine/interpreter.py` | Переходы состояний, ветвления, циклы, выбор следующего шага |
+| Аренда и восстановление | `app/engine/lease.py` | Захват, heartbeat, освобождение; подбор экземпляров с истёкшей арендой |
 | Планировщик | `app/engine/scheduler.py` | Durable-таймеры ожидания |
+| Срок паузы | `app/engine/deadline.py` | Истечение `pause_timeout_seconds` — отмена и откат |
+| Исполнение шага | `app/engine/executor.py` | Вызов обработчика, продление аренды, запись результата |
 | Saga | `app/engine/saga.py` | Компенсации в обратном порядке, повторы |
 | Идемпотентность | `app/engine/idempotency.py` | `ProcessedOperation` |
-| Реестр | `app/engine/registry.py` | Резолв обработчика по import-path |
-| API | `app/routers/` | REST, SSE, chaos, метрики |
+| Реестр обработчиков | `app/engine/registry.py` | Резолв обработчика по import-path |
+| API | `app/routers/` | REST по определениям, процессам, потоку событий, службе, исполнителям и демонстрации |
+| Реестр исполнителей | `app/services/registry.py` | Сердцебиение и состояния `active` / `stale` / `stopped` |
 | Воркер | `app/worker.py` | Цикл опроса |
 | Предметная область | `app/demo/` | Обработчики inventory / payment / shipment |
 
